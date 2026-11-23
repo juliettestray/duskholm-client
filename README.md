@@ -1,8 +1,12 @@
 # Sanctuary
 
 A small, dependency-free telnet client for MUDs, built for Duskholm and other Haven-style games.
-Five Python files (`sanctuary.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for
-configurable prompt formats, `triggers.py` for triggers and aliases, `layout.py` for pane geometry), tkinter only (ships with the standard Windows Python installer).
+A handful of Python files (`sanctuary.py` is the program; the rest are its parts: `dosui.py`
+DOS-look widgets, `prompts.py` prompt formats, `triggers.py` triggers and aliases, `layout.py` pane
+geometry, `extras.py` timers/clock/notepad/hotkeys, `toolsui.py` colour tools and the customize
+form, `colortools.py`, `custom.py`, `moon.py`, `emojis.py`, `boxes.py`, `worldfile.py`), tkinter
+only (ships with the standard Windows Python installer; Pillow is used for JPEG/WebP pictures if
+it happens to be installed).
 Keep them together. Double-click `Sanctuary.pyw`, or run `pythonw sanctuary.py`, to start it
 without a console window.
 
@@ -149,6 +153,44 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   main text always keeps at least 80 columns: areas that would squeeze it are narrowed, then hidden.
   Several panes in one area become tabs (`Ctrl+1`..`9` select, `*3` shows unread lines). Ready-made
   trigger presets capture OOC, tells and Guide/Newbie.
+  Each pane area has a small fold button (`-`); `Alt+1`..`9` fold away or bring back the area
+  holding that pane and `Alt+0` all of them. Folded panes keep collecting; the bar says
+  `Unread: OOC*3`. In the DOS look everything sits in one double-line frame whose joins match.
+- **Combat readout.** Stun, wounds, the other counters and the move/attack timers sit together
+  beside HP. Stun changes colour as it climbs (50 warm, 75 bad). `M:` and `K:` count down on their
+  own once a second, as the game does, instead of waiting for the next prompt.
+- **Status line message.** A trigger can show a short message on the status line (*Status line*
+  field). The preset *Preview your credit walk* shows `Preview: Someone <walk> in from the north`
+  when you set a credit or ego walk.
+- **Links.** `http(s)` links in the output (and in panes) are underlined and clickable, in both
+  looks. Pictures (`.png .jpg .gif .webp .bmp`) open in an *Images* pane inside the client; every
+  other link opens in your browser. Both are options (Options menu).
+- **Emoji** (option, off by default). `:smile:` in incoming text is shown as the emoji and any
+  emoji you type is sent as `:smile:`, since the game only takes plain ASCII. About 100 familiar
+  shortcodes plus every emoji's official name (`:rolling_on_the_floor_laughing:`).
+- **Join ASCII boxes** (option, off by default). The game's `| - _ . , '` boxes are redrawn with
+  solid line characters (`┌─┐`), without changing any column, so the colours stay put.
+- **Timer** (`Alt+T`, `/timer 10m label`, `/timer 21:30`, `/timer game 21:30`, `/timer list`,
+  `/timer cancel [n]`). Counts down, or waits for a time on your clock or the game's (US Eastern).
+- **Clock** (Options > Clock): your local time, or game time (US Eastern, as the game runs it).
+- **Notepad** (`Alt+N`): a scratch page saved in `~/.sanctuary_notes.txt` as you type.
+- **Moon** (`Alt+M`, `/moon`): the phase, how much is lit, and the next full and new moon, worked
+  out the way the game does it (so they agree); a picture in the DOS look.
+- **Gradient maker** (`Alt+G`, `/gradient text`): pick or write a pattern of xterm colours, choose
+  how it is applied (stretch, cycle, middle-out, bounce, random, per word, per line) and see it;
+  send it to the input line or the clipboard. Your own patterns can be saved.
+- **Hex to xterm** (`Alt+H`, `/hex ff8800`): the closest xterm colour and its code (`` `208 ``).
+- **Customize form** (`Alt+K`, or just type `customize`): fill in an item's fields, `Ctrl+S`
+  sends all the `customize` lines. Save what you made in the **design book**, sorted by type, and
+  load it later. (`customize <item> ...` with arguments still goes straight to the game.)
+- **World settings files** (File > Export / Import world settings, `/export`, `/import`): one
+  `.snc` file holds a world and, optionally, its triggers, aliases, pane layout, prompt formats,
+  gradients and designs. Importing is careful: triggers that send commands and all aliases arrive
+  switched off for you to check; nothing is overwritten.
+- **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed; F-keys are fixed.
+- **Other options:** bell on new output (always / window not in front / scrolled up), jump to the
+  bottom when you send, show or hide your own commands. Your typed-command colour is also under
+  *DOS screen colours*.
 - **Whole lines.** To act on lines before they are drawn, the client now collects each line first.
   An unfinished line (a prompt) still appears after about a tenth of a second, and the stat bar
   sees it immediately. *Options > Hide the prompt line* keeps the prompt off the screen (the bar
@@ -168,6 +210,10 @@ Local commands start with `/` (the game has none). `//text` sends `/text`.
 | `/alias name a;b $*` | define an alias; `;` separates commands, `$*` is the arguments (otherwise they are appended to the last command) |
 | `/unalias name`, `/aliases` | remove / list aliases |
 | `/log [file]` | start or stop logging |
+| `/timer 10m [label]`, `/timer list`, `/timer cancel [n]` | timers (also `21:30`, `game 21:30`) |
+| `/moon`, `/notes`, `/hotkeys` | the moon window, notepad, hotkey editor |
+| `/hex ff8800`, `/gradient text`, `/customize` | colour tools and the customize form |
+| `/export [file]`, `/import file` | world settings files (`.snc`) |
 | `/clear`, `/help` | |
 
 ## License
@@ -196,6 +242,17 @@ python tests/test_triggers.py     # the trigger/alias engine (matching, safety, 
 python tests/test_rules.py        # triggers, aliases and whole-line output, end to end
 python tests/test_layout_engine.py  # pane geometry (pure)
 python tests/test_panes.py        # capture panes, routing, manager, both looks
+python tests/test_combat.py       # stun colours, grouped readout, self-ticking timers
+python tests/test_status.py       # status-line action, credit-walk preview
+python tests/test_links.py        # links, image panes, bell/scroll/echo options
+python tests/test_emoji.py        # :name: both ways
+python tests/test_boxes.py        # joining ASCII boxes (fuzzed)
+python tests/test_moon.py         # moon phases against published times, Eastern time
+python tests/test_extras.py       # timers, clock, notepad, moon window, hotkeys
+python tests/test_colortools.py   # hex to xterm, gradients (fuzzed)
+python tests/test_custom.py       # the customize form's commands and the design book
+python tests/test_tools.py        # those tools in both looks
+python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

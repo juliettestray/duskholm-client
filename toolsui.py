@@ -328,7 +328,7 @@ class ToolsMixin:
                     self.put_in_input(coded)
         return self._dos_dialog("Gradient", fields, [("Preview", "preview"), ("To input", "send"), ("Save", "save"),
                                                      ("Patterns", "patterns"), ("Modes", "modes"), ("Cancel", "cancel")],
-                                result, width=70,
+                                result, width=82,
                                 message="Pattern: a name, or xterm numbers like 196 202 208 (or hex). Use \\n for new lines.")
 
     # ---- customize -----------------------------------------------------------------------
