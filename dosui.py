@@ -251,6 +251,16 @@ class _DosBox(tk.Frame):
             return
         if bg:
             self._rect(col, row, len(s), bg, tag=tag)
+        if any(ch in _BLOCK_SHADES for ch in s):
+            # shade blocks (pictures, gauges) are filled cells, so rows join up in any font
+            base = bg or self.colors['dos_menu_bg']
+            for i, ch in enumerate(s):
+                part = _BLOCK_SHADES.get(ch)
+                if part is not None:
+                    x, y = (col + i) * self.cw, row * self.lh
+                    self._cv.create_rectangle(x, y, x + self.cw, y + self.lh, fill=_blend(base, fg, part),
+                                              outline='', tags=tag)
+            s = ''.join(' ' if ch in _BLOCK_SHADES else ch for ch in s)
         self._cv.create_text(col * self.cw, row * self.lh, text=s, anchor='nw', fill=fg,
                              font=font or self._font, tags=tag)
 
