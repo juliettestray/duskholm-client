@@ -1,0 +1,16 @@
+<<< b'\n\rWould you like colour? (Y/n) '
+>>> 'y'
+<<< b'\x1b[1;31mC\x1b[1;32mO\x1b[1;34mL\x1b[1;33mO\x1b[1;35mR\x1b[40;0;37m is \x1b[1;37mON\x1b[1;36m!\x1b[40;0;37m\n\r\x1b[40;0;37m\xff\xfb[\x1b[40;0;37mWelcome to the local test instance.\n\rWhat is your name? \x1b[40;0;37m'
+>>> 'Testacct'
+<<< b"New account.\n\n\r\x1b[40;0;37m\x1b[0;31mNotice\x1b[40;0;37m: Duskholm is a mature role playing game in which there are no restrictions on content. As such depictions of graphic violence, sex or other mature themes may be presented to the player over the course of their time here. By continuing you state that you are not offended by mature material and that it is legal for you to view it. If this is not the case please type 'quit' now.\x1b[40;0;37m\n\nType either quit or select a password for Testacct: \xff\xfb\x01\x1b[40;0;37m"
+>>> 'testpass1'
+<<< b'\n\r\x1b[40;0;37mPlease retype password: \x1b[40;0;37m'
+>>> 'testpass1'
+<<< b"\n\r\x1b[40;0;37mThere was a hiccup with automatically registering your forum account. Please contact an implementor.\n\r\x1b[40;0;37m\x1b[40;0;37mAccount created, type '\x1b[1;37mcreate\x1b[40;0;37m' to create a new character.\n\x1b[1;37mYou may also log in to our forum at \x1b[1;34m<\x1b[40;0;37mhttps://duskholm.com/forums/\x1b[1;34m>\x1b[40;0;37m.\n\r\x1b[40;0;37m"
+>>> 'create'
+<<< b'Test intro story.\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m'
+>>> 'look'
+<<< b'\x1b[40;0;37mAt Test Room 1\x1b[40;0;37m\x1b[40;0;37m\n\r\x1b[40;0;37m\x1b[0m\x1b[38;5;231mThe area is very bright.\x1b[40;0;37m\n\r\x1b[40;0;37m  \x1b[40;0;37mA bare test room.\n\r\x1b[40;0;37m\n\r\n\rIt is \x1b[1;30mnight\x1b[40;0;37m, \x1b[1;30mbrutally cold\x1b[40;0;37m (\x1b[1;30m0\x1b[40;0;37mF/\x1b[1;30m-17\x1b[40;0;37mC), and there are clear skies.  There is a\n\rwaxing gibbous moon.  \n\r\x1b[40;0;37m\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m\x1b[0;32m[ \x1b[40;0;37m                                                    \x1b[0;32m  ]\n[ \x1b[40;0;37m                                                      \x1b[0;32m]\x1b[40;0;37m\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m'
+
+TELNET SEQS: [b'\xff\xfb\x01', b'\xff\xfb[']
+GA(ff f9)=False EOR(ff ef)=False WILL_ECHO(ff fb 01)=True WONT_ECHO(ff fc 01)=False WILL_MXP(ff fb 5b)=True MXP_SB(ff fa 5b)=False

@@ -48,6 +48,28 @@ python tests/test_client.py
 Runs protocol assertions on the telnet/ANSI/MXP parser, then drives the GUI
 against a local fake server (it opens a Tk window briefly).
 
+## Local test server
+
+The game repo is source-only (no player files or most data), so `testserver/` builds a
+throwaway instance with minimal fixtures. It is for **local testing only**; nothing here
+touches a live game. Run inside WSL/Linux (needs `g++-11`, `ccache`,
+`libcurl4-openssl-dev`, `libcrypt-dev`):
+
+```
+bash testserver/setup.sh /path/to/haven-duskholm [~/haven-test] [3500]
+bash testserver/stop.sh [3500]
+```
+
+`setup.sh` copies the checkout to a scratch directory, builds it, creates the fixtures
+and starts the game on the given port (plain telnet, no TLS). `bootstrap.sh` alone
+re-creates fixtures and restarts an already-built copy. The test account is
+`Testacct` / `testpass1`; bootstrap resets it to a fresh state each run. The server log
+goes to `~/haven-run.log`.
+
+`python tests/test_local_server.py` logs in through the client's protocol code (colour
+prompt, MXP, password masking) and skips itself if nothing is listening on 3500.
+`testserver/capture_flow.py` records raw login bytes into `testserver/captures/`.
+
 ## Layout
 
 `Terminal` is pure protocol logic (bytes in, events out) and is what the tests

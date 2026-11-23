@@ -1,0 +1,37 @@
+
+Would you like colour? (Y/n) 
+<<SENT b'y\r\n'>>
+[1;31mC[1;32mO[1;34mL[1;33mO[1;35mR[40;0;37m is [1;37mON[1;36m![40;0;37m
+[40;0;37mÿû[[40;0;37mWelcome to the local test instance.
+What is your name? [40;0;37m
+<<SENT IAC DO MXP>>
+
+ÿú[ÿð[40;0;37m[6z[40;0;37m
+<<SENT b'Testacct\r\n'>>
+ Password:[40;0;37m [40;0;37mÿû[40;0;37m
+<<SENT b'testpass1\r\n'>>
+ÿü[40;0;37mCharacters:
+[40;0;37m[40;0;37m
+
+Enter the character you wish to play, or choose '[1;37mcreate[40;0;37m' to make a new one.
+[40;0;37m
+<<SENT b'create\r\n'>>
+Test intro story.
+[40;0;37m
+[40;0;37m
+<<SENT b'look\r\n'>>
+[40;0;37mAt Test Room 1[40;0;37m[40;0;37m
+[40;0;37m[0m[38;5;231mThe area is very bright.[40;0;37m
+[40;0;37m  [40;0;37mA bare test room.
+[40;0;37m
+
+It is [1;30mnight[40;0;37m, [1;30mbrutally cold[40;0;37m ([1;30m0[40;0;37mF/[1;30m-17[40;0;37mC), and there are clear skies.  There is a
+waxing gibbous moon.  
+[40;0;37m
+[40;0;37m
+[40;0;37m[0;32m[ [40;0;37m                                                    [0;32m  ]
+[ [40;0;37m                                                      [0;32m][40;0;37m
+[40;0;37m
+[40;0;37m[[1;33mLinkdead[40;0;37m] A man is standing here.
+[40;0;37m
+[40;0;37m

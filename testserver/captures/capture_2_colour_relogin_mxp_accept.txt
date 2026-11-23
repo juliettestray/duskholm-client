@@ -1,0 +1,16 @@
+<<< b'\n\rWould you like colour? (Y/n) '
+>>> 'y'
+<<< b'\x1b[1;31mC\x1b[1;32mO\x1b[1;34mL\x1b[1;33mO\x1b[1;35mR\x1b[40;0;37m is \x1b[1;37mON\x1b[1;36m!\x1b[40;0;37m\n\r\x1b[40;0;37m\xff\xfb[\x1b[40;0;37mWelcome to the local test instance.\n\rWhat is your name? \x1b[40;0;37m'
+>>> IAC DO MXP
+<<< b'\n\r\xff\xfa[\xff\xf0\x1b[40;0;37m\x1b[6z\x1b[40;0;37m'
+>>> 'Testacct'
+<<< b' Password:\x1b[40;0;37m \x1b[40;0;37m\xff\xfb\x01\x1b[40;0;37m'
+>>> 'testpass1'
+<<< b"\xff\xfc\x01\x1b[40;0;37mCharacters:\n\r\x1b[40;0;37m\x1b[40;0;37m\n\nEnter the character you wish to play, or choose '\x1b[1;37mcreate\x1b[40;0;37m' to make a new one.\n\r\x1b[40;0;37m"
+>>> 'create'
+<<< b'Test intro story.\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m'
+>>> 'look'
+<<< b'\x1b[40;0;37mAt Test Room 1\x1b[40;0;37m\x1b[40;0;37m\n\r\x1b[40;0;37m\x1b[0m\x1b[38;5;231mThe area is very bright.\x1b[40;0;37m\n\r\x1b[40;0;37m  \x1b[40;0;37mA bare test room.\n\r\x1b[40;0;37m\n\r\n\rIt is \x1b[1;30mnight\x1b[40;0;37m, \x1b[1;30mbrutally cold\x1b[40;0;37m (\x1b[1;30m0\x1b[40;0;37mF/\x1b[1;30m-17\x1b[40;0;37mC), and there are clear skies.  There is a\n\rwaxing gibbous moon.  \n\r\x1b[40;0;37m\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m\x1b[0;32m[ \x1b[40;0;37m                                                    \x1b[0;32m  ]\n[ \x1b[40;0;37m                                                      \x1b[0;32m]\x1b[40;0;37m\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m[\x1b[1;33mLinkdead\x1b[40;0;37m] A man is standing here.\n\r\x1b[40;0;37m\n\r\x1b[40;0;37m'
+
+TELNET SEQS: [b'\xff\xf0\x1b', b'\xff\xfa[', b'\xff\xfb\x01', b'\xff\xfb[', b'\xff\xfc\x01']
+GA(ff f9)=False EOR(ff ef)=False WILL_ECHO(ff fb 01)=True WONT_ECHO(ff fc 01)=True WILL_MXP(ff fb 5b)=True MXP_SB(ff fa 5b)=True

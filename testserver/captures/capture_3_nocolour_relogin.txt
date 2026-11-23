@@ -1,0 +1,14 @@
+<<< b'\n\rWould you like colour? (Y/n) '
+>>> 'n'
+<<< b'Color disabled!\n\rWelcome to the local test instance.\n\rWhat is your name? '
+>>> 'Testacct'
+<<< b' Password: \xff\xfb\x01'
+>>> 'testpass1'
+<<< b"\xff\xfc\x01Characters:\n\r\n\nEnter the character you wish to play, or choose 'create' to make a new one.\n\r"
+>>> 'create'
+<<< b'Test intro story.\n\r\n\r'
+>>> 'look'
+<<< b'At Test Room 1\n\rThe area is very bright.\n\r  A bare test room.\n\r\n\r\n\rIt is night, brutally cold (0F/-17C), and there are clear skies.  There is a\n\rwaxing gibbous moon.  \n\r\n\r\n\r[                                                       ]\n[                                                       ]\n\r\n\r[Linkdead] A man is standing here.\n\r[Linkdead] A man is standing here.\n\r\n\r'
+
+TELNET SEQS: [b'\xff\xfb\x01', b'\xff\xfc\x01']
+GA(ff f9)=False EOR(ff ef)=False WILL_ECHO(ff fb 01)=True WONT_ECHO(ff fc 01)=True WILL_MXP(ff fb 5b)=False MXP_SB(ff fa 5b)=False

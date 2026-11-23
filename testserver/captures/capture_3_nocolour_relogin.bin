@@ -1,0 +1,35 @@
+
+Would you like colour? (Y/n) 
+<<SENT b'n\r\n'>>
+Color disabled!
+Welcome to the local test instance.
+What is your name? 
+<<SENT b'Testacct\r\n'>>
+ Password: ÿû
+<<SENT b'testpass1\r\n'>>
+ÿüCharacters:
+
+
+Enter the character you wish to play, or choose 'create' to make a new one.
+
+<<SENT b'create\r\n'>>
+Test intro story.
+
+
+<<SENT b'look\r\n'>>
+At Test Room 1
+The area is very bright.
+  A bare test room.
+
+
+It is night, brutally cold (0F/-17C), and there are clear skies.  There is a
+waxing gibbous moon.  
+
+
+[                                                       ]
+[                                                       ]
+
+[Linkdead] A man is standing here.
+[Linkdead] A man is standing here.
+
+
