@@ -1194,6 +1194,15 @@ DIM_FG = BUILTIN_SKINS[DEFAULT_SKIN]["dim"]
 ALERT_FG = BUILTIN_SKINS[DEFAULT_SKIN]["alert"]
 
 
+def stun_role(n):
+    """How worrying a stun value is: 0 is quiet, 50 starts to show, 75 is bad, 100+ is critical."""
+    if n <= 0:
+        return "dim"
+    if n < 50:
+        return "normal"
+    return "warn" if n < 75 else "bad"
+
+
 class StatBar(tk.Frame):
     """HP bar plus compact chips, drawn from parse_prompt() results and the current theme."""
     HP_W = 200
@@ -1225,7 +1234,12 @@ class StatBar(tk.Frame):
         if not d:
             return out
         for label, n in d["counters"]:
-            out.append(("%s %d" % (label, n), th["alert"] if n else th["dim"]))
+            if label.upper() == "ST":                      # stun: the higher, the worse
+                role = stun_role(n)
+                out.append(("%s %d" % (label, n), {"dim": th["dim"], "normal": th["alert"], "warn": th["ansi"][11],
+                                                   "bad": th["ansi"][9]}[role]))
+            else:
+                out.append(("%s %d" % (label, n), th["alert"] if n else th["dim"]))
         for letter, n in d["cooldowns"]:
             # the game colours these green when ready and red while cooling down
             out.append(("%s:%d" % (letter, n), th["ansi"][9] if n > 0 else th["ansi"][10]))
@@ -1410,6 +1424,8 @@ class App:
         self._quit_sent_at = 0.0      # when the user last sent "quit"
         self._line = ""               # unfinished last line of output (the prompt, usually)
         self._last_prompt = None
+        self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
+        self._cd_job = None
         self._mono = None
         self._themed = []             # (widget, role) pairs restyled by apply_theme()
         self._tag_keys = {}           # text-tag name -> raw style key (palette refs, not hex)
@@ -2332,17 +2348,18 @@ class App:
             cands = [(1, 0, "REDIAL in %ds" % max(0, int(self._reconnect_at - time.time() + 0.999)), "warn")]
         else:
             cands = [(1, 0, "OFFLINE", "dim")]
-        pr = self._last_prompt if self.connected else None
+        pr = self._prompt_view() if self.connected else None
         if pr and pr.get("hp"):
             cur, mx, label = pr["hp"]
             gauge, role = dosui.gauge_text(cur, mx, 8)
             cands.append((2, 1, "%s %s %d/%d" % (label, gauge, cur, mx), role))
-            if pr["cooldowns"]:
-                cands.append((4, 4, " ".join("%s:%d" % (lb, n) for lb, n in pr["cooldowns"]),
-                              "warn" if any(n > 0 for _, n in pr["cooldowns"]) else "dim"))
-            if pr["counters"]:
-                cands.append((5, 3, " ".join("%s%d" % (lb, n) for lb, n in pr["counters"]),
-                              "warn" if any(n for _, n in pr["counters"]) else "dim"))
+            # the combat readout is one group beside HP: stun and the other counters, then the timers
+            for i, (lb, n) in enumerate(pr["counters"]):
+                role = {"dim": "dim", "normal": "normal", "warn": "warn", "bad": "bad"}[stun_role(n)] \
+                    if lb.upper() == "ST" else ("warn" if n else "dim")
+                cands.append((3, 2.1 + 0.1 * i, "%s%d" % (lb, n), role, True))
+            for i, (lb, n) in enumerate(pr["cooldowns"]):
+                cands.append((4, 2.5 + 0.1 * i, "%s:%d" % (lb, n), "bad" if n > 0 else "good", True))
             for label, cur, mx in pr["gauges"][1:]:
                 g, role = prompts.gauge_color_role(cur, mx), None
                 cands.append((6, 6, "%s %d/%d" % (label, cur, mx) if mx is not None else "%s %d" % (label, cur),
@@ -2352,14 +2369,16 @@ class App:
         cands.append((6, 6, ("TLS " if self.v_tls.get() else "") + ("ANSI-MXP" if (self.connected and self.term.mxp) else "ANSI"),
                       "dim"))
         chosen, used = [], 0
-        for prio, order, text, role in sorted(cands):
-            cost = len(text) + (3 if chosen else 0)            # 3 = the " | " separator
+        for c in sorted(cands, key=lambda c: (c[0], c[1])):
+            prio, order, text, role = c[:4]
+            join = len(c) > 4 and c[4]
+            cost = len(text) + (1 if join else 3 if chosen else 0)    # 3 = the " | " separator
             if used + cost <= avail:
-                chosen.append((order, text, role))
+                chosen.append((order, text, role, join))
                 used += cost
-        chosen.sort()
+        chosen.sort(key=lambda c: c[0])
         tail = dosui.format_duration(time.time() - self._online_since) if self.connected else ""
-        return [(t, r) for _o, t, r in chosen], tail
+        return [(t, r, j) if j else (t, r) for _o, t, r, j in chosen], tail
 
     def update_dosbar(self):
         """Fill the two status rows from the live connection / prompt state."""
@@ -3947,7 +3966,7 @@ class App:
     def _on_root_destroy(self, e):
         if e.widget is self.root:
             for job in (self._pump_job, self._reconnect_job, self._fit_job, self._dos_job, self._flush_job,
-                        self._layout_job):
+                        self._layout_job, self._cd_job):
                 if job is not None:
                     try:
                         self.root.after_cancel(job)
@@ -4035,12 +4054,46 @@ class App:
             # evidence lifts the mask; guessing could leak a password into the log.
             self.term.echo_off = False
             self.input.configure(show="")
+        self._prompt_time = time.time()
         if p == self._last_prompt:
+            self._start_cd_tick()
             return
         self._last_prompt = p
-        self.statbar.set_data(p)
+        self.statbar.set_data(self._prompt_view())
         self._statbar_show()
         self.update_dosbar()
+        self._start_cd_tick()
+
+    def _prompt_view(self):
+        """The last prompt with its cooldown timers counted down for the time since it arrived
+        (the game lowers M and K by one every second)."""
+        p = self._last_prompt
+        if not p or not p.get("cooldowns"):
+            return p
+        gone = int(max(0.0, time.time() - self._prompt_time))
+        if not gone:
+            return p
+        view = dict(p)
+        view["cooldowns"] = [(lb, max(0, n - gone)) for lb, n in p["cooldowns"]]
+        return view
+
+    def _start_cd_tick(self):
+        if self._cd_job is not None or not self._last_prompt:
+            return
+        if not any(n > 0 for _lb, n in self._prompt_view().get("cooldowns", [])):
+            return
+        try:
+            self._cd_job = self.root.after(1000, self._cd_tick)
+        except tk.TclError:
+            self._cd_job = None
+
+    def _cd_tick(self):
+        self._cd_job = None
+        if not self._last_prompt or not self.connected:
+            return
+        self.statbar.set_data(self._prompt_view())
+        self.update_dosbar()
+        self._start_cd_tick()
 
     def _statbar_show(self):
         if (self.cfg.get("statbar") and self._last_prompt and not self.dos

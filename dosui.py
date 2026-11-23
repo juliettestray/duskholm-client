@@ -2179,8 +2179,13 @@ class DosStatusBar(tk.Frame):
                 text, role = str(s[0]), s[1]
             except Exception:
                 text, role = str(s), 'normal'
+            joined = False
+            try:
+                joined = bool(s[2])
+            except Exception:
+                pass
             if n:
-                left.append((' │ ', c['dim'], False))
+                left.append((' ' if joined else ' │ ', c['dim'], False))
             left.append((text, col.get(role, col['normal']), role == 'key'))
         rr = [(str(right) + ' ', c['dos_bar2_fg'], False)] if right not in (None, '') else []
         self._spec[1] = (left, rr)

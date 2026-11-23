@@ -77,13 +77,13 @@ assert "DF" in stat and "204/350" in stat and "M:3" in stat, stat
 assert any(c in stat for c in "█░▓"), "HP gauge drawn in block characters"
 # the row is budgeted to the screen width: everything when wide, the essentials when narrow
 wide, wtail = app._dos_segments(200)
-joined = " ".join(t for t, _ in wide)
+joined = " ".join(t for t, *_ in wide)
 assert "ST1 WN2 LG0" in joined and "North 1/5:1/5" in joined and "ANSI" in joined and wtail.count(":") >= 1, joined
 narrow, ntail = app._dos_segments(30)
 assert narrow and narrow[0][0].startswith("ONLINE")
-assert sum(len(t) for t, _ in narrow) + 3 * (len(narrow) - 1) <= 30
+assert sum(len(x[0]) for x in narrow) + sum((1 if len(x) > 2 else 3) for x in narrow[1:]) <= 30
 mid, _ = app._dos_segments(44)
-assert any("204/350" in t for t, _ in mid) and not any("M:3" in t for t, _ in mid), "HP outranks cooldowns"
+assert any("204/350" in t for t, *_ in mid) and not any("M:3" in t for t, *_ in mid), "HP outranks cooldowns"
 tight, _ = app._dos_segments(5)
 assert len(tight) <= 1
 time.sleep(1.2); pump(0.3)
