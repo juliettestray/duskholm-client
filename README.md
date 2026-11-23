@@ -78,9 +78,17 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   | `F10` / `Alt+M` | Main menu | `Alt+X` | Exit (asks first) |
   | `F11` / `Alt+Enter` | Full screen | `Alt+D` | Back to the normal look |
 
-  The DOS font works best with a bitmap-style monospace font such as *Perfect DOS VGA 437* or
-  *Px437* if you have one installed; otherwise it uses Lucida Console or Consolas. The Colours
-  and Font dialogs still open as ordinary windows.
+  The Retro skins use a bitmap-style DOS font if one is installed (*Perfect DOS VGA 437*,
+  *More Perfect DOS VGA*, *Nouveau IBM* or *Px437*), otherwise Lucida Console or Consolas.
+
+  **Colours (`F6`) and Font (`F7`) are DOS-style too**: a menu tree for the skin, the 16 game
+  colours (listed with colour swatches), the interface colours, the DOS screen colours and
+  the minimum contrast, with a classic red/green/blue mixer and New/Old preview for editing
+  a colour. Changes apply live to the whole screen; `Enter` keeps a colour, `Esc` puts the
+  old one back and steps back one menu level. *Revert changes* undoes everything since you
+  opened the screen, and *Save as new skin* writes a skin file. The font list is a scrolling
+  menu with your current font pre-selected. The DOS look remembers its own font size, separate
+  from the normal look.
 - **Full screen** (`F11` or `Alt+Enter`, both looks): real full screen, hiding the title bar,
   borders and taskbar. Saved between runs.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
@@ -116,6 +124,7 @@ python tests/test_skins.py        # skins, palette edits, contrast, persistence,
 python tests/test_theme_pure.py   # adversarial checks on the colour maths and skin-file loading
 python tests/test_dosui.py        # the DOS-style menus, dialogs and status bar widgets
 python tests/test_dos_mode.py     # the DOS look wired into the client: keys, menus, status, full screen
+python tests/test_dos_dialogs.py  # the DOS-style Colours and Font screens, end to end
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

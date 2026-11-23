@@ -117,6 +117,14 @@ COLOR_LABELS = {
     "dim": "Dimmed text", "select": "Selection", "button_bg": "Button background",
     "button_fg": "Button text",
 }
+DOS_LABELS = {
+    "dos_bar_bg": "Hint bar background", "dos_bar_fg": "Hint bar text",
+    "dos_bar2_bg": "Status bar background", "dos_bar2_fg": "Status bar text",
+    "dos_key_fg": "Key highlight", "dos_menu_bg": "Menu background", "dos_menu_fg": "Menu text",
+    "dos_menu_border": "Menu border", "dos_menu_sel_bg": "Menu selection background",
+    "dos_menu_sel_fg": "Menu selection text", "dos_menu_dim": "Menu dimmed text",
+    "dos_shadow": "Menu shadow", "dos_screen_border": "Screen border",
+}
 
 
 def _hex_ok(v):
@@ -210,7 +218,8 @@ BUILTIN_SKINS = {s["name"]: s for s in (
           input_bg="#061406", input_fg="#66ff88", echo="#1f8f3a", system="#b6ff4d",
           alert="#e0ff6a", dim="#1f7a35", select="#0f5a24", button_bg="#0b2a10",
           button_fg="#33ff66", relief="ridge",
-          fonts=["Perfect DOS VGA 437", "Fixedsys Excelsior 3.01", "Lucida Console", "Consolas"],
+          fonts=["Perfect DOS VGA 437", "Perfect DOS VGA 437 Win", "More Perfect DOS VGA", "Nouveau IBM",
+                "Px437 IBM VGA 8x16", "Fixedsys Excelsior 3.01", "Lucida Console", "Consolas"],
           ansi=["#0f4a1c", "#ff6b4a", "#33ff66", "#d4ff4a", "#3fb8a0", "#9be6b4", "#4de6d0",
                 "#a8ffbd", "#2e8f48", "#ff9966", "#66ff99", "#eaff77", "#6fe0c8", "#b8f5c8",
                 "#8ffff0", "#e6fff0"],
@@ -219,7 +228,8 @@ BUILTIN_SKINS = {s["name"]: s for s in (
           input_bg="#0000aa", input_fg="#ffffff", echo="#55ffff", system="#ffff55",
           alert="#ffff55", dim="#9999dd", select="#aa00aa", button_bg="#aaaaaa",
           button_fg="#000000", relief="raised", min_contrast=3.0,
-          fonts=["Perfect DOS VGA 437", "Fixedsys Excelsior 3.01", "Lucida Console", "Consolas"],
+          fonts=["Perfect DOS VGA 437", "Perfect DOS VGA 437 Win", "More Perfect DOS VGA", "Nouveau IBM",
+                "Px437 IBM VGA 8x16", "Fixedsys Excelsior 3.01", "Lucida Console", "Consolas"],
           ansi=["#000000", "#aa0000", "#00aa00", "#aa5500", "#0000aa", "#aa00aa", "#00aaaa",
                 "#aaaaaa", "#555555", "#ff5555", "#55ff55", "#ffff55", "#5555ff", "#ff55ff",
                 "#55ffff", "#ffffff"],
@@ -841,6 +851,7 @@ def clean_settings(cfg):
     cfg["dos_skin"] = ds.strip()[:60] if isinstance(ds, str) and ds.strip() else DEFAULT_DOS_SKIN
     cfg["ui_mode"] = "dos" if cfg.get("ui_mode") == "dos" else "normal"
     cfg["dos_cols"] = to_int(cfg.get("dos_cols"), 80, 40, 200)
+    cfg["dos_font_size"] = to_int(cfg.get("dos_font_size"), 0, 0, MAX_FONT)   # 0 = not chosen
     so = cfg.get("skin_overrides")
     cfg["skin_overrides"] = ({k: v for k, v in list(so.items())[:50]
                               if isinstance(k, str) and len(k) < 60 and isinstance(v, dict)}
@@ -1086,6 +1097,7 @@ class App:
         self.dos = self.cfg["ui_mode"] == "dos"      # the DOS terminal look is active
         self.dosbar = None                            # DOS status bar (built with the widgets)
         self._overlay = None                          # the open DOS menu/dialog, if any
+        self._colors_snapshot = None                  # skin state when the DOS colour screens opened
         self._dos_job = None                          # 1-second status refresh while in the DOS look
         self._online_since = 0.0
         self._fit_job = None
@@ -1119,7 +1131,7 @@ class App:
                "auto_reconnect": False, "statbar": True, "font_family": None,
                "skin": DEFAULT_SKIN, "skin_overrides": {},
                "ui_mode": "normal", "dos_skin": DEFAULT_DOS_SKIN, "fullscreen": False,
-               "dos_autofit": True, "dos_cols": 80, "dos_flourish": True}
+               "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -1552,8 +1564,11 @@ class App:
     def _cell(self):
         return self.f_norm.measure("0"), self.f_norm.metrics("linespace")
 
-    def _dos_menu(self, title, items, corner=False):
-        m = dosui.DosMenu(self.root, title, items, self._dc(), self.f_norm)
+    def _dos_menu(self, title, items, corner=False, initial=None, back=None):
+        kw = {} if initial is None else {"initial": initial}
+        if back is not None:
+            kw["on_close"] = lambda: self._reopen(back)
+        m = dosui.DosMenu(self.root, title, items, self._dc(), self.f_norm, **kw)
         self._overlay = m
         if corner:
             cw, ch = self._cell()
@@ -1594,11 +1609,17 @@ class App:
         ]
         return self._dos_menu("Duskholm", items, corner=True)
 
-    def dos_skin_menu(self):
+    def dos_skin_menu(self, after=None):
         cur = self._skin_name()
+
+        def pick(n):
+            self.set_skin(n)
+            if after is not None:
+                self.root.after_idle(after)
+
         items = [{"label": name, "hotkey": str(i + 1) if i < 9 else None, "checked": name == cur,
-                  "action": (lambda n=name: self.set_skin(n))} for i, name in enumerate(self.skins)]
-        return self._dos_menu("Skin", items)
+                  "action": (lambda n=name: pick(n))} for i, name in enumerate(self.skins)]
+        return self._dos_menu("Skin", items, back=after)
 
     def _toggle_option(self, key):
         new = not self.cfg[key]
@@ -1675,6 +1696,171 @@ class App:
                                       lambda r, v: self.on_quit() if r == "yes" else None)
         return self._overlay
 
+    def _reopen(self, fn, *args):
+        """Re-open a menu once the one that just ran its action has fully closed."""
+        self.root.after_idle(lambda: fn(*args) if self.dos and not self._overlay_open() else None)
+
+    # -- colours ------------------------------------------------------------------
+    def dos_colors_menu(self, fresh=True):
+        if not self.dos:
+            return None
+        if fresh or self._colors_snapshot is None:
+            self._colors_snapshot = (self._skin_cfg_key(), self._skin_name(),
+                                     copy.deepcopy(self.cfg["skin_overrides"]))
+        snap = self._colors_snapshot
+        changed = (self._skin_name(), self.cfg["skin_overrides"]) != (snap[1], snap[2])
+        items = [
+            {"label": "Skin: %s..." % self._skin_name(), "hotkey": "S",
+             "action": lambda: self.dos_skin_menu(after=lambda: self.dos_colors_menu(False))},
+            None,
+            {"label": "Game palette (16 colours)...", "hotkey": "P", "action": self.dos_palette_menu},
+            {"label": "Interface colours...", "hotkey": "I", "action": lambda: self.dos_key_menu("ui")},
+            {"label": "DOS screen colours...", "hotkey": "D", "action": lambda: self.dos_key_menu("dos")},
+            {"label": "Minimum contrast: %.1f..." % self.theme["min_contrast"], "hotkey": "C",
+             "action": self.dos_contrast_dialog},
+            None,
+            {"label": "Revert changes", "hotkey": "V", "enabled": changed, "action": self.dos_colors_revert},
+            {"label": "Reset skin to defaults", "hotkey": "R", "action": self.dos_colors_reset},
+            {"label": "Save as new skin...", "hotkey": "A", "action": self.dos_save_skin_dialog},
+        ]
+        return self._dos_menu("Colours", items)
+
+    def dos_colors_revert(self):
+        snap = self._colors_snapshot
+        if snap:
+            self.cfg[snap[0]] = snap[1]
+            self.cfg["skin_overrides"] = copy.deepcopy(snap[2])
+            self.v_skin.set(self._skin_name())
+            self.theme = self._effective_theme()
+            self.apply_theme()
+            self._save_settings()
+        self._reopen(self.dos_colors_menu, False)
+
+    def dos_colors_reset(self):
+        self.reset_skin_edits()
+        self._save_settings()
+        self._reopen(self.dos_colors_menu, False)
+
+    def dos_palette_menu(self):
+        th = self.theme
+        items = [{"label": "%-2d %-14s %s" % (i, ANSI_NAMES[i], th["ansi"][i]), "swatch": th["ansi"][i],
+                  "hotkey": format(i, "x"),
+                  "action": (lambda i=i: self.dos_pick_color(
+                      ANSI_NAMES[i], self.theme["ansi"][i],
+                      lambda h, i=i: self._set_override(("ansi", i), h), self.dos_palette_menu))}
+                 for i in range(16)]
+        return self._dos_menu("Game palette", items, back=lambda: self.dos_colors_menu(False))
+
+    def dos_key_menu(self, kind):
+        keys, labels = (COLOR_KEYS, COLOR_LABELS) if kind == "ui" else (DOS_KEYS, DOS_LABELS)
+        cur = self.theme if kind == "ui" else self._dc()
+        items = [{"label": "%-26s %s" % (labels[k], cur[k]), "swatch": cur[k],
+                  "hotkey": str(i + 1) if i < 9 else None,
+                  "action": (lambda k=k: self.dos_pick_color(
+                      labels[k], (self.theme if kind == "ui" else self._dc())[k],
+                      lambda h, k=k: self._set_override((k,), h), lambda: self.dos_key_menu(kind)))}
+                 for i, k in enumerate(keys)]
+        return self._dos_menu("Interface colours" if kind == "ui" else "DOS screen colours", items,
+                              back=lambda: self.dos_colors_menu(False))
+
+    def dos_pick_color(self, title, current, apply, reopen):
+        """Open the colour mixer; every change is applied live, Cancel restores the original."""
+        box = []
+
+        def on_change(h):
+            apply(h)
+            if box:
+                try:
+                    box[0].restyle(self._dc(), self.f_norm)
+                except tk.TclError:
+                    pass
+
+        def on_result(name, value):
+            if name != "ok":
+                apply(current)
+            self._save_settings()
+            self._reopen(reopen)
+
+        picker = dosui.DosColorPicker(self.root, title, current, self._dc(), self.f_norm, on_result,
+                                      on_change=on_change)
+        box.append(picker)
+        self._overlay = picker
+        picker.open()
+        return picker
+
+    def dos_contrast_dialog(self):
+        fields = [{"key": "v", "label": "Minimum contrast (1.0 - 7.0)", "type": "text",
+                   "value": "%.1f" % self.theme["min_contrast"], "width": 6}]
+
+        def result(name, values):
+            if name == "ok":
+                try:
+                    v = float(str(values.get("v", "")).strip())
+                    if v != v:
+                        raise ValueError
+                except ValueError:
+                    self.system("Contrast must be a number from 1.0 to 7.0.")
+                else:
+                    v = round(max(1.0, min(7.0, v)), 1)
+                    self._set_override(("min_contrast",), v)
+                    self._save_settings()
+            self._reopen(self.dos_colors_menu, False)
+
+        return self._dos_dialog("Minimum contrast", fields, [("OK", "ok"), ("Cancel", "cancel")], result,
+                                width=54, message="1.0 shows the game's colours exactly as sent.\n"
+                                                  "Higher lifts dark colours so they stay readable.")
+
+    def dos_save_skin_dialog(self):
+        fields = [{"key": "name", "label": "Name", "type": "text", "value": "", "width": 30}]
+
+        def result(name, values):
+            if name == "ok":
+                fp = self.save_skin_as(str(values.get("name", "")))
+                self.system("Skin saved to %s" % fp if fp else "Could not save that skin (name empty or reserved).")
+            self._reopen(self.dos_colors_menu, False)
+
+        return self._dos_dialog("Save as new skin", fields, [("Save", "ok"), ("Cancel", "cancel")], result,
+                                width=50)
+
+    # -- font ----------------------------------------------------------------------
+    def dos_font_menu(self):
+        fams = self.mono_families()
+        cur = self.font_family
+        head = [{"label": "Size: %d..." % int(self.f_norm.cget("size")), "hotkey": "Z",
+                 "action": self.dos_font_size_dialog},
+                {"label": "Use the skin's font", "hotkey": "K", "action": self.dos_font_skin},
+                None]
+        items = head + [{"label": f, "checked": f == cur, "action": (lambda f=f: self.apply_font(f))}
+                        for f in fams]
+        start = len(head) + (fams.index(cur) if cur in fams else 0)
+        return self._dos_menu("Font", items, initial=start)
+
+    def dos_font_skin(self):
+        self.apply_font(use_skin_font=True)
+
+    def dos_font_size_dialog(self):
+        fields = [{"key": "size", "label": "Size (%d - %d)" % (MIN_FONT, MAX_FONT), "type": "text",
+                   "value": str(int(self.f_norm.cget("size"))), "width": 5}]
+
+        def result(name, values):
+            if name != "ok":
+                return
+            try:
+                n = int(str(values.get("size", "")).strip())
+            except ValueError:
+                self.system("Font size must be a whole number from %d to %d." % (MIN_FONT, MAX_FONT))
+                return
+            n = max(MIN_FONT, min(MAX_FONT, n))
+            if self.cfg["dos_autofit"]:
+                self.cfg["dos_autofit"] = False
+                self.system("Font auto-fit is off (you set a size). Re-enable it under Options.")
+            self.cfg["dos_font_size"] = n
+            self._set_font_size(n)
+            self._save_settings()
+
+        return self._dos_dialog("Font size", fields, [("OK", "ok"), ("Cancel", "cancel")], result, width=46,
+                                message="Setting a size turns font auto-fit off.")
+
     def _dos_only(self, fn):
         """Key handler that acts only in the DOS look and when no menu/dialog is already open."""
         def handler(_e=None):
@@ -1714,6 +1900,11 @@ class App:
             self.v_dos.set(self.dos)
             return
         self.dos_close_overlay()
+        if self._colors_win is not None:
+            try:
+                self._colors_win._actions["done"]()
+            except Exception:  # noqa: BLE001
+                self._colors_win = None
         self.dos = on
         self.cfg["ui_mode"] = "dos" if on else "normal"
         self.v_dos.set(on)
@@ -1723,7 +1914,10 @@ class App:
         self.apply_theme()
         if on:
             self.root.update_idletasks()
-            self._fit_font()
+            if self.cfg["dos_autofit"]:
+                self._fit_font()
+            elif self.cfg["dos_font_size"]:
+                self._set_font_size(int(self.cfg["dos_font_size"]))
             if self.cfg["dos_flourish"]:
                 self._dos_banner()
             self._start_dos_tick()
@@ -1819,7 +2013,7 @@ class App:
             else:
                 ov.pop("ansi", None)
         else:
-            if value == base[path[0]]:
+            if value == base.get(path[0]):
                 ov.pop(path[0], None)
             else:
                 ov[path[0]] = value
@@ -2294,9 +2488,15 @@ class App:
         return True
 
     def _zoom(self, d):
-        if self.dos and self.cfg["dos_autofit"]:
-            self.cfg["dos_autofit"] = False      # the user is choosing a size now
-            self.system("Font auto-fit is off (zoom keys set the size). Re-enable it from the DOS menu.")
+        if self.dos:
+            if self.cfg["dos_autofit"]:
+                self.cfg["dos_autofit"] = False  # the user is choosing a size now
+                self.system("Font auto-fit is off (zoom keys set the size). Re-enable it from the DOS menu.")
+            n = max(MIN_FONT, min(MAX_FONT, int(self.f_norm.cget("size")) + d))
+            self.cfg["dos_font_size"] = n        # the DOS look remembers its own size
+            self._set_font_size(n)
+            self._save_settings()
+            return "break"
         self.apply_font(size=int(self.cfg["font_size"]) + d)
         return "break"
 
@@ -2330,6 +2530,8 @@ class App:
 
     def choose_font(self):
         """Dialog: monospace families only, size, live preview."""
+        if self.dos:
+            return self.dos_font_menu()
         top = tk.Toplevel(self.root)
         top.title("Font")
         top.transient(self.root)
@@ -2406,6 +2608,8 @@ class App:
     def edit_colors(self):
         """Skin picker + palette / interface colour editor + contrast slider, applied live.
         Cancel restores everything as it was when the dialog opened."""
+        if self.dos:
+            return self.dos_colors_menu(fresh=True)
         if self._colors_win is not None:
             try:
                 if self._colors_win.winfo_exists():

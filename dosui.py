@@ -8,7 +8,8 @@ Public API:
     dos_colors(theme) -> dict
     gauge_text(cur, maximum, width=10) -> (text, role)
     format_duration(seconds) -> 'HH:MM:SS'
-    DosMenu, DosDialog, DosStatusBar, show_message(), confirm(), DosMessage
+    parse_hex_color(text) -> '#rrggbb' | None
+    DosMenu, DosDialog, DosColorPicker, DosStatusBar, show_message(), confirm(), DosMessage
 """
 import math
 import re
@@ -17,7 +18,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 __all__ = ['BOX_DOUBLE', 'BOX_SINGLE', 'dos_colors', 'gauge_text', 'format_duration',
-           'DosMenu', 'DosDialog', 'DosStatusBar', 'DosMessage', 'show_message', 'confirm']
+           'parse_hex_color', 'DosMenu', 'DosDialog', 'DosColorPicker', 'DosStatusBar', 'DosMessage', 'show_message', 'confirm']
 
 BOX_DOUBLE = '╔═╗║╚╝'     # tl, horizontal, tr, vertical, bl, br
 BOX_SINGLE = '┌─┐│└┘'
@@ -27,6 +28,22 @@ CHECK_ON, CHECK_OFF = '√', ' '
 ELLIPSIS = '…'
 
 _HEX = re.compile(r'^#[0-9a-fA-F]{6}$')
+_HEX_INPUT = re.compile(r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})')
+
+
+def parse_hex_color(text):
+    """'#rgb' / 'rgb' / '#rrggbb' / 'rrggbb' (any case, surrounding spaces ok) -> '#rrggbb'.
+
+    Anything else (None, other types, newlines, non-ASCII digits, wrong length) -> None."""
+    if not isinstance(text, str):
+        return None
+    m = _HEX_INPUT.fullmatch(text.strip(' '))
+    if not m:
+        return None
+    h = m.group(1).lower()
+    if len(h) == 3:
+        h = ''.join(ch * 2 for ch in h)
+    return '#' + h
 
 
 # --------------------------------------------------------------------------
@@ -387,7 +404,7 @@ class _DosBox(tk.Frame):
 class DosMenu(_DosBox):
     _close_on_outside = True
 
-    def __init__(self, parent, title, items, colors, font, on_close=None, min_width=0):
+    def __init__(self, parent, title, items, colors, font, on_close=None, min_width=0, initial=0):
         _DosBox.__init__(self, parent, colors, font)
         self._title = '' if title is None else str(title)
         self._on_close = on_close
@@ -402,6 +419,7 @@ class DosMenu(_DosBox):
         self._inner = 1
         self._select(self._first(), render=False)
         self._layout()
+        self.select(initial, render=False)
         self._render()
         cv = self._cv
         cv.bind('<Key>', self._on_key)
@@ -433,10 +451,15 @@ class DosMenu(_DosBox):
                 out.append({'label': label, 'hotkey': hk, 'shortcut': sc,
                             'action': act if callable(act) else None,
                             'checked': None if it.get('checked') is None else bool(it.get('checked')),
+                            'swatch': DosMenu._swatch(it.get('swatch')),
                             'enabled': bool(it.get('enabled', True))})
             except Exception:
                 out.append(None)
         return out
+
+    @staticmethod
+    def _swatch(v):
+        return _hex(v, '') if isinstance(v, str) else ''
 
     def _selectable(self, i):
         it = self._items[i] if 0 <= i < len(self._items) else None
@@ -464,9 +487,10 @@ class DosMenu(_DosBox):
         n = len(self._items)
         real = [i for i in self._items if i is not None]
         self._markw = 2 if any(i['checked'] is not None for i in real) else 0
+        self._swatchw = 3 if any(i['swatch'] for i in real) else 0
         labw = max([len(i['label']) for i in real] or [0])
         shw = max([len(i['shortcut']) for i in real] or [0])
-        inner = 1 + self._markw + labw + ((2 + shw) if shw else 0) + 1
+        inner = 1 + self._markw + self._swatchw + labw + ((2 + shw) if shw else 0) + 1
         title = self._title
         inner = max(inner, (len(title) + 4) if title else 0, self._min_width - 2, 4)
         maxcols = max(6, pw // self.cw - 1)
@@ -496,16 +520,16 @@ class DosMenu(_DosBox):
         inner = self._inner
         sh = it['shortcut']
         right = (sh + ' ') if sh else ' '
-        room = inner - 1 - self._markw - len(right) - (1 if sh else 0)
+        room = inner - 1 - self._markw - self._swatchw - len(right) - (1 if sh else 0)
         if room < 1 and sh:
             sh, right = '', ' '
-            room = inner - 1 - self._markw - 1
+            room = inner - 1 - self._markw - self._swatchw - 1
         room = max(1, room)
         lab = _trunc(it['label'], room)
         mark = ''
         if self._markw:
             mark = (CHECK_ON if it['checked'] else CHECK_OFF) + ' '
-        s = ' ' + mark + lab.ljust(room) + (' ' if sh else '') + right
+        s = ' ' + mark + ' ' * self._swatchw + lab.ljust(room) + (' ' if sh else '') + right
         return s[:inner].ljust(inner), lab
 
     def _render(self):
@@ -519,6 +543,7 @@ class DosMenu(_DosBox):
                 seps.add(r + 1)
         self._draw_frame(self._title, seps)
         bg = c['dos_menu_bg']
+        self.swatch_cells = []      # (row, col, colour) of drawn swatches (introspection / tests)
         for r in range(self._vis):
             i = self._off + r
             if i >= n:
@@ -536,11 +561,17 @@ class DosMenu(_DosBox):
                 fg, rbg = c['dos_menu_fg'], bg
             text, lab = self._row_text(it)
             self._text(1, row, text, fg, rbg)
+            if it['swatch'] and self._swatchw:
+                scol = 2 + self._markw
+                x, y = scol * self.cw, row * self.lh
+                cv.create_rectangle(x + 1, y + 1, x + 2 * self.cw - 2, y + self.lh - 2,
+                                    fill=it['swatch'], outline=fg, width=1, tags='deco')
+                self.swatch_cells.append((row, scol, it['swatch']))
             hk = it['hotkey']
             if hk:
                 idx = lab.lower().find(hk.lower())
                 if idx >= 0 and lab[idx] != ELLIPSIS:
-                    col = 1 + 1 + self._markw + idx
+                    col = 1 + 1 + self._markw + self._swatchw + idx
                     hfg = c['dos_key_fg']
                     if sel:
                         hfg = '#aa0000'
@@ -559,6 +590,22 @@ class DosMenu(_DosBox):
         self._fit_offset()
         if render:
             self._render()
+
+    def select(self, index, render=True):
+        """Pre-select an item: index is clamped, then moved to the nearest selectable item."""
+        n = len(self._items)
+        if n == 0 or self._first() < 0:
+            return
+        try:
+            i = max(0, min(n - 1, int(index)))
+        except Exception:
+            i = self._first()
+        if not self._selectable(i):
+            cand = [j for j in range(n) if self._selectable(j)]
+            i = min(cand, key=lambda j: (abs(j - i), j))
+        if not (self._off <= i < self._off + self._vis):
+            self._off = i - self._vis // 2
+        self._select(i, render=render)
 
     def _move(self, delta):
         n = len(self._items)
@@ -1054,6 +1101,402 @@ class DosDialog(_DosBox):
 
     def close(self):
         self._finish_close()
+
+    def restyle(self, colors, font=None):
+        self.colors = dos_colors(colors)
+        if font is not None:
+            self._font = font
+        self._measure()
+        self.configure(bg=self.colors['dos_menu_bg'])
+        self._layout()
+        self._render()
+        if self._is_open:
+            self._place_box(self.winfo_x(), self.winfo_y())
+
+
+# --------------------------------------------------------------------------
+# DosColorPicker
+# --------------------------------------------------------------------------
+_PARTIAL = ' ▏▎▍▌▋▊▉'
+
+
+def _chan_bar(v, width=16):
+    """Bar of exactly `width` cells for a 0..255 value (255 = completely full)."""
+    f = max(0, min(255, int(v))) * width / 255.0
+    full = min(width, int(f))
+    part = int((f - full) * 8) if full < width else 0
+    out = GAUGE_FULL * full
+    if full < width:
+        out += _PARTIAL[part] if part else GAUGE_EMPTY
+        out += GAUGE_EMPTY * (width - full - 1)
+    return out
+
+
+class DosColorPicker(_DosBox):
+    """'Mix a colour' box.  on_change(hex) on every change of the current value (not on open);
+    on_result('ok', current_hex) / ('cancel', original_hex) once, after the box has closed."""
+
+    BAR = 16
+    TOTAL = 34
+    CX = 3                      # left content column
+    _BUTTONS = (('OK', 'ok', 'o'), ('Reset', 'reset', 'r'), ('Cancel', 'cancel', 'c'))
+
+    def __init__(self, parent, title, initial, colors, font, on_result, on_change=None):
+        _DosBox.__init__(self, parent, colors, font)
+        self._title = '' if title is None else str(title)
+        self._on_result = on_result
+        self._on_change = on_change
+        self._orig = parse_hex_color(initial) or '#000000'
+        self._cur_hex = self._orig
+        self._done = False
+        self._fi = 0                    # 0..2 channels, 3 hex, 4.. buttons
+        self._drag = None
+        self._hits = []
+        self._syncing = False
+        self._var = tk.StringVar(self, self._orig)
+        self._entry = tk.Entry(self._cv, bd=0, highlightthickness=0, relief='flat',
+                               textvariable=self._var)
+        for seq in ('<Tab>', '<ISO_Left_Tab>', '<Up>', '<Down>', '<Return>', '<KP_Enter>',
+                    '<Escape>', '<Alt-Key>'):
+            try:
+                self._entry.bind(seq, self._on_entry_key)
+            except tk.TclError:
+                pass
+        self._entry.bind('<FocusIn>', self._entry_focus)
+        self._var.trace_add('write', self._on_var)
+        cv = self._cv
+        cv.bind('<Key>', self._on_key)
+        cv.bind('<Alt-Key>', self._on_alt)
+        cv.bind('<ButtonPress-1>', self._on_press)
+        cv.bind('<B1-Motion>', self._on_drag)
+        cv.bind('<ButtonRelease-1>', self._on_release)
+        self._layout()
+        self._render()
+
+    # -- value --------------------------------------------------------
+    def _rgb(self):
+        h = self._cur_hex
+        return int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)
+
+    def value(self):
+        return self._cur_hex
+
+    def set_value(self, hex_value):
+        h = parse_hex_color(hex_value)
+        if h is None or h == self._cur_hex:
+            return
+        self._cur_hex = h
+        self._sync_entry()
+        self._render()
+        cb = self._on_change
+        if callable(cb):
+            cb(h)
+
+    def _set_channel(self, ch, v):
+        rgb = list(self._rgb())
+        rgb[ch] = max(0, min(255, int(v)))
+        self.set_value('#%02x%02x%02x' % tuple(rgb))
+
+    def _sync_entry(self, force=False):
+        """Mirror the current value into the entry (unless the entry already means it)."""
+        try:
+            if not force and parse_hex_color(self._var.get()) == self._cur_hex:
+                return
+            self._syncing = True
+            try:
+                self._var.set(self._cur_hex)
+            finally:
+                self._syncing = False
+        except tk.TclError:
+            pass
+
+    def _on_var(self, *a):
+        if self._syncing:
+            return
+        try:
+            text = self._var.get()
+        except tk.TclError:
+            return
+        h = parse_hex_color(text)
+        self._style_entry(h is not None)
+        if h is not None:
+            self.set_value(h)
+
+    # -- layout -------------------------------------------------------
+    def _layout(self):
+        self._total = max(self.TOTAL, len(self._title) + 6)
+        self._rows_ch = (2, 3, 4)
+        self._hex_row = 6
+        self._lbl_row = 8
+        self._pv_row = 9
+        self._btn_row = 13
+        self._size_canvas(self._total, 16)
+        self._cv.delete('all')
+        self._ecol = self.CX + 5
+        self._cv.create_window(self._ecol * self.cw, self._hex_row * self.lh, anchor='nw',
+                               window=self._entry, width=9 * self.cw, height=self.lh, tags='win')
+        self._style_entry()
+
+    def _style_entry(self, valid=None):
+        c = self.colors
+        if valid is None:
+            try:
+                valid = parse_hex_color(self._var.get()) is not None
+            except tk.TclError:
+                valid = True
+        focused = self._fi == 3
+        bg = c['dos_menu_sel_bg'] if focused else c['input_bg']
+        fg = c['dos_menu_sel_fg'] if focused else c['input_fg']
+        if not valid:
+            fg = '#aa0000' if focused else c['alert']
+        try:
+            self._entry.configure(bg=bg, fg=fg, font=self._font, insertwidth=self.cw,
+                                  insertbackground='#aa0000' if focused else c['dos_key_fg'],
+                                  selectbackground=c['dos_menu_fg'],
+                                  selectforeground=c['dos_menu_bg'],
+                                  insertofftime=300, insertontime=600)
+        except tk.TclError:
+            pass
+
+    def _bar_col(self):
+        return self.CX + 2
+
+    def _render(self):
+        c = self.colors
+        cv = self._cv
+        cv.delete('deco')
+        self._hits = []
+        self._draw_frame(self._title)
+        bg, fg = c['dos_menu_bg'], c['dos_menu_fg']
+        sel_bg, sel_fg = c['dos_menu_sel_bg'], c['dos_menu_sel_fg']
+        rgb = self._rgb()
+        for k, (name, v) in enumerate(zip('RGB', rgb)):
+            r = self._rows_ch[k]
+            foc = self._fi == k
+            b0 = self._bar_col()
+            self._text(self.CX, r, name, sel_fg if foc else fg, sel_bg if foc else bg)
+            for i, ch in enumerate(_chan_bar(v, self.BAR)):
+                x, y = (b0 + i) * self.cw, r * self.lh
+                if ch == GAUGE_FULL:
+                    self._rect(b0 + i, r, 1, fg)
+                elif ch == GAUGE_EMPTY:
+                    cv.create_text(x, y, text=ch, anchor='nw', fill=c['dos_menu_dim'],
+                                   font=self._font, tags='deco')
+                else:       # partial block: exact pixel fraction of the cell, 1/8 steps
+                    pw = max(1, self.cw * _PARTIAL.index(ch) // 8)
+                    cv.create_rectangle(x, y, x + pw - 1, y + self.lh - 1, fill=fg, outline=fg,
+                                        width=1, tags='deco')
+            self._text(b0 + self.BAR + 1, r, '%3d' % v, sel_fg if foc else fg, sel_bg if foc else bg)
+            self._hits.append(('chan', k, self.CX, b0 + self.BAR + 4, r))
+        foc = self._fi == 3
+        self._text(self.CX, self._hex_row, 'Hex', sel_fg if foc else fg, sel_bg if foc else bg)
+        self._hits.append(('hex', 0, self.CX, self._ecol + 9, self._hex_row))
+        # previews
+        bw, gap = 12, 4
+        x0 = self.CX
+        for tag, label, col, colour in (('pv_new', 'New', x0, self._cur_hex),
+                                        ('pv_old', 'Old', x0 + bw + gap, self._orig)):
+            self._text(col, self._lbl_row, label, fg, bg)
+            cv.create_rectangle(col * self.cw, self._pv_row * self.lh,
+                                (col + bw) * self.cw - 1, (self._pv_row + 3) * self.lh - 1,
+                                fill=colour, outline=c['dos_menu_border'], width=1,
+                                tags=('deco', tag))
+        # buttons
+        labels = ['[ %s ]' % b[0] for b in self._BUTTONS]
+        total = sum(len(s) for s in labels) + 2 * (len(labels) - 1)
+        col = max(1, (self._total - total) // 2)
+        for i, (s, b) in enumerate(zip(labels, self._BUTTONS)):
+            foc = self._fi == 4 + i
+            s = s[:max(0, self._total - 1 - col)]
+            bfg, bbg = (sel_fg, sel_bg) if foc else (fg, bg)
+            self._text(col, self._btn_row, s, bfg, bbg)
+            p = b[0].lower().find(b[2])
+            if p >= 0 and 2 + p < len(s):
+                self._text(col + 2 + p, self._btn_row, b[0][p],
+                           '#aa0000' if foc else c['dos_key_fg'], bbg)
+            self._hits.append(('button', i, col, col + len(s), self._btn_row))
+            col += len(labels[i]) + 2
+
+    # -- focus --------------------------------------------------------
+    def _set_focus(self, i):
+        self._fi = i % (4 + len(self._BUTTONS))
+        self._style_entry()
+        self._render()
+        try:
+            if self._fi == 3:
+                self._entry.focus_set()
+                self._entry.selection_range(0, 'end')
+                self._entry.icursor('end')
+            else:
+                self._cv.focus_set()
+        except tk.TclError:
+            pass
+
+    def _entry_focus(self, e=None):
+        try:
+            if self.focus_get() is not self._entry:
+                return
+        except (tk.TclError, KeyError):
+            return
+        if self._fi != 3:
+            self._fi = 3
+            self._render()
+        self._style_entry()
+
+    # -- results ------------------------------------------------------
+    def _finish(self, name):
+        if self._done or not self._is_open:
+            return
+        self._done = True
+        res = self._cur_hex if name == 'ok' else self._orig
+        self.close()
+        cb = self._on_result
+        if callable(cb):
+            cb(name, res)
+
+    def _press(self, bi):
+        name = self._BUTTONS[bi][1]
+        if name == 'reset':
+            self.set_value(self._orig)
+            self._sync_entry(force=True)
+            self._style_entry()
+        else:
+            self._finish(name)
+
+    def _hotkey(self, ch):
+        low = ch.lower()
+        for i, b in enumerate(self._BUTTONS):
+            if b[2] == low:
+                self._press(i)
+                return True
+        return False
+
+    # -- events -------------------------------------------------------
+    def _common(self, e):
+        ks = e.keysym
+        if ks in ('Tab', 'ISO_Left_Tab'):
+            back = ks == 'ISO_Left_Tab' or bool(e.state & 0x1)
+            self._set_focus(self._fi + (-1 if back else 1))
+        elif ks == 'Down':
+            self._set_focus(self._fi + 1)
+        elif ks == 'Up':
+            self._set_focus(self._fi - 1)
+        elif ks in ('Return', 'KP_Enter'):
+            if self._fi >= 4:
+                self._press(self._fi - 4)
+            else:
+                self._finish('ok')
+        elif ks == 'Escape':
+            self._finish('cancel')
+        else:
+            return False
+        return True
+
+    def _on_entry_key(self, e):
+        if e.keysym.startswith('Alt') or (e.state & 0x20000 and len(e.keysym) == 1):
+            if len(e.keysym) == 1:
+                self._hotkey(e.keysym)
+            return 'break'
+        self._common(e)
+        return 'break'
+
+    def _on_alt(self, e):
+        if len(e.keysym) == 1:
+            self._hotkey(e.keysym)
+        return 'break'
+
+    def _on_key(self, e):
+        if self._common(e):
+            return 'break'
+        ks = e.keysym
+        big = bool(e.state & 0x5)       # Shift or Ctrl
+        if self._fi < 3:
+            k = self._fi
+            cur = self._rgb()[k]
+            if ks in ('Left', 'KP_Left'):
+                self._set_channel(k, cur - (16 if big else 1))
+            elif ks in ('Right', 'KP_Right'):
+                self._set_channel(k, cur + (16 if big else 1))
+            elif ks in ('Prior', 'KP_Prior'):
+                self._set_channel(k, cur + 16)
+            elif ks in ('Next', 'KP_Next'):
+                self._set_channel(k, cur - 16)
+            elif ks in ('Home', 'KP_Home'):
+                self._set_channel(k, 0)
+            elif ks in ('End', 'KP_End'):
+                self._set_channel(k, 255)
+        elif self._fi >= 4:
+            bi = self._fi - 4
+            if ks == 'Left' and bi > 0:
+                self._set_focus(self._fi - 1)
+            elif ks == 'Right' and bi < len(self._BUTTONS) - 1:
+                self._set_focus(self._fi + 1)
+            elif ks == 'space':
+                self._press(bi)
+        return 'break'
+
+    def _value_at(self, x):
+        b0 = self._bar_col() * self.cw
+        frac = (float(x) - b0) / float(max(1, self.BAR * self.cw - 1))
+        return int(round(max(0.0, min(1.0, frac)) * 255))
+
+    def _on_press(self, e):
+        col, row = int(e.x) // self.cw, int(e.y) // self.lh
+        for kind, i, c0, c1, r in self._hits:
+            if r == row and c0 <= col < c1:
+                if kind == 'button':
+                    self._press(i)
+                    return
+                if kind == 'chan':
+                    self._set_focus(i)
+                    if col >= self._bar_col() and col < self._bar_col() + self.BAR:
+                        self._drag = i
+                        self._set_channel(i, self._value_at(e.x))
+                else:
+                    self._set_focus(3)
+                return
+        try:
+            self._cv.focus_set()
+        except tk.TclError:
+            pass
+
+    def _on_drag(self, e):
+        if self._drag is not None and self._is_open:
+            self._set_channel(self._drag, self._value_at(e.x))
+
+    def _on_release(self, e):
+        self._drag = None
+
+    # -- public -------------------------------------------------------
+    def open(self, x=None, y=None):
+        if self._is_open:
+            self.close()
+        self._done = False
+        self._drag = None
+        self._begin_open()
+        self._cur_hex = self._orig
+        self._sync_entry()
+        self._layout()
+        self._fi = 0
+        self._style_entry()
+        self._render()
+        self._place_box(x, y)
+        try:
+            self.update_idletasks()
+        except tk.TclError:
+            pass
+        self._set_focus(0)
+
+    def close(self):
+        """Close silently (no on_result); use Esc / buttons for a result."""
+        self._drag = None
+        self._finish_close()
+
+    def destroy(self):
+        self._done = True
+        self._on_change = None
+        self._on_result = None
+        _DosBox.destroy(self)
 
     def restyle(self, colors, font=None):
         self.colors = dos_colors(colors)

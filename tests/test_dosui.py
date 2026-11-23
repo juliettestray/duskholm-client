@@ -583,9 +583,663 @@ def _():
     assert b0.strip() == b1.strip(), (b0, b1)
 
 
-@check('runtime < 30s')
+# ------------------------------------------------------------------ parse_hex_color
+@check('parse_hex_color edge cases')
 def _():
-    assert time.time() - T0 < 30, time.time() - T0
+    f = dosui.parse_hex_color
+    assert f('#abc') == '#aabbcc' and f('ABC') == '#aabbcc' and f('#AaBbCc') == '#aabbcc'
+    assert f(' #FFF ') == '#ffffff' and f('123456') == '#123456' and f('  #12ab34  ') == '#12ab34'
+    for bad in ('#abcd', '#12345g', '#aabbcc\n', '\n#aabbcc', '', None, '٣', '#٣٣٣',
+                '٣٣٣٣٣٣', '#', '##abc', '#ab', '#aabbccd', 'abcde', 5,
+                b'#abc', [], '#aa bb', 'ａｂｃ', '#aabbcc\t'):
+        assert f(bad) is None, repr(bad)
+    assert 'parse_hex_color' in dosui.__all__ and 'DosColorPicker' in dosui.__all__
+
+
+# ------------------------------------------------------------------ menu swatches / select
+def sw_items(n=5):
+    return [{'label': 'Item %d' % i,
+             'swatch': '#%02x%02x%02x' % ((i * 37) % 256, (i * 91) % 256, (i * 5) % 256)}
+            for i in range(n)]
+
+
+@check('menu swatch: aligned rows, 3-cell column, invalid ignored')
+def _():
+    plain = dosui.DosMenu(area, 'T', items_basic([]), C, FONT)
+    sw = [dict(it, swatch='#ff0000') if it else None for it in items_basic([])]
+    m = dosui.DosMenu(area, 'T', sw, C, FONT)
+    assert m._swatchw == 3 and plain._swatchw == 0
+    assert m._cols == plain._cols + 3
+    for mm in (plain, m):
+        mm.open()
+        upd()
+        for it in mm._items:
+            if it is not None:
+                assert len(mm._row_text(it)[0]) == mm._inner
+        mm.close()
+    cols = {m._row_text(it)[0].index(it['label']) for it in m._items if it}
+    assert len(cols) == 1, cols
+    mix = [{'label': 'A', 'swatch': '#123456'}, {'label': 'B', 'swatch': 'red'},
+           {'label': 'C', 'swatch': '#12345'}, {'label': 'D', 'swatch': 5}, {'label': 'E'}, None,
+           {'label': 'F', 'swatch': ' #ABCDEF '}]
+    mm = dosui.DosMenu(area, 'T', mix, C, FONT)
+    mm.open()
+    upd()
+    assert mm._swatchw == 3
+    assert [s[2] for s in mm.swatch_cells] == ['#123456', '#abcdef'], mm.swatch_cells
+    assert len({mm._row_text(it)[0].index(it['label']) for it in mm._items if it}) == 1
+    assert len({len(mm._row_text(it)[0]) for it in mm._items if it}) == 1
+    mm.destroy()
+    mm = dosui.DosMenu(area, 'T', [{'label': 'A', 'swatch': 'zz'}, {'label': 'B', 'swatch': ''}], C, FONT)
+    assert mm._swatchw == 0            # all invalid -> no column at all
+    mm.destroy()
+    items = [{'label': 'Alpha', 'hotkey': 'p', 'checked': True, 'swatch': '#00ff00', 'shortcut': 'F1'},
+             {'label': 'Beta', 'checked': False}]
+    mm = dosui.DosMenu(area, 'T', items, C, FONT)
+    assert mm._row_text(mm._items[0])[0].startswith(' ' + dosui.CHECK_ON + '    Alpha')
+    assert mm._row_text(mm._items[1])[0].startswith('      Beta')
+    mm.destroy()
+    plain.destroy()
+    m.destroy()
+
+
+@check('menu swatch: visible on selected/disabled rows, own colour, contrasting outline')
+def _():
+    items = [{'label': 'One', 'swatch': '#00aaaa'}, {'label': 'Two', 'swatch': '#ff00ff', 'enabled': False},
+             {'label': 'Three', 'swatch': '#0000aa'}]
+    m = dosui.DosMenu(area, 'T', items, C, FONT)
+    m.open(20, 20)
+    upd()
+    assert m.selected == 0
+    rects = {}
+    for iid in m._cv.find_withtag('deco'):
+        if m._cv.type(iid) == 'rectangle':
+            rects.setdefault(str(m._cv.itemcget(iid, 'fill')), []).append(
+                (m._cv.coords(iid), str(m._cv.itemcget(iid, 'outline'))))
+    for colr in ('#00aaaa', '#ff00ff', '#0000aa'):
+        assert colr in rects, colr
+    # selected row: swatch colour equals the bar colour, so the outline must contrast
+    sw_rect = [r for r in rects['#00aaaa'] if r[0][2] - r[0][0] < 3 * m.cw][0]
+    assert sw_rect[1] == C['dos_menu_sel_fg'] and sw_rect[1] != '#00aaaa'
+    w = sw_rect[0][2] - sw_rect[0][0]
+    assert 2 * m.cw - 4 <= w <= 2 * m.cw, (w, m.cw)
+    assert sw_rect[0][0] >= 2 * m.cw and sw_rect[0][2] <= 4 * m.cw   # cols 2-3; col 4 is the spacer
+    key(m._cv, 'Down')
+    assert m.selected == 2 and len(m.swatch_cells) == 3
+    m.destroy()
+
+
+@check('menu select()/initial: clamping, disabled skip, centering')
+def _():
+    items = [{'label': 'a'}, None, {'label': 'b', 'enabled': False}, {'label': 'c'}, {'label': 'd'}]
+    m = dosui.DosMenu(area, 'T', items, C, FONT, initial=4)
+    assert m.selected == 4
+    m.select(2)
+    assert m.selected == 3          # disabled -> nearest selectable
+    m.select(1)
+    assert m.selected == 0
+    m.select(99)
+    assert m.selected == 4
+    m.select(-5)
+    assert m.selected == 0
+    m.select('x')
+    assert m.selected == 0
+    m.select(None)
+    assert m.selected == 0
+    m.destroy()
+    for ini, want in ((2, 3), (1000, 4), (-1, 0)):
+        m = dosui.DosMenu(area, 'T', items, C, FONT, initial=ini)
+        assert m.selected == want, (ini, m.selected)
+        m.destroy()
+    m = dosui.DosMenu(area, 'T', [], C, FONT, initial=3)
+    m.select(2)
+    assert m.selected == -1
+    m.destroy()
+    big = dosui.DosMenu(area, 'Fonts', sw_items(120), C, FONT, initial=60)
+    big.open()
+    upd()
+    assert big.selected == 60 and big._off <= 60 < big._off + big._vis and big._vis < 120
+    key(big._cv, 'Return')
+    assert not big.is_open()
+    big.destroy()
+    log = []
+    m = dosui.DosMenu(area, 'T', [{'label': str(i), 'action': (lambda i=i: log.append(i))}
+                                 for i in range(10)], C, FONT, initial=7)
+    m.open()
+    upd()
+    key(m._cv, 'Return')
+    assert log == [7]
+    m.destroy()
+
+
+@check('menu: 120 items with swatches scroll, mouse, hotkeys, parent height respected')
+def _():
+    log = []
+    items = sw_items(120)
+    for i, it in enumerate(items):
+        it['action'] = (lambda i=i: log.append(i))
+        it['hotkey'] = 'z' if i == 5 else ''
+    m = dosui.DosMenu(area, 'Fonts', items, C, FONT_SMALL)
+    m.open()
+    upd()
+    assert m.winfo_height() <= area.winfo_height()
+    assert len(m.swatch_cells) == m._vis
+    key(m._cv, 'End')
+    assert m.selected == 119 and m._off + m._vis == 120 and len(m.swatch_cells) == m._vis
+    for _ in range(20):
+        key(m._cv, 'Prior')
+    assert m.selected == 0
+    for _ in range(3):
+        key(m._cv, 'Next')
+    assert m._off <= m.selected < m._off + m._vis
+    idx = m._off + 2
+    m._cv.event_generate('<Button-1>', x=6 * m.cw, y=3 * m.lh + 2)
+    upd(1)
+    assert log == [idx] and not m.is_open()
+    m.open()
+    key(m._cv, 'z')
+    assert log[-1] == 5
+    m.restyle(C, FONT_BIG)
+    upd()
+    assert m.winfo_height() <= area.winfo_height()
+    m.destroy()
+
+
+# ------------------------------------------------------------------ color picker
+def mk_picker(initial='#336699', font=FONT, parent=None, colors=C):
+    ev = {'res': [], 'chg': []}
+    p = dosui.DosColorPicker(parent or area, 'Colour', initial, colors, font,
+                             lambda n, h: ev['res'].append((n, h)), lambda h: ev['chg'].append(h))
+    return p, ev
+
+
+def hexe(p, text):
+    e = p._entry
+    e.delete(0, 'end')
+    e.insert(0, text)
+    upd(1)
+
+
+@check('picker: open/initial, no on_change on open, previews, layout, silent close')
+def _():
+    focus(entry_focus)
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    assert p.is_open() and p.value() == '#336699' and ev['chg'] == [] and ev['res'] == []
+    assert root.focus_get() is p._cv
+    assert p._cols == p._total and p._rows == 16
+    new = p._cv.find_withtag('pv_new')[0]
+    old = p._cv.find_withtag('pv_old')[0]
+    for iid in (new, old):
+        c = p._cv.coords(iid)
+        assert (c[2] - c[0] + 1) >= 10 * p.cw and (c[3] - c[1] + 1) >= 3 * p.lh
+    assert str(p._cv.itemcget(new, 'fill')) == '#336699' == str(p._cv.itemcget(old, 'fill'))
+    assert dosui._chan_bar(128) == '█' * 8 + '░' * 8
+    assert dosui._chan_bar(0) == '░' * 16 and dosui._chan_bar(255) == '█' * 16
+    assert all(len(dosui._chan_bar(v)) == 16 for v in range(256))
+    texts = [p._cv.itemcget(i, 'text') for i in p._cv.find_withtag('deco') if p._cv.type(i) == 'text']
+    for want in ('[ OK ]', '[ Reset ]', '[ Cancel ]', 'New', 'Old', ' 51', '102', '153'):
+        assert want in texts, (want, texts)
+    assert p._entry.get() == '#336699'
+    p.close()
+    upd()
+    assert root.focus_get() is entry_focus
+    assert ev['res'] == []
+    p.destroy()
+    for bad in (None, 'junk', 5, '#12', '', [], '٣٣٣'):
+        q, ev = mk_picker(bad)
+        q.open()
+        upd()
+        assert q.value() == '#000000'
+        q.destroy()
+    q, ev = mk_picker('ABC')
+    assert q.value() == '#aabbcc'
+    q.destroy()
+
+
+@check('picker: keyboard channel changes, shift/ctrl/page/home/end, clamping')
+def _():
+    p, ev = mk_picker('#101010')
+    p.open()
+    upd()
+    c = p._cv
+    key(c, 'Right')
+    assert p.value() == '#111010' and ev['chg'] == ['#111010']
+    key(c, 'Left')
+    key(c, 'Left')
+    assert p.value() == '#0f1010'
+    key(c, 'Right', state=1)
+    assert p.value() == '#1f1010'          # shift
+    key(c, 'Right', state=4)
+    assert p.value() == '#2f1010'          # ctrl
+    key(c, 'Left', state=4)
+    key(c, 'Left', state=1)
+    assert p.value() == '#0f1010'
+    key(c, 'Next')
+    assert p.value() == '#001010'          # PgDn -16, clamped at 0
+    n = len(ev['chg'])
+    key(c, 'Left')
+    assert p.value() == '#001010' and len(ev['chg']) == n      # clamp no-op: no callback
+    key(c, 'Prior')
+    assert p.value() == '#101010'
+    key(c, 'End')
+    assert p.value() == '#ff1010'
+    n = len(ev['chg'])
+    key(c, 'Right')
+    key(c, 'Prior')
+    key(c, 'Right', state=1)
+    assert p.value() == '#ff1010' and len(ev['chg']) == n
+    key(c, 'Home')
+    assert p.value() == '#001010'
+    key(c, 'Down')
+    assert p._fi == 1
+    key(c, 'End')
+    key(c, 'Left')
+    assert p.value() == '#00fe10'
+    key(c, 'Down')
+    key(c, 'Prior')
+    key(c, 'Prior')
+    assert p.value() == '#00fe30'
+    key(c, 'Home')
+    assert p.value() == '#00fe00' and p._entry.get() == '#00fe00'
+    assert all(HEX.match(h) and h == h.lower() for h in ev['chg'])
+    p.destroy()
+
+
+@check('picker: focus movement Up/Down/Tab/Shift-Tab, buttons Left/Right')
+def _():
+    p, ev = mk_picker()
+    p.open()
+    upd()
+    c = p._cv
+    assert p._fi == 0
+    for exp in (1, 2, 3):
+        key(c if p._fi != 3 else p._entry, 'Down')
+        assert p._fi == exp
+    assert root.focus_get() is p._entry
+    key(p._entry, 'Down')
+    assert p._fi == 4 and root.focus_get() is c
+    key(c, 'Right')
+    assert p._fi == 5
+    key(c, 'Right')
+    assert p._fi == 6
+    key(c, 'Right')
+    assert p._fi == 6
+    key(c, 'Left')
+    assert p._fi == 5
+    key(c, 'Tab')
+    assert p._fi == 6
+    key(c, 'Tab')
+    assert p._fi == 0                      # wrap
+    key(c, 'Up')
+    assert p._fi == 6                      # wrap back
+    key(c, 'Tab', state=1)
+    assert p._fi == 5                      # Shift-Tab
+    key(c, 'Up')
+    key(c, 'Up')
+    assert p._fi == 3
+    key(p._entry, 'Up')
+    assert p._fi == 2
+    key(c, 'Tab')
+    assert p._fi == 3
+    key(p._entry, 'Tab')
+    assert p._fi == 4
+    key(c, 'Up')
+    key(p._entry, 'Tab', state=1)
+    assert p._fi == 2
+    assert ev['chg'] == [] and ev['res'] == []
+    p.destroy()
+
+
+@check('picker: hex typing valid/invalid/short/junk, live apply, entry keeps typed text')
+def _():
+    p, ev = mk_picker('#000000')
+    p.open()
+    upd()
+    p._set_focus(3)
+    e = p._entry
+    assert root.focus_get() is e
+    hexe(p, '#AABBCC')
+    assert p.value() == '#aabbcc' and ev['chg'] == ['#aabbcc']
+    hexe(p, '#12345g')
+    assert p.value() == '#aabbcc' and len(ev['chg']) == 1
+    hexe(p, '#abcd')
+    assert p.value() == '#aabbcc'
+    hexe(p, '#123')
+    assert p.value() == '#112233' and e.get() == '#123'     # not rewritten while typing
+    hexe(p, 'F0A')
+    assert p.value() == '#ff00aa'
+    hexe(p, 'abcdef')
+    assert p.value() == '#abcdef'
+    hexe(p, 'abcdefg')
+    assert p.value() == '#abcdef'
+    hexe(p, '#abcdef ')
+    assert p.value() == '#abcdef'
+    hexe(p, '')
+    assert p.value() == '#abcdef'
+    n = len(ev['chg'])
+    hexe(p, 'ABCDEF')
+    assert len(ev['chg']) == n             # same colour: no callback
+    hexe(p, '#٣٣٣')
+    assert p.value() == '#abcdef'
+    p._set_focus(2)
+    p._set_focus(3)
+    for k in ('numbersign', '1', '2', '3', '4', '5', '6'):
+        key(e, k)
+    assert p.value() == '#123456', (p.value(), e.get())
+    key(e, 'BackSpace')
+    assert e.get() == '#12345' and p.value() == '#123456'
+    p._set_focus(0)
+    key(p._cv, 'End')
+    assert e.get() == '#ff3456'            # channel change rewrites the entry
+    p.destroy()
+
+
+@check('picker: OK/Cancel/Reset/Esc/Enter semantics, result exactly once')
+def _():
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    key(p._cv, 'End')
+    key(p._cv, 'Return')
+    assert ev['res'] == [('ok', '#ff6699')] and not p.is_open()
+    key(p._cv, 'Return')
+    key(p._cv, 'Escape')
+    p.close()
+    upd()
+    assert len(ev['res']) == 1
+    p.destroy()
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    p._set_focus(3)
+    hexe(p, '#010203')
+    key(p._entry, 'Return')
+    assert ev['res'] == [('ok', '#010203')]
+    p.destroy()
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    key(p._cv, 'Home')
+    assert ev['chg'] == ['#006699']
+    key(p._cv, 'Escape')
+    assert ev['res'] == [('cancel', '#336699')] and not p.is_open()
+    p.destroy()
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    p._set_focus(3)
+    key(p._entry, 'Escape')
+    assert ev['res'] == [('cancel', '#336699')]
+    p.destroy()
+    # Reset keeps the box open, restores, fires on_change; a second Reset is a no-op
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    key(p._cv, 'End')
+    key(p._cv, 'Down')
+    key(p._cv, 'End')
+    assert p.value() == '#ffff99'
+    p._set_focus(5)
+    key(p._cv, 'Return')
+    assert p.is_open() and p.value() == '#336699' and ev['chg'][-1] == '#336699' and ev['res'] == []
+    n = len(ev['chg'])
+    key(p._cv, 'space')
+    assert len(ev['chg']) == n and p._entry.get() == '#336699'
+    p._set_focus(3)
+    hexe(p, '#zzz')
+    p._set_focus(5)
+    key(p._cv, 'Return')
+    assert p._entry.get() == '#336699'     # reset refreshes an invalid entry too
+    key(p._cv, 'Left')
+    assert p._fi == 4
+    p.set_value('#000001')
+    key(p._cv, 'space')
+    assert ev['res'] == [('ok', '#000001')]
+    p.destroy()
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    p.set_value('#000000')
+    p._set_focus(6)
+    key(p._cv, 'Return')
+    assert ev['res'] == [('cancel', '#336699')]
+    p.destroy()
+    for ks, want in (('o', 'ok'), ('O', 'ok'), ('c', 'cancel'), ('C', 'cancel')):
+        p, ev = mk_picker('#336699')
+        p.open()
+        upd()
+        p.set_value('#111111')
+        p._cv.event_generate('<Alt-Key>', keysym=ks)
+        upd(1)
+        assert [r[0] for r in ev['res']] == [want], (ks, ev)
+        assert ev['res'][0][1] == ('#111111' if want == 'ok' else '#336699')
+        p.destroy()
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    p.set_value('#111111')
+    p._cv.event_generate('<Alt-Key>', keysym='r')
+    upd(1)
+    assert p.value() == '#336699' and p.is_open() and ev['res'] == []
+    p._set_focus(3)
+    p.set_value('#111111')
+    p._entry.event_generate('<Alt-Key>', keysym='c')
+    upd(1)
+    assert ev['res'] == [('cancel', '#336699')]
+    p.destroy()
+    seen = []
+    p = dosui.DosColorPicker(area, 'x', '#222222', C, FONT, lambda n, h: seen.append((n, p.is_open())))
+    p.open()
+    upd()
+    p.set_value('#333333')
+    key(p._cv, 'Return')
+    assert seen == [('ok', False)]
+    p.open()
+    upd()
+    assert p.value() == '#222222'           # reopen starts from the original again
+    key(p._cv, 'Escape')
+    assert seen[-1] == ('cancel', False) and len(seen) == 2
+    p.destroy()
+
+
+@check('picker: mouse click and drag on bars, button clicks, focus')
+def _():
+    p, ev = mk_picker('#000000')
+    p.open(20, 20)
+    upd()
+    cw, lh = p.cw, p.lh
+    b0 = p._bar_col() * cw
+
+    def px(frac):
+        return b0 + int(frac * 16 * cw)
+
+    def near(want):      # pixel->value mapping may be off by one step
+        got = [int(p.value()[i:i + 2], 16) for i in (1, 3, 5)]
+        return all(abs(g - int(w, 16)) <= 1 for g, w in zip(got, (want[1:3], want[3:5], want[5:7])))
+    c = p._cv
+    c.event_generate('<Button-1>', x=px(0.5), y=3 * lh + 2)
+    upd(1)
+    assert near('#008000') and p._fi == 1, (p.value(), p._fi)
+    c.event_generate('<Button-1>', x=px(1.0) - 1, y=2 * lh + 2)
+    upd(1)
+    assert near('#ff8000')
+    c.event_generate('<B1-Motion>', x=px(0.25), y=2 * lh + 2, state=0x100)
+    upd(1)
+    assert near('#408000') and p.value()[3:] == p.value()[3:], p.value()
+    c.event_generate('<B1-Motion>', x=px(0.25), y=4 * lh + 2, state=0x100)
+    upd(1)
+    assert near('#408000')          # stays on the channel being dragged
+    c.event_generate('<B1-Motion>', x=b0 - 50, y=0, state=0x100)
+    upd(1)
+    assert near('#008000')
+    c.event_generate('<B1-Motion>', x=b0 + 99 * cw, y=0, state=0x100)
+    upd(1)
+    assert near('#ff8000')
+    c.event_generate('<ButtonRelease-1>', x=0, y=0)
+    upd(1)
+    n = len(ev['chg'])
+    c.event_generate('<B1-Motion>', x=px(0.1), y=0, state=0x100)
+    upd(1)
+    assert len(ev['chg']) == n             # drag ended
+    c.event_generate('<Button-1>', x=px(0.0), y=4 * lh + 2)
+    upd(1)
+    assert p._fi == 2 and near('#ff8000')
+    c.event_generate('<ButtonRelease-1>', x=0, y=0)
+    n = len(ev['chg'])
+    c.event_generate('<Button-1>', x=p.CX * cw + 2, y=3 * lh + 2)
+    upd(1)
+    assert p._fi == 1 and len(ev['chg']) == n     # label click only focuses
+    c.event_generate('<Button-1>', x=2, y=2)
+    c.event_generate('<Button-1>', x=c.winfo_width() - 1, y=c.winfo_height() - 1)
+    upd(1)
+    kinds = {h[1]: h for h in p._hits if h[0] == 'button'}
+    _k, _i, c0, c1, r = kinds[1]
+    c.event_generate('<Button-1>', x=(c0 + 3) * cw, y=r * lh + 2)
+    upd(1)
+    assert p.value() == '#000000' and p.is_open()
+    p.set_value('#0a0b0c')
+    _k, _i, c0, c1, r = kinds[0]
+    c.event_generate('<Button-1>', x=(c0 + 2) * cw, y=r * lh + 2)
+    upd(1)
+    assert ev['res'] == [('ok', '#0a0b0c')]
+    p.destroy()
+    p, ev = mk_picker('#336699')
+    p.open(20, 20)
+    upd()
+    _k, _i, c0, c1, r = [h for h in p._hits if h[0] == 'button'][2]
+    p._cv.event_generate('<Button-1>', x=(c0 + 2) * p.cw, y=r * p.lh + 2)
+    upd(1)
+    assert ev['res'] == [('cancel', '#336699')]
+    p.destroy()
+
+
+@check('picker: programmatic set_value, destroy while open, double close, garbage')
+def _():
+    p, ev = mk_picker('#336699')
+    p.open()
+    upd()
+    for same in ('#336699', '336699', ' #336699 ', '#369'[:0] or '#336699'):
+        p.set_value(same)
+    assert ev['chg'] == [] and p.value() == '#336699'      # no-ops
+    for bad in (None, 5, 'zz', '#12', '#abcd', ''):
+        p.set_value(bad)
+    assert ev['chg'] == [] and p.value() == '#336699'
+    p.set_value('FFF')
+    assert ev['chg'] == ['#ffffff']
+    p.destroy()
+    assert ev['res'] == []
+    p.close()
+    p.close()
+    upd()
+    assert ev['res'] == []
+    p, ev = mk_picker()
+    p.open()
+    upd()
+    p.set_value('#010101')
+    p.destroy()
+    upd()
+    assert ev['res'] == [] and ev['chg'] == ['#010101']
+    p, ev = mk_picker()
+    p.open()
+    upd()
+    key(p._cv, 'Return')
+    p.close()
+    p.close()
+    p._finish('ok')
+    p._finish('cancel')
+    assert len(ev['res']) == 1
+    p.open()
+    upd()
+    key(p._cv, 'Escape')
+    assert len(ev['res']) == 2
+    p.destroy()
+    host = tk.Frame(root, width=300, height=200)
+    host.place(x=0, y=0)
+    upd()
+    p, ev = mk_picker(parent=host)
+    p.open()
+    upd()
+    host.destroy()
+    upd()
+    assert ev['res'] == []
+    p = dosui.DosColorPicker(area, None, None, None, None, None)
+    p.open()
+    upd()
+    key(p._cv, 'Right')
+    key(p._cv, 'Return')
+    p.destroy()
+    p = dosui.DosColorPicker(area, 'T', 'x', 'garbage', FONT, 'notcallable', 5)
+    p.open()
+    upd()
+    key(p._cv, 'End')
+    key(p._cv, 'Escape')
+    p.destroy()
+
+
+@check('picker: restyle, fonts 9..32pt, tiny parent, focus restore, no leaks')
+def _():
+    focus(entry_focus)
+    before = children_count(area)
+    p, ev = mk_picker('#336699', FONT_SMALL)
+    p.open()
+    upd()
+    w1 = p.winfo_width()
+    p.restyle(dosui.dos_colors({'dos_menu_bg': '#202020', 'dos_menu_sel_bg': '#888800'}), FONT_BIG)
+    upd()
+    assert p.winfo_width() > w1 and p.is_open()
+    assert str(p._cv.cget('bg')) == '#202020'
+    key(p._cv, 'Right')
+    assert ev['chg'] == ['#346699']
+    p.restyle(C)
+    upd()
+    for sz in (9, 12, 20, 32):
+        f = tkfont.Font(family='Consolas', size=sz)
+        p.restyle(C, f)
+        upd()
+        assert p._wpx == p._total * p.cw and p._hpx == 16 * p.lh
+        c = p._cv.coords(p._cv.find_withtag('pv_new')[0])
+        assert c[2] - c[0] + 1 >= 10 * p.cw
+    key(p._cv, 'Escape')
+    upd()
+    assert root.focus_get() is entry_focus
+    p.destroy()
+    tiny = tk.Frame(root, width=40, height=30)
+    tiny.place(x=0, y=0)
+    upd()
+    for f in (FONT_SMALL, FONT_BIG):
+        q, ev = mk_picker('#112233', f, parent=tiny)
+        q.open()
+        upd()
+        for ks in ('Right', 'Down', 'Down', 'Down', 'Down', 'Right', 'Left', 'Up'):
+            key(q._cv, ks)
+        q.restyle(C)
+        q.close()
+        q.destroy()
+    tiny.destroy()
+    for _ in range(100):
+        q, ev = mk_picker()
+        q.open()
+        q.destroy()
+    upd(3)
+    assert children_count(area) == before, (children_count(area), before)
+    q, ev = mk_picker()
+    q.open()
+    upd()
+    assert children_count(area) == before + 3
+    q.close()
+    assert children_count(area) == before + 1
+    q.destroy()
+    q = dosui.DosColorPicker(area, 'T' * 100, '#fff', C, FONT, None)
+    q.open()
+    upd()
+    q.destroy()
+
+
+@check('runtime < 40s')
+def _():
+    assert time.time() - T0 < 40, time.time() - T0
 
 
 try:
