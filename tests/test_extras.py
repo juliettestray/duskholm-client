@@ -173,5 +173,35 @@ app.set_dos_mode(False); pump(0.3)
 c = sc.clean_settings({"host": "x", "keys": {"moon": "Ctrl-T"}, "clock": "nonsense"})
 assert c["keys"] == {} and c["clock"] == "off"
 
+# the game's own clock and your name are learned from what the game prints
+import time as _t
+def game_line(offset):
+    t = _t.gmtime(_t.time() + offset)
+    return "The time is %s %s %2d %02d:%02d:%02d %d" % (_t.strftime("%a", t), _t.strftime("%b", t), t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, t.tm_year)
+app.cfg["game_offset"] = None
+app._on_data((game_line(-4 * 3600) + "\n\r").encode()); pump(0.2)
+assert app.cfg["game_offset"] == -4 * 3600, app.cfg["game_offset"]
+app._on_data((game_line(5 * 3600 + 1800) + "\n\r").encode()); pump(0.2)
+assert app.cfg["game_offset"] == 5 * 3600 + 1800
+app._on_data(b"The time is nonsense\n\r"); pump(0.1)
+assert app.cfg["game_offset"] == 5 * 3600 + 1800, "junk does not change it"
+app._on_data((game_line(-5 * 3600) + "\n\r").encode()); pump(0.2)
+app.cfg["clock"] = "game"
+assert app.clock_text().endswith("EST"), app.clock_text()
+due, kind = extras.parse_when("game 21:30", utc(2024, 3, 20, 12), game_offset=-4 * 3600)
+assert abs((due - utc(2024, 3, 20, 12)) - 13.5 * 3600) < 1
+app.cfg["char_name"] = ""
+app._on_data(b"[Name        ] - Ywellia\n\r"); pump(0.2)
+assert app.cfg["char_name"] == "Ywellia"
+app._on_data(b"[Name        ] - <script>\n\r"); pump(0.1)
+assert app.cfg["char_name"] == "Ywellia"
+pr = [p for p in sc.trigger_presets() if p["name"] == "Preview your credit walk"][0]
+app._store_trigger(None, dict(pr, enabled=True))
+app._on_data(b"Your credit walk string is now: strides\n\r"); pump(0.2)
+assert app._notice_text == "Preview: Ywellia strides in from the north", app._notice_text
+c = sc.clean_settings({"host": "x", "game_offset": 100, "char_name": "bad name!"})
+assert c["game_offset"] is None and c["char_name"] == ""
+assert sc.clean_settings({"host": "x", "game_offset": -14400})["game_offset"] == -14400
+
 root.update(); root.destroy()
 print("extras tests OK")

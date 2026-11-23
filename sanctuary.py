@@ -942,6 +942,11 @@ def clean_settings(cfg):
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
     cfg["gradients"] = colortools.validate_saved(cfg.get("gradients"))
+    go = cfg.get("game_offset")
+    cfg["game_offset"] = go if isinstance(go, int) and not isinstance(go, bool) and abs(go) <= 14 * 3600 and go % 900 == 0 \
+        else None
+    cn = cfg.get("char_name")
+    cfg["char_name"] = cn if isinstance(cn, str) and re.fullmatch(r"[A-Za-z][A-Za-z'-]{0,23}", cn) else ""
     cfg["designs"] = customize_data.validate_designs(cfg.get("designs"))
     ph = cfg.get("panes_hidden")
     cfg["panes_hidden"] = [x for x in ph[:8] if isinstance(x, str) and len(x) < 20] if isinstance(ph, list) else []
@@ -1073,7 +1078,7 @@ _PRESET_DEFS = [
      "actions": [{"type": "route", "pane": "Tells"}]},
     {"name": "Preview your credit walk", "mode": "regex", "ignore_case": True,
      "pattern": "^Your (?:credit|ego form) walk string is now: (.*)$", "priority": 0,
-     "actions": [{"type": "status", "text": "Preview: Someone %1 in from the north"}]},
+     "actions": [{"type": "status", "text": "Preview: {name} %1 in from the north"}]},
     {"name": "Capture Guide / Newbie to a pane", "mode": "plain", "pattern": "^[Guide]*", "priority": 0,
      "actions": [{"type": "route", "pane": "Guide"}]},
     {"name": "Capture Newbie to a pane", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
@@ -2783,15 +2788,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
             {"label": "Aliases...", "hotkey": "A", "shortcut": "Ctrl-A", "action": self.open_aliases},
             {"label": "Panes / layout...", "hotkey": "V", "shortcut": "Ctrl-P", "action": self.open_panes},
-            {"label": "Timer...", "hotkey": "I", "shortcut": "Alt-T", "action": self.open_timers},
-            {"label": "Notepad", "hotkey": "D", "shortcut": "Alt-N", "action": self.toggle_notepad},
-            {"label": "Moon", "hotkey": "M", "shortcut": "Alt-M", "action": self.open_moon},
-            {"label": "Gradient maker...", "hotkey": "G", "shortcut": "Alt-G", "action": self.open_gradient},
-            {"label": "Hex to xterm...", "hotkey": "Y", "shortcut": "Alt-H", "action": self.open_hex},
-            {"label": "Customize form...", "hotkey": "Z", "shortcut": "Alt-K", "action": self.open_customize},
-            {"label": "Export world settings...", "hotkey": "Q", "action": self.open_export},
-            {"label": "Import world settings...", "hotkey": "R", "action": self.open_import},
-            {"label": "Hotkeys...", "hotkey": "J", "action": self.open_hotkeys},
+            {"label": "Tools  >", "hotkey": "M", "action": self.dos_tools_menu},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
              "action": self.toggle_log},
@@ -2812,6 +2809,21 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             {"label": "Exit", "hotkey": "X", "shortcut": "Alt-X", "action": self.dos_confirm_quit},
         ]
         return self._dos_menu(APP_NAME, items, corner=True)
+
+    def dos_tools_menu(self):
+        items = [
+            {"label": "Timer...", "hotkey": "T", "shortcut": "Alt-T", "action": self.open_timers},
+            {"label": "Notepad", "hotkey": "N", "shortcut": "Alt-N", "action": self.toggle_notepad},
+            {"label": "Moon", "hotkey": "M", "shortcut": "Alt-M", "action": self.open_moon},
+            {"label": "Gradient maker...", "hotkey": "G", "shortcut": "Alt-G", "action": self.open_gradient},
+            {"label": "Hex to xterm...", "hotkey": "H", "shortcut": "Alt-H", "action": self.open_hex},
+            {"label": "Customize form...", "hotkey": "C", "shortcut": "Alt-K", "action": self.open_customize},
+            None,
+            {"label": "Export world settings...", "hotkey": "E", "action": self.open_export},
+            {"label": "Import world settings...", "hotkey": "I", "action": self.open_import},
+            {"label": "Hotkeys...", "hotkey": "K", "action": self.open_hotkeys},
+        ]
+        return self._dos_menu("Tools", items, back=self.dos_main_menu)
 
     def dos_skin_menu(self, after=None):
         cur = self._skin_name()
@@ -4589,6 +4601,33 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         self._append([(t, self._tag_for(k)) for t, k in pieces], _internal=True)
         self._line_flushed = True
 
+    _TIME_RE = re.compile(r"^The time is [A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} (\d\d):(\d\d):(\d\d) (\d{4})\s*$")
+    _NAME_RE = re.compile(r"^\[Name\s*\]\s+-\s+([A-Za-z][A-Za-z'-]{0,23})\s*$")
+
+    def learn_from_line(self, plain):
+        """Pick up facts the game states about itself: its clock (the `time` command's first line) and
+        your character's name (the `display` command). Only the game's output is read, never your input."""
+        if plain.startswith("The time is "):
+            m = self._TIME_RE.match(plain)
+            if m:
+                try:
+                    # the game prints a date and time; compare its time of day with UTC now
+                    h, mi, se = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                    now = time.gmtime()
+                    diff = (h * 3600 + mi * 60 + se) - (now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec)
+                    diff = ((diff + 43200) % 86400) - 43200            # nearest whole-day wrap
+                    off = int(round(diff / 900.0)) * 900
+                    if abs(off) <= 14 * 3600 and off != self.cfg.get("game_offset"):
+                        self.cfg["game_offset"] = off
+                        self._save_settings()
+                except (ValueError, OverflowError):
+                    pass
+        elif plain.startswith("[Name"):
+            m = self._NAME_RE.match(plain)
+            if m and m.group(1) != self.cfg.get("char_name"):
+                self.cfg["char_name"] = m.group(1)
+                self._save_settings()
+
     def _finish_line(self, key):
         pieces, plain = self._pending, self._line_plain
         flushed, hidden = self._line_flushed, self._line_hidden_len
@@ -4599,6 +4638,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             except tk.TclError:
                 pass
             self._flush_job = None
+        self.learn_from_line(plain[hidden:] if hidden else plain)
         if hidden:
             plain = plain[hidden:]
             if not pieces:
@@ -4638,7 +4678,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
                 elif kind == "note":
                     effects.append(("note", triggers.expand(act["text"], m["captures"])))
                 elif kind == "status":
-                    effects.append(("status", triggers.expand(act["text"], m["captures"])))
+                    effects.append(("status", triggers.expand(act["text"], m["captures"]).replace(
+                        "{name}", self.cfg.get("char_name") or "Someone")))
         if routes:
             snapshot = list(pieces) if pieces else [(plain, (None, None, False, False, False, False))]
             for pane in routes:

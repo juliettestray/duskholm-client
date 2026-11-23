@@ -43,7 +43,7 @@ def _clock_hm(text):
     return h, mi
 
 
-def parse_when(text, now=None):
+def parse_when(text, now=None, game_offset=None):
     """What a timer is waiting for: '10m', '1h30m', '90s', '45' (minutes), '21:30' / '9:30pm'
     (your local clock) or 'game 21:30' / 'et 9pm' (the game's Eastern clock).
     Returns (due_timestamp, kind) with kind 'after', 'local' or 'game'; raises ValueError."""
@@ -54,14 +54,15 @@ def parse_when(text, now=None):
     m = re.match(r"^(game|et|eastern)\s+(.+)$", t)
     if m:
         hm = _clock_hm(m.group(2))
-        if hm is None or moon is None:
+        if hm is None or (moon is None and game_offset is None):
             raise ValueError("Game time looks like 'game 21:30' or 'game 9pm'.")
-        loc = moon.eastern_struct(now)
+        loc = (datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=now + game_offset)) \
+            if game_offset is not None else moon.eastern_struct(now)
         target = loc.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
         if target <= loc:
             target += datetime.timedelta(days=1)
         wall = (target - datetime.datetime(1970, 1, 1)).total_seconds()
-        due = wall - moon.eastern_offset(wall + 5 * 3600)
+        due = wall - (game_offset if game_offset is not None else moon.eastern_offset(wall + 5 * 3600))
         return _check(due, now), "game"
     hm = _clock_hm(t[2:] if t.startswith("at ") else t)
     if hm is not None:
@@ -221,6 +222,11 @@ class ExtrasMixin:
         now = time.time()
         if mode == "real":
             return time.strftime("%H:%M", time.localtime(now))
+        go = self.cfg.get("game_offset")
+        if mode == "game" and go is not None:               # the game's own clock, as its `time` command showed it
+            t = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=now + go)
+            name = {-4 * 3600: "EDT", -5 * 3600: "EST"}.get(go, "UTC%+d" % (go // 3600) if go % 3600 == 0 else "")
+            return ("%02d:%02d %s" % (t.hour, t.minute, name)).strip()
         if mode == "game" and moon is not None:
             t = moon.eastern_struct(now)
             return "%02d:%02d %s" % (t.hour, t.minute, "EDT" if moon.eastern_offset(now) == -4 * 3600 else "EST")
@@ -237,7 +243,7 @@ class ExtrasMixin:
     def add_timer(self, when, label=""):
         """Start a timer. Returns a message for the user."""
         try:
-            due, kind = parse_when(when)
+            due, kind = parse_when(when, game_offset=self.cfg.get("game_offset"))
         except ValueError as e:
             return False, str(e)
         if len(self._timers) >= MAX_TIMERS:

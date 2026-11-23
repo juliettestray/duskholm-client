@@ -172,7 +172,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   solid line characters (`┌─┐`), without changing any column, so the colours stay put.
 - **Timer** (`Alt+T`, `/timer 10m label`, `/timer 21:30`, `/timer game 21:30`, `/timer list`,
   `/timer cancel [n]`). Counts down, or waits for a time on your clock or the game's (US Eastern).
-- **Clock** (Options > Clock): your local time, or game time (US Eastern, as the game runs it).
+- **Clock** (Options > Clock): your local time, or the game's own clock. The game's clock is learned
+  from the first line of the game's `time` command (type `time` once); until then it is US Eastern.
+  Game-time timers (`game 21:30`) use the same clock. The client also learns your character's name
+  from the game's `display` output, only ever from what the game prints, never from what you type.
 - **Notepad** (`Alt+N`): a scratch page saved in `~/.sanctuary_notes.txt` as you type.
 - **Moon** (`Alt+M`, `/moon`): the phase, how much is lit, and the next full and new moon, worked
   out the way the game does it (so they agree); a picture in the DOS look.
