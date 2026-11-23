@@ -251,7 +251,7 @@ hangup()
 
 # ============================== saved worlds: the DOS dialing directory ==========================================
 app.set_dos_mode(True); pump(0.6)
-assert "^W Worlds" in app.dosbar.plain[0]
+assert "F10 Menu" in app.dosbar.plain[0]
 app.root.focus_force(); app.input.focus_force(); root.update()
 app.input.event_generate("<Control-w>"); pump(0.3)
 table = overlay(); assert isinstance(table, dosui.DosTable), "Ctrl+W opens the directory"

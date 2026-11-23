@@ -46,7 +46,7 @@ assert app.cfg["worlds"][0]["name"] == "Duskholm" and app.cfg["worlds"][0]["host
 app.set_dos_mode(True)
 for _ in range(30):
     root.update(); time.sleep(0.01)
-assert "SANCTUARY TERMINAL" in app.out.get("1.0", "end-1c")
+assert "TERMINAL" not in app.out.get("1.0", "end-1c"), "the banner is gone; the hint bar says it"
 app.dos_confirm_quit(); root.update()
 assert app._overlay_open()
 root.update(); root.destroy()
