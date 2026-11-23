@@ -124,7 +124,8 @@ assert "checksum" in fails("wrong checksum", sumfile="%s  Sanctuary-1.2.0-win64.
 assert "does not publish a checksum" in fails("no checksum", sumfile=False)
 assert "checksum" in fails("garbage checksum file", sumfile="nonsense")
 assert "does not match" in fails("wrong digest field", sumfile=False, digest="1" * 64)
-setup(make_zip(None), sumfile=False, digest=hashlib.sha256(STATE["zip"]).hexdigest())
+setup(make_zip(None), sumfile=False)
+STATE["digest"] = hashlib.sha256(STATE["zip"]).hexdigest()        # of THIS zip (a different one is made every second)
 assert up.prepare(up.fetch_latest(API, True), tempfile.mkdtemp(), True), "the API's own digest field is enough"
 assert "does not contain" in fails("no exe in zip", zip=make_zip([("Sanctuary/readme.txt", b"hi")]))
 assert "does not contain" in fails("path traversal member", zip=make_zip([("../Sanctuary.exe", b"MZxx"), ("Sanctuary/../../x.exe", b"MZ")]))

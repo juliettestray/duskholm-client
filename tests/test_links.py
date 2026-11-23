@@ -78,16 +78,27 @@ app._set_extra("links", False)
 assert not app.out.tag_ranges("link"), "turning links off removes them"
 app._set_extra("links", True)
 
-# images: fetched, shown in the Images pane
+# images: fetched and shown in a viewer that fills the main area (not a tiny pane)
 app.open_link(base + "/pic.png"); end = time.time() + 8
-while time.time() < end and "images" not in app._panes:
+while time.time() < end and app._image_view is None:
     pump(0.1)
-pump(0.5)
-assert "images" in app._panes and app._panes["images"].get("img") is not None, "image shown in a pane"
-assert opened == ["https://example.com/page"], "images do not go to the browser"
+pump(0.6)
+v = app._image_view
+assert v is not None and v["frame"].winfo_ismapped(), "the image opens in a viewer"
+assert v["frame"].winfo_width() >= app._holder.winfo_width() - 4 and v["frame"].winfo_height() >= app._holder.winfo_height() - 4, "that covers the main area"
+assert v["photo"] is not None and v["photo"].width() > 0, "and the picture is drawn"
+assert "images" not in app._panes, "no pane is created for it"
+assert "Image opened" in app.out.get("1.0", "end")
+assert opened == ["https://example.com/page"], "opening a picture does not go to the browser"
+v["cv"].event_generate("<Key-o>"); pump(0.2)
+assert opened[-1] == base + "/pic.png", "O opens the original"
+v["cv"].event_generate("<Escape>"); pump(0.3)
+assert app._image_view is None and not v["frame"].winfo_exists(), "Escape closes it"
+assert app.show_image("https://x.example/a.png", b"not a picture") is False, "undecodable data falls back"
 # a non-image under an image-looking name falls back to the browser
+n_open = len(opened)
 app.open_link(base + "/fake.jpg"); end = time.time() + 8
-while time.time() < end and len(opened) < 2:
+while time.time() < end and len(opened) <= n_open:
     pump(0.1)
 assert opened[-1] == base + "/fake.jpg"
 # images off: straight to the browser

@@ -1510,6 +1510,7 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         self._last_new_bell = 0.0
         self._img_q = queue.Queue()
         self._img_pending, self._img_polling = 0, False
+        self._image_view = None
         self._extras_init()
         self._tools_init()
         self._access_init()
@@ -2030,40 +2031,92 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         self._poll_images()
 
     def show_image(self, url, data):
-        """Display picture bytes in the Images pane. False when it cannot be decoded."""
-        pane = self.pane_ensure("Images")
-        if pane is None:
-            return False
-        text = pane["text"]
-        self.select_pane("images")
+        """Show a picture over the main text area, scaled to fit (a viewer, not a pane: a pane can be
+        tiny). Esc closes it; O or a click opens the original in the browser. False when the picture
+        cannot be decoded here."""
+        self.close_image_view()
         try:
-            self.root.update_idletasks()
-            maxw = max(160, text.winfo_width() - 24)
-            maxh = max(120, text.winfo_height() - 48)
-            photo = None
             try:
                 from PIL import Image, ImageTk
                 im = Image.open(io.BytesIO(data))
                 if im.width * im.height > 40_000_000:
                     return False
-                im.thumbnail((maxw, maxh))
-                photo = ImageTk.PhotoImage(im)
+                im.load()
+                src = ("pil", im, ImageTk)
+                size = im.size
             except ImportError:
                 import base64
-                photo = tk.PhotoImage(data=base64.b64encode(data))      # PNG / GIF only without Pillow
-                f = max(1, -(-photo.width() // maxw), -(-photo.height() // maxh))
-                if f > 1:
-                    photo = photo.subsample(f)
+                ph = tk.PhotoImage(data=base64.b64encode(data))           # PNG / GIF only without Pillow
+                src = ("tk", ph, None)
+                size = (ph.width(), ph.height())
         except Exception:
             return False
-        pane["img"] = photo
-        text.configure(state="normal")
-        text.delete("1.0", "end")
-        text.insert("end", url[:200] + "\n", "system")
-        text.image_create("end", image=photo)
-        text.insert("end", "\n")
-        text.configure(state="disabled")
+        th = self.theme
+        frame = tk.Frame(self._holder, bd=0, highlightthickness=0, bg=th["panel"])
+        name = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1][:60] or "image"
+        head = tk.Label(frame, anchor="w", padx=8, font=self.f_bold, bg=th["panel"], fg=th["fg"],
+                        text="%s  (%d x %d)    Esc: close    O or click: open the original in your browser"
+                        % (name, size[0], size[1]))
+        head.pack(fill="x")
+        cv = tk.Canvas(frame, bg=th["bg"], highlightthickness=0, bd=0, takefocus=1)
+        cv.pack(fill="both", expand=True)
+        view = {"frame": frame, "cv": cv, "url": url, "photo": None, "job": None}
+
+        def render(_e=None):
+            view["job"] = None
+            w, h = max(50, cv.winfo_width()), max(50, cv.winfo_height())
+            try:
+                if src[0] == "pil":
+                    im2 = src[1].copy()
+                    im2.thumbnail((w - 8, h - 8))                           # shrinks, never enlarges
+                    photo = src[2].PhotoImage(im2)
+                else:
+                    f = max(1, -(-src[1].width() // (w - 8)), -(-src[1].height() // (h - 8)))
+                    photo = src[1].subsample(f) if f > 1 else src[1]
+            except Exception:
+                return
+            view["photo"] = photo
+            cv.delete("all")
+            cv.create_image(w // 2, h // 2, image=photo)
+
+        def later(_e=None):
+            if view["job"] is not None:
+                try:
+                    self.root.after_cancel(view["job"])
+                except tk.TclError:
+                    pass
+            try:
+                view["job"] = self.root.after(80, render)
+            except tk.TclError:
+                view["job"] = None
+        cv.bind("<Configure>", later)
+        cv.bind("<Escape>", lambda e: (self.close_image_view(), "break")[1])
+        cv.bind("<Key-o>", lambda e: (webbrowser.open(url), "break")[1])
+        cv.bind("<Key-O>", lambda e: (webbrowser.open(url), "break")[1])
+        cv.bind("<Button-1>", lambda e: (webbrowser.open(url), "break")[1])
+        frame.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+        frame.lift()
+        self._image_view = view
+        cv.focus_set()
+        self.system("Image opened: %s, %d by %d pixels. Escape closes it, O opens the original in your browser."
+                    % (name, size[0], size[1]))
         return True
+
+    def close_image_view(self):
+        v = getattr(self, "_image_view", None)
+        if v is None:
+            return
+        self._image_view = None
+        if v.get("job") is not None:
+            try:
+                self.root.after_cancel(v["job"])
+            except tk.TclError:
+                pass
+        try:
+            v["frame"].destroy()
+        except tk.TclError:
+            pass
+        self.root.after_idle(self.input.focus_set)
 
     def _text_widgets(self):
         """The main text area and every pane's text area (they share one set of colour tags)."""

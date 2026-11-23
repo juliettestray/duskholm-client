@@ -163,7 +163,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   field). The preset *Preview your credit walk* shows `Preview: Someone <walk> in from the north`
   when you set a credit or ego walk.
 - **Links.** `http(s)` links in the output (and in panes) are underlined and clickable, in both
-  looks. Pictures (`.png .jpg .gif .webp .bmp`) open in an *Images* pane inside the client; every
+  looks. Pictures (`.png .jpg .gif .webp .bmp`) open in a viewer that fills the main area, scaled
+  to fit (`Esc` closes it; `O` or a click opens the original in your browser); every
   other link opens in your browser. Both are options (Options menu).
 - **Emoji** (option, off by default). `:smile:` in incoming text is shown as the emoji and any
   emoji you type is sent as `:smile:`, since the game only takes plain ASCII. About 100 familiar
@@ -300,6 +301,10 @@ python tests/test_access.py       # screen reader mode end to end with a fake vo
 python tests/test_updater.py      # update check/install against a fake local GitHub
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
+
+`python run_tests.py [names]` runs them all (or just the ones named) on a separate invisible
+Windows desktop, so their windows can never grab your focus or keystrokes, and exits non-zero if any
+fail.
 
 The Tk-based tests open a window briefly. `test_fuzz.py` checks that any chunking of a
 stream parses identically, that malformed input never raises, that buffers stay bounded
