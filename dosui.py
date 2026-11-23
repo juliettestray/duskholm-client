@@ -13,6 +13,7 @@ Public API:
 """
 import math
 import re
+import sys
 import textwrap
 import tkinter as tk
 import tkinter.font as tkfont
@@ -646,7 +647,7 @@ class DosMenu(_DosBox):
     # -- events -------------------------------------------------------
     def _on_key(self, e):
         ks, ch = e.keysym, e.char
-        if ks in ('Left', 'Right') and (e.state & 0x20000 or e.state & 0x8):
+        if ks in ('Left', 'Right') and _alt_down(e):
             if ks == 'Left':
                 self.close()                                       # back (the same as Esc)
             else:                                                  # next: go into the entry if it leads somewhere
@@ -1062,7 +1063,7 @@ class DosDialog(_DosBox):
 
     def _common(self, e):
         ks = e.keysym
-        if ks in ('Left', 'Right') and (e.state & 0x20000 or e.state & 0x8):
+        if ks in ('Left', 'Right') and _alt_down(e):
             self._nav(-1 if ks == 'Left' else 1)
         elif ks in ('Tab', 'ISO_Left_Tab'):
             back = ks == 'ISO_Left_Tab' or bool(e.state & 0x1)
@@ -2760,3 +2761,12 @@ def apply_code_tags(text_widget, dim_colour, bg=None):
             tag = 'xc%d' % idx
             w.tag_configure(tag, foreground=ct.XTERM[idx])
             w.tag_add(tag, '1.0+%dc' % start, '1.0+%dc' % end)
+
+
+def _alt_down(e):
+    """Is Alt held for this key event? (On Windows state bit 0x8 is Num Lock, not Alt.)"""
+    try:
+        st = int(e.state)
+    except (TypeError, ValueError):
+        return False
+    return bool(st & 0x20000) if sys.platform.startswith('win') else bool(st & 0x88)

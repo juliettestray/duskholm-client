@@ -259,6 +259,25 @@ m._cv.event_generate("<Alt-Key>", keysym="Right"); pump(0.3)
 assert overlay() is m and sum(1 for it in m._items if it and it.get("checked")) == n_checked, "Alt+Right does nothing on an entry that just flips a setting"
 app.dos_close_overlay(); pump(0.2)
 
+# a plain Left or Right (even with Num Lock on, which Windows reports as state 0x8) does NOT go back or forward
+app.dos_colors_menu(); pump(0.4)
+m = overlay(); labels = [it["label"] if it else None for it in m._items]
+m.select(labels.index(next(l for l in labels if l and l.startswith("Skin")))); pump(0.1)
+for st in (0, 0x8, 0x10, 0x2):
+    m._cv.event_generate("<Key>", keysym="Left", state=st); pump(0.2)
+    assert overlay() is m, "a plain Left leaves the menu alone (state %#x)" % st
+    m._cv.event_generate("<Key>", keysym="Right", state=st); pump(0.2)
+    assert overlay() is m, "a plain Right leaves the menu alone (state %#x)" % st
+m._cv.event_generate("<Key>", keysym="Left", state=0x20000); pump(0.4)
+assert overlay() is not m, "Alt+Left (state 0x20000) goes back"
+app.dos_close_overlay(); pump(0.2)
+d = app._dos_customize(custom.blank(), 1); pump(0.3)
+if d is not None and d._title != "Customize":
+    for st in (0, 0x8):
+        d._cv.event_generate("<Key>", keysym="Right", state=st); pump(0.3)
+        assert overlay() is d, "a plain Right does not change page"
+app.dos_close_overlay(); pump(0.2)
+
 # ---- choosing a skin must not leave menus stacked behind each other (Esc used to step through them)
 def open_menus():
     return [w for w in app.root.winfo_children() if isinstance(w, dosui.DosMenu) and w.is_open()]
