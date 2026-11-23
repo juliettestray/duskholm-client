@@ -254,6 +254,34 @@ class ToolsMixin:
                 msg.configure(text=m)
                 fill_menu()
 
+        def share():
+            try:
+                cols = self._pattern_colours(v["pattern"].get())
+                name = v["pattern"].get() if ct.find_pattern(v["pattern"].get(), self.cfg.get("gradients", [])) else "Pattern"
+                line = ct.share_string(name, cols)
+            except ValueError as e:
+                msg.configure(text=str(e))
+                return
+            self.root.clipboard_clear()
+            self.root.clipboard_append(line)
+            msg.configure(text="Copied: " + line)
+
+        def import_shared():
+            from tkinter import simpledialog
+            line = simpledialog.askstring("Import a pattern", "Paste a shared line (sgrad1:Fire:196,202,208):", parent=top)
+            if not line:
+                return
+            try:
+                name, cols = ct.parse_share(line)
+            except ValueError as e:
+                msg.configure(text=str(e))
+                return
+            ok, m = self.save_pattern(name, ",".join(str(c) for c in cols))
+            msg.configure(text=m)
+            if ok:
+                v["pattern"].set(name)
+                fill_menu()
+
         def delete():
             if self.delete_pattern(v["pattern"].get()):
                 msg.configure(text="Deleted.")
@@ -268,7 +296,7 @@ class ToolsMixin:
         bf = tk.Frame(top)
         bf.grid(row=r, column=0, columnspan=2, pady=8)
         for label, fn in (("To input", to_input), ("Copy", copy), ("Again", refresh), ("Save pattern...", save),
-                          ("Delete pattern", delete), ("Close", close)):
+                          ("Share", share), ("Import...", import_shared), ("Delete pattern", delete), ("Close", close)):
             tk.Button(bf, text=label, command=fn).pack(side="left", padx=3)
         top.protocol("WM_DELETE_WINDOW", close)
         top.bind("<Escape>", lambda e: close())
@@ -277,60 +305,6 @@ class ToolsMixin:
         text.focus_set()
         return top
 
-    def _dos_gradient(self, st):
-        fields = [{"key": "pattern", "label": "Pattern", "type": "text", "value": st["pattern"], "width": 40},
-                  {"key": "mode", "label": "Apply", "type": "text", "value": st["mode"], "width": 10},
-                  {"key": "text", "label": "Text", "type": "text", "value": st["text"], "width": 56},
-                  {"key": "prefix", "label": "Start with", "type": "text", "value": st["prefix"], "width": 20},
-                  {"key": "smooth", "label": "Blend between colours", "type": "check", "value": st["smooth"]}]
-
-        def result(res, vals):
-            new = {"pattern": vals.get("pattern", ""), "mode": (vals.get("mode", "") or "stretch").strip().lower(),
-                   "text": vals.get("text", ""), "prefix": vals.get("prefix", ""), "smooth": bool(vals.get("smooth"))}
-            self._grad_state = new
-            if res == "cancel":
-                return
-            if res == "patterns":
-                names = ct.all_pattern_names(self.cfg.get("gradients", []))
-                items = [{"label": n, "action": (lambda n=n: self._reopen(self.open_gradient, dict(new, pattern=n)))}
-                         for n in names]
-                self._reopen(lambda: self._dos_menu("Patterns", items, back=lambda: self.open_gradient(new)))
-                return
-            if res == "modes":
-                items = [{"label": "%-8s %s" % (m, ct.MODE_HELP[m]),
-                          "action": (lambda m=m: self._reopen(self.open_gradient, dict(new, mode=m)))} for m in ct.MODES]
-                self._reopen(lambda: self._dos_menu("Apply", items, back=lambda: self.open_gradient(new)))
-                return
-            if res == "save":
-                def got(r2, v2):
-                    if r2 == "ok":
-                        ok, m = self.save_pattern(v2.get("name", ""), new["pattern"])
-                        self.system(m)
-                    self._reopen(self.open_gradient, new)
-                self._reopen(lambda: self._dos_dialog(
-                    "Save pattern", [{"key": "name", "label": "Name", "type": "text", "value": "", "width": 24}],
-                    [("OK", "ok"), ("Cancel", "cancel")], got, width=44))
-                return
-            coded, why = self.make_gradient(new)
-            if coded is None:
-                self.system(why)
-                self._reopen(self.open_gradient, new)
-                return
-            if res == "preview":
-                self.show_coloured(coded)
-                self._reopen(self.open_gradient, new)
-            elif res == "send":
-                if "\n" in coded:
-                    self.root.clipboard_clear()
-                    self.root.clipboard_append(coded)
-                    self.system("Several lines: copied to the clipboard.")
-                else:
-                    self.put_in_input(coded)
-        return self._dos_dialog("Gradient", fields, [("Preview", "preview"), ("To input", "send"), ("Save", "save"),
-                                                     ("Patterns", "patterns"), ("Modes", "modes"), ("Cancel", "cancel")],
-                                result, width=82,
-                                message="Pattern: a name, or xterm numbers like 196 202 208 (or hex). Use \\n for new lines.")
-
     # ---- customize -----------------------------------------------------------------------
     def intercept_line(self, line):
         """A typed line the client handles itself. True when it was consumed."""
@@ -338,14 +312,6 @@ class ToolsMixin:
             self.open_customize()
             return True
         return False
-
-    def send_customize(self, values):
-        cmds, problems = custom.build_commands(values)
-        if problems:
-            return False, problems[0]
-        for c in cmds:
-            self.send_line(c, expand=False)       # text lines must reach the game's editor untouched
-        return True, "Sent %d lines." % len(cmds)
 
     def open_customize(self, values=None):
         vals = custom.clean_values(values if values is not None else self._cust_values)
@@ -365,6 +331,13 @@ class ToolsMixin:
         r = 0
         tk.Label(top, text="Type (for your design book)").grid(row=r, column=0, sticky="w", padx=10, pady=3)
         tk.OptionMenu(top, typ, *custom.TYPES).grid(row=r, column=1, sticky="w")
+        r += 1
+        modevar = tk.StringVar(value=vals.get("mode") or self._cust_mode)
+        tk.Label(top, text="Send it").grid(row=r, column=0, sticky="w", padx=10, pady=3)
+        mf = tk.Frame(top)
+        mf.grid(row=r, column=1, sticky="w")
+        for m in custom.MODES:
+            tk.Radiobutton(mf, text=custom.MODE_TEXT[m], value=m, variable=modevar).pack(side="left", padx=(0, 10))
         r += 1
         for key, label, kind, width in custom.FIELDS:
             tk.Label(top, text=label).grid(row=r, column=0, sticky="nw", padx=10, pady=2)
@@ -386,6 +359,7 @@ class ToolsMixin:
             out = {}
             for k, w in widgets.items():
                 out[k] = w.get("1.0", "end-1c") if isinstance(w, tk.Text) else w.get()
+            out["mode"] = modevar.get()
             return custom.clean_values(out)
 
         def move(key, d):
@@ -399,6 +373,7 @@ class ToolsMixin:
                 w.bind("<Up>", lambda e, k=k: move(k, -1))
 
         def put(values):
+            modevar.set(values.get("mode") if values.get("mode") in custom.MODES else "cli")
             for k, w in widgets.items():
                 if isinstance(w, tk.Text):
                     w.delete("1.0", "end")
@@ -408,7 +383,7 @@ class ToolsMixin:
                     w.insert(0, values.get(k, ""))
 
         def send(_e=None):
-            self._cust_values, self._cust_type = read(), typ.get()
+            self._cust_values, self._cust_type, self._cust_mode = read(), typ.get(), modevar.get()
             ok, m = self.send_customize(self._cust_values)
             msg.configure(text=m, fg="#c04040" if not ok else self.theme["fg"])
             return "break"
@@ -488,46 +463,6 @@ class ToolsMixin:
         self._theme_tree(win)
         return win
 
-    def _dos_customize(self, vals, page):
-        keys = custom.PAGE1 if page == 1 else custom.PAGE2
-        labels = {f[0]: f for f in custom.FIELDS}
-        fields = []
-        if page == 1:
-            fields.append({"key": "_type", "label": "Type", "type": "text", "value": self._cust_type, "width": 12})
-        for k in keys:
-            fields.append({"key": k, "label": labels[k][1][:26], "type": "text", "value": vals[k],
-                           "width": min(labels[k][3], 46)})
-
-        def result(res, got):
-            new = dict(vals)
-            for k in keys:
-                new[k] = got.get(k, "")
-            if page == 1 and got.get("_type", "").strip().lower() in custom.TYPES:
-                self._cust_type = got["_type"].strip().lower()
-            self._cust_values = new
-            if res == "cancel":
-                return
-            if res == "next":
-                self._reopen(self._dos_customize, new, 2)
-            elif res == "back":
-                self._reopen(self._dos_customize, new, 1)
-            elif res == "send":
-                ok, m = self.send_customize(new)
-                self.system(m)
-                if not ok:
-                    self._reopen(self._dos_customize, new, page)
-            elif res == "save":
-                self._dos_save_design(new, lambda: self._dos_customize(new, page))
-            elif res == "book":
-                self._dos_design_book(lambda d: self._reopen(self._dos_customize, dict(d["values"], item=new["item"]), 1),
-                                      lambda: self._dos_customize(new, page))
-            elif res == "clear":
-                self._reopen(self._dos_customize, custom.blank(), 1)
-        buttons = [("Send", "send"), ("Save", "save"), ("Book", "book"), ("Clear", "clear"),
-                   ("Next >" if page == 1 else "< Back", "next" if page == 1 else "back"), ("Cancel", "cancel")]
-        return self._dos_dialog("Customize (page %d of 2)" % page, fields, buttons, result, width=76,
-                                message="Leave anything blank to leave it alone. Use \\n for new lines in text.")
-
     def _dos_save_design(self, values, back):
         def got(res, v):
             if res == "ok":
@@ -581,6 +516,26 @@ class ToolsMixin:
                 self.open_hex()
             return True
         if cmd in ("gradient", "grad"):
+            word, _, rest = arg.partition(" ")
+            if word.lower() == "share":
+                try:
+                    cols = self._pattern_colours(rest or self._grad_state["pattern"])
+                    line = ct.share_string(rest or self._grad_state["pattern"], cols)
+                except ValueError as e:
+                    self.system(str(e))
+                else:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(line)
+                    self.system("Copied to the clipboard: " + line)
+                return True
+            if word.lower() == "import":
+                try:
+                    name, cols = ct.parse_share(rest)
+                except ValueError as e:
+                    self.system(str(e))
+                else:
+                    self.system(self.save_pattern(name, ",".join(str(c) for c in cols))[1])
+                return True
             if arg:
                 state = dict(self._grad_state, text=arg)
                 coded, why = self.make_gradient(state)

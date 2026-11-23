@@ -121,11 +121,12 @@ PRESETS = {
     "Bramble": [53, 89, 22, 28, 64, 100],
     "Moonlight": [17, 60, 103, 146, 189, 231],
 }
-MODES = ("stretch", "cycle", "middle", "bounce", "random", "word", "line")
+MODES = ("stretch", "cycle", "middle", "edges", "bounce", "random", "word", "line")
 MODE_HELP = {
     "stretch": "spread the whole pattern from the first letter to the last",
     "cycle": "repeat the pattern again and again",
     "middle": "start in the middle, end at the edges",
+    "edges": "start at the edges, end in the middle",
     "bounce": "forward and back through the pattern",
     "random": "a random colour from the pattern for each letter",
     "word": "one colour per word, stretched across the line",
@@ -167,6 +168,9 @@ def _colour_for(stops, mode, j, n, smooth, rnd):
     if mode == "middle":
         c = (n - 1) / 2.0
         return sample(stops, abs(j - c) / c, smooth)
+    if mode == "edges":
+        c = (n - 1) / 2.0
+        return sample(stops, 1.0 - abs(j - c) / c, smooth)
     if mode == "bounce":
         m = len(stops)
         if m == 1:
@@ -348,3 +352,30 @@ def convert_many(text, system=False):
         rows.append({"input": tok[:20], "asked": rgb_to_hex(rgb), "index": i, "hex": hx, "code": code(i),
                      "distance": round(d, 1)})
     return rows
+
+
+# ---------------------------------------------------------------- sharing a pattern as one line of text
+SHARE_PREFIX = "sgrad1:"
+
+
+def share_string(name, colours):
+    """'sgrad1:Fire:196,202,208': one line that can be pasted into chat or a message."""
+    name = " ".join("".join(c for c in str(name) if c.isprintable() and c not in ":,").split())[:30] or "Pattern"
+    cols = [int(c) for c in colours][:32]
+    if not cols or any(not 0 <= c <= 255 for c in cols):
+        raise ValueError("A pattern needs 1 to 32 colours between 0 and 255.")
+    return "%s%s:%s" % (SHARE_PREFIX, name, ",".join(str(c) for c in cols))
+
+
+def parse_share(text):
+    """(name, colours) from a shared line (found anywhere in the text); raises ValueError."""
+    m = re.search(r"sgrad1:([^:\r\n]{1,30}):(\d{1,3}(?:,\d{1,3}){0,31})(?![\d,])", str(text or ""))
+    if not m:
+        raise ValueError("That is not a shared gradient (it should look like sgrad1:Fire:196,202,208).")
+    cols = [int(x) for x in m.group(2).split(",")]
+    if any(c > 255 for c in cols):
+        raise ValueError("That gradient has a colour above 255.")
+    name = " ".join("".join(c for c in m.group(1) if c.isprintable()).split())[:30]
+    if not name:
+        raise ValueError("That gradient has no name.")
+    return name, cols

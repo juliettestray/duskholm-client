@@ -756,14 +756,14 @@ class DosDialog(_DosBox):
         for f in (fields or []):
             if not isinstance(f, dict):
                 continue
-            t = 'check' if f.get('type') == 'check' else 'text'
+            t = f.get('type') if f.get('type') in ('check', 'pick') else 'text'
             try:
                 fw = int(f.get('width') or 20)
             except Exception:
                 fw = 20
             fd = {'key': str(f.get('key', '')), 'label': str(f.get('label', '')), 'type': t,
                   'width': max(1, fw), 'secret': bool(f.get('secret')),
-                  'value': f.get('value')}
+                  'value': f.get('value'), 'mark': str(f.get('mark', '\u25bc'))[:1] or '\u25bc'}
             self._fields.append(fd)
         self._buttons = []
         for b in (buttons or []):
@@ -780,6 +780,8 @@ class DosDialog(_DosBox):
         for i, fd in enumerate(self._fields):
             if fd['type'] == 'check':
                 fd['state'] = bool(fd['value'])
+            elif fd['type'] == 'pick':
+                fd['shown'] = '' if fd['value'] is None else str(fd['value'])
             else:
                 e = tk.Entry(self._cv, bd=0, highlightthickness=0, relief='flat',
                              show='*' if fd['secret'] else '')
@@ -806,7 +808,7 @@ class DosDialog(_DosBox):
         pw, ph = self._parent_size()
         pcols = max(12, pw // self.cw - 1)
         fields, buttons = self._fields, self._buttons
-        labw = max([len(f['label']) for f in fields if f['type'] == 'text'] or [0])
+        labw = max([len(f['label']) for f in fields if f['type'] in ('text', 'pick')] or [0])
         # natural content width
         need = [len(self._title) + 6]
         for f in fields:
@@ -865,6 +867,9 @@ class DosDialog(_DosBox):
         # (re)create entry windows
         self._cv.delete('all')
         for i, f in enumerate(fields):
+            if f['type'] == 'pick':
+                f['fw'] = max(1, min(f['width'], total - 2 - self._ecol - 1))
+                continue
             if f['type'] != 'text':
                 continue
             fw = max(1, min(f['width'], total - 2 - self._ecol - 1))
@@ -913,6 +918,13 @@ class DosDialog(_DosBox):
                 self._text(2, r, s, c['dos_menu_sel_fg'] if focused else fg,
                            c['dos_menu_sel_bg'] if focused else bg)
                 self._hits.append(('check', i, 2, 2 + len(s), r))
+            elif f['type'] == 'pick':
+                self._text(2, r, _trunc(f['label'], self._labw).ljust(self._labw), fg, bg)
+                fw = f.get('fw', 1)
+                cell = _trunc(f['shown'], max(1, fw - 2)).ljust(max(1, fw - 2)) + ' ' + f['mark']
+                self._text(self._ecol, r, cell, c['dos_menu_sel_fg'] if focused else c['input_fg'],
+                           c['dos_menu_sel_bg'] if focused else c['input_bg'])
+                self._hits.append(('pick', i, self._ecol, self._ecol + fw, r))
             else:
                 self._text(2, r, _trunc(f['label'], self._labw).ljust(self._labw), fg, bg)
                 self._hits.append(('field', i, self._ecol, self._ecol + f.get('fw', 1), r))
@@ -976,6 +988,8 @@ class DosDialog(_DosBox):
         for f in self._fields:
             if f['type'] == 'check':
                 out[f['key']] = bool(f['state'])
+            elif f['type'] == 'pick':
+                out[f['key']] = f['shown']
             else:
                 try:
                     out[f['key']] = f['entry'].get()
@@ -1004,6 +1018,8 @@ class DosDialog(_DosBox):
         kind, idx = self._cur()
         if kind == 'button':
             self._press(idx)
+        elif kind == 'field' and self._fields[idx]['type'] == 'pick':
+            self._finish(('pick', self._fields[idx]['key']))        # the caller opens a list or an editor
         elif self._buttons:
             self._press(0)
 
@@ -1068,6 +1084,8 @@ class DosDialog(_DosBox):
                 self._press(idx)
             elif kind == 'field' and self._fields[idx]['type'] == 'check':
                 self._toggle(idx)
+            elif kind == 'field' and self._fields[idx]['type'] == 'pick':
+                self._finish(('pick', self._fields[idx]['key']))
         elif e.char and len(e.char) == 1 and e.char.isprintable():
             self._hotkey(e.char)
         return 'break'
@@ -1085,6 +1103,9 @@ class DosDialog(_DosBox):
                 elif kind == 'check':
                     self._set_focus(self._stops.index(('field', i)))
                     self._toggle(i)
+                elif kind == 'pick':
+                    self._set_focus(self._stops.index(('field', i)))
+                    self._finish(('pick', self._fields[i]['key']))
                 else:
                     self._set_focus(self._stops.index(('field', i)))
                 return
@@ -2574,3 +2595,74 @@ PRE = '\x01'          # a message line starting with this is laid out by hand (c
 def _is_columns(line):
     """A hand-laid-out line: it is never re-wrapped, and is cut cleanly if it cannot fit."""
     return line.startswith(PRE)
+
+
+# --------------------------------------------------------------------------
+# multi-line text editor (the DOS counterpart of the game's own string editor)
+# --------------------------------------------------------------------------
+class DosTextEditor(tk.Frame):
+    """A page you type paragraphs into. Ctrl-S (or F10) keeps the text, Esc throws the changes away.
+    Meant to be placed over the main screen (give it the holder frame as parent)."""
+
+    def __init__(self, parent, title, text, colors, font, on_done, hint=None):
+        tk.Frame.__init__(self, parent, bd=0, highlightthickness=0)
+        self.colors = dos_colors(colors)
+        self._font = font
+        self._on_done = on_done
+        self._open = False
+        self._title = str(title)
+        self._hint = hint or 'Ctrl-S  done        Esc  cancel        Enter  new line'
+        self._head = tk.Label(self, anchor='w', padx=8, bd=0)
+        self._head.pack(fill='x', side='top')
+        self._foot = tk.Label(self, anchor='w', padx=8, bd=0)
+        self._foot.pack(fill='x', side='bottom')
+        self._cv = tk.Text(self, wrap='word', undo=True, bd=0, highlightthickness=0, padx=8, pady=4)
+        self._cv.pack(fill='both', expand=True)
+        self._cv.insert('1.0', '' if text is None else str(text))
+        self._cv.edit_reset()
+        for seq in ('<Control-s>', '<Control-S>', '<F10>'):
+            self._cv.bind(seq, lambda e: (self._finish(True), 'break')[1])
+        self._cv.bind('<Escape>', lambda e: (self._finish(False), 'break')[1])
+        self.restyle(colors, font)
+
+    def restyle(self, colors=None, font=None):
+        if colors is not None:
+            self.colors = dos_colors(colors)
+        if font is not None:
+            self._font = font
+        c = self.colors
+        self._head.configure(text=' %s' % self._title, bg=c['dos_bar_bg'], fg=c['dos_bar_fg'], font=self._font)
+        self._foot.configure(text=' %s' % self._hint, bg=c['dos_bar2_bg'], fg=c['dos_bar2_fg'], font=self._font)
+        self._cv.configure(bg=c['input_bg'], fg=c['input_fg'], font=self._font, insertwidth=self._font.measure('0'),
+                           insertbackground=c['dos_key_fg'], selectbackground=c['dos_menu_fg'],
+                           selectforeground=c['dos_menu_bg'])
+
+    def open(self, x=None, y=None):
+        self._open = True
+        self.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+        self.lift()
+        self._cv.focus_set()
+        self._cv.mark_set('insert', 'end-1c')
+
+    def is_open(self):
+        return self._open
+
+    def text(self):
+        return self._cv.get('1.0', 'end-1c').rstrip('\n')
+
+    def close(self):
+        if not self._open:
+            return
+        self._open = False
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass
+
+    def _finish(self, keep):
+        if not self._open:
+            return
+        result = self.text() if keep else None
+        self.close()
+        if callable(self._on_done):
+            self._on_done(result)

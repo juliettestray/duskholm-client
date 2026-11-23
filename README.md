@@ -52,10 +52,11 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Font** (View > Font…): pick any installed *monospace* family and a size (7–40) with a
   live preview; `Ctrl +/-` and `Ctrl+wheel` still zoom. The choice is saved. The input line
   and stat bar always stay on screen, even at large sizes.
-- **Skins and a user-adjustable palette** (View > Skin, View > Colours…). Five built in:
+- **Skins and a user-adjustable palette** (View > Skin, View > Colours…). Six built in:
   *Plain* (neutral dark, the default), *Plain Light*, *Moody* (violet-black, tarnished gold,
-  spectral teal), *Retro Phosphor* (green-screen CRT) and *Retro DOS* (16-colour VGA, blue
-  panels, chunky buttons). A skin sets every colour, the 16-colour game palette, button
+  spectral teal), *Retro Phosphor* (green-screen CRT), *Retro Amber* (amber CRT) and *Retro DOS*
+  (16-colour VGA, blue panels, chunky buttons). `Ctrl+*` and `Ctrl+/` raise and lower the minimum
+  text contrast by half a step. A skin sets every colour, the 16-colour game palette, button
   style and a preferred monospace font (used unless you've picked a font yourself).
   - **Edit anything live**: click any of the 16 game colours or 13 interface colours to
     change it; the whole window, the stat bar and the *existing scrollback* recolour at once.
@@ -183,13 +184,23 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Notepad** (`Alt+N`): a scratch page saved in `~/.sanctuary_notes.txt` as you type.
 - **Moon** (`Alt+M`, `/moon`): the phase, how much is lit, and the next full and new moon, worked
   out the way the game does it (so they agree); a picture in the DOS look.
-- **Gradient maker** (`Alt+G`, `/gradient text`): pick or write a pattern of xterm colours, choose
-  how it is applied (stretch, cycle, middle-out, bounce, random, per word, per line) and see it;
-  send it to the input line or the clipboard. Your own patterns can be saved.
+- **Gradient maker** (`Alt+G`, `/gradient text`): choose a pattern of xterm colours, choose how it
+  is applied (stretch, cycle, middle-out, edges-in, bounce, random, per word, per line) and see it;
+  send it to the input line or the clipboard. In the DOS look, Enter on *Pattern* or *Apply* opens
+  the list (the patterns have colour swatches, and *Create new...* and *Import a shared one...* are
+  in it). Patterns can be shared as one line of text, `sgrad1:Fire:196,202,208,214,220,226`
+  (*Share* copies it, `/gradient share [name]`, `/gradient import <line>`).
 - **Hex to xterm** (`Alt+H`, `/hex ff8800`): the closest xterm colour and its code (`` `208 ``).
-- **Customize form** (`Alt+K`, or just type `customize`): fill in an item's fields, `Ctrl+S`
-  sends all the `customize` lines. Save what you made in the **design book**, sorted by type, and
-  load it later. (`customize <item> ...` with arguments still goes straight to the game.)
+- **Customize form** (`Alt+K`, or just type `customize`): fill in an item's fields and send them
+  all at once. Two ways to send: as `customize <item> ...` command lines for an item you have, or
+  *into the game's own item editor* (the one a new shop item is made in, which has no command
+  line): the client types the editor's commands for you, gathers its long replies instead of
+  scrolling them, shows you only the finished item (plus any errors or chat that came in), and
+  asks you to say Done. Where the answers are known you pick them: Enter on a line opens the list
+  (item kind, size, layer, the body parts a garment covers or zips) and Enter on a description,
+  taste or playlist opens a text page like the game's own editor (`Ctrl-S` keeps it, `Esc` cancels).
+  Save what you made in the **design book**, sorted by type, and load it later. (`customize <item>
+  ...` with arguments typed in the game still goes straight to the game.)
 - **Screen reader mode** (Options > Screen reader mode, `/sr on`, or start with `--screen-reader`).
   The client keeps to its plain window (the DOS look is switched off) and *speaks*: new game lines
   (never the prompt, never line-drawing or art), client messages, pane lines with the pane's name
@@ -308,6 +319,8 @@ python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flood control, review
 python tests/test_access.py       # screen reader mode end to end with a fake voice
 python tests/test_updater.py      # update check/install against a fake local GitHub
+python tests/test_dosforms.py     # DOS pick lists, the text page, gradient maker and customize form (both modes)
+python tests/test_dos_fit.py      # every DOS screen: nothing wrapped out of place or cut off
 python tests/test_combatfilter.py # skipping other people's fights for the voice
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```

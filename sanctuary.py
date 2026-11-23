@@ -60,6 +60,7 @@ except ImportError:
     boxes = None
 import extras                       # timers, clock, notepad, moon window, hotkeys
 import toolsui                      # gradient maker, hex converter, customize form
+import dosforms                     # the DOS-look versions of those: pick from lists, edit paragraphs
 import colortools
 import custom as customize_data
 import worldfile
@@ -269,6 +270,16 @@ BUILTIN_SKINS = {s["name"]: s for s in (
                 "#aaaaaa", "#555555", "#ff5555", "#55ff55", "#ffff55", "#5555ff", "#ff55ff",
                 "#55ffff", "#ffffff"],
           blurb="Classic 16-colour VGA, blue panels, chunky buttons."),
+    _skin("Retro Amber", bg="#0a0500", fg="#ffb000", panel="#1a0f00", panel_edge="#5a3a00",
+          input_bg="#1a0f00", input_fg="#ffcc33", echo="#c27f00", system="#ffd24d",
+          alert="#ffe08a", dim="#8a5a00", select="#5a3600", button_bg="#2a1800",
+          button_fg="#ffb000", relief="ridge", min_contrast=3.5,
+          fonts=["Perfect DOS VGA 437", "Perfect DOS VGA 437 Win", "More Perfect DOS VGA", "Nouveau IBM",
+                "Px437 IBM VGA 8x16", "Fixedsys Excelsior 3.01", "Lucida Console", "Consolas"],
+          ansi=["#2a1700", "#ff5a36", "#c9d93a", "#ffd24d", "#c27f00", "#ff8a4d", "#ffcc66",
+                "#ffd9a0", "#7a4a00", "#ff7a59", "#e0f060", "#ffe680", "#e69a1a", "#ffa066",
+                "#ffe0a0", "#fff0d0"],
+          blurb="Amber monochrome CRT. Reds and greens stay distinct so warnings still show."),
 )}
 DEFAULT_SKIN = "Plain"
 DEFAULT_DOS_SKIN = "Retro DOS"
@@ -292,6 +303,8 @@ _DOS_STYLE = {
                            "#33ff66", "#33ff66", "#33ff66", "#020a02", "#1f7a35", "#010501", "#010601"),
     "Retro DOS": _dos("#007a7a", "#ffffff", "#0000aa", "#ffffff", "#ffff55", "#0000aa", "#ffffff",
                       "#ffffff", "#00aaaa", "#000000", "#9999dd", "#000044", "#0000aa"),
+    "Retro Amber": _dos("#5a3600", "#ffe0a0", "#1a0f00", "#ffb000", "#ffe680", "#1a0f00", "#ffb000",
+                        "#ffb000", "#ffb000", "#0a0500", "#8a5a00", "#050200", "#050300"),
 }
 for _n, _d in _DOS_STYLE.items():
     BUILTIN_SKINS[_n].update(_d)
@@ -1482,7 +1495,7 @@ class Connection:
                 pass
 
 
-class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
+class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
         self.cfg = self._load_settings()
@@ -1513,6 +1526,7 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         self._image_view = None
         self._extras_init()
         self._tools_init()
+        self._forms_init()
         self._access_init()
         self._update_init()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
@@ -1774,6 +1788,10 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             w.bind("<KeyPress>", self._overlay_key_fallback, add="+")
             w.bind("<F12>", lambda e: (self.open_about(), "break")[1])
             w.bind("<F1>", lambda e: (self.open_help(), "break")[1] if not self.dos else None)
+            for seq in ("<Control-KP_Multiply>", "<Control-asterisk>"):
+                w.bind(seq, lambda e: (self.adjust_contrast(+0.5), "break")[1])
+            for seq in ("<Control-KP_Divide>", "<Control-slash>"):
+                w.bind(seq, lambda e: (self.adjust_contrast(-0.5), "break")[1])
             w.bind("<Configure>", self._on_configure, add="+")
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
@@ -3044,7 +3062,8 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
                  ("F6", "Colours"), ("F7", "Font"), ("F10", "Main menu"), ("F11", "Full screen"),
                  ("F12", "About"), ("Alt-X", "Exit"), ("PgUp / PgDn", "Scroll back"),
                  ("Up / Down", "Command history"), ("Ctrl-L", "Clear the screen"), ("Ctrl +/-", "Font size"),
-                 ("Ctrl-1..9", "Show a pane's tab"), ("Alt-1..9", "Fold a pane area"), ("Alt-0", "Fold all areas")]
+                 ("Ctrl-1..9", "Show a pane's tab"), ("Alt-1..9", "Fold a pane area"), ("Alt-0", "Fold all areas"),
+                 ("Ctrl-*", "More text contrast"), ("Ctrl-/", "Less text contrast")]
         titles = {"worlds": "Worlds", "triggers": "Triggers", "aliases": "Aliases", "panes": "Panes",
                   "moon": "The moon", "notepad": "Notepad", "timers": "Timer", "dos_toggle": "DOS look",
                   "gradient": "Gradient maker", "hex": "Hex to xterm", "customize": "Customize form"}
@@ -4114,6 +4133,19 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         picker.open()
         return picker
 
+    def adjust_contrast(self, delta):
+        """Ctrl-* raises and Ctrl-/ lowers the minimum text contrast by half a step (1.0 to 7.0)."""
+        v = round(max(1.0, min(7.0, self.theme["min_contrast"] + delta)), 1)
+        if v == round(self.theme["min_contrast"], 1):
+            self.set_notice("Minimum contrast %.1f (the limit)" % v, 4)
+            return v
+        self._set_override(("min_contrast",), v)
+        self._save_settings()
+        self.set_notice("Minimum contrast %.1f" % v, 4)
+        if self.sr_on():
+            self.speech.say_now("Minimum contrast %.1f" % v)
+        return v
+
     def dos_contrast_dialog(self):
         fields = [{"key": "v", "label": "Minimum contrast (1.0 - 7.0)", "type": "text",
                    "value": "%.1f" % self.theme["min_contrast"], "width": 6}]
@@ -4938,6 +4970,8 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             plain = plain[hidden:]
             if not pieces:
                 return                                    # nothing but the hidden prompt: drop it and its newline
+        if self._iface is not None and self.iface_capture(pieces, plain):
+            return                                        # the game's item editor talking: gathered, not scrolled
         shown, effects = self._run_triggers(pieces, plain, flushed)
         if shown is None:                                 # hidden by a trigger
             self._log_raw(plain + "\n")

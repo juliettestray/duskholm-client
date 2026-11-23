@@ -75,7 +75,29 @@ for name in dc.BUILTIN_SKINS:
     assert dc.contrast_ratio(fg_of("blackword"), th["bg"]) >= th["min_contrast"] - 0.01, name
     assert dc.contrast_ratio(fg_of("navyword"), th["bg"]) >= th["min_contrast"] - 0.01, name
     assert app.out.tag_cget("echo", "foreground") and app.out.tag_cget("system", "foreground")
-assert not app.set_skin("No Such Skin") and app.theme["name"] == "Retro DOS"
+assert not app.set_skin("No Such Skin") and app.theme["name"] == name, "an unknown skin changes nothing"
+assert "Retro Amber" in dc.BUILTIN_SKINS and dc.BUILTIN_SKINS["Retro Amber"]["dos_bar_bg"]
+amber = dc.BUILTIN_SKINS["Retro Amber"]
+assert dc.contrast_ratio(amber["fg"], amber["bg"]) >= 7 and dc.contrast_ratio(amber["dos_menu_fg"], amber["dos_menu_bg"]) >= 7
+assert dc.contrast_ratio(amber["ansi"][1], amber["bg"]) >= 3.5 and dc.contrast_ratio(amber["ansi"][2], amber["bg"]) >= 3.5
+assert amber["ansi"][1] != amber["ansi"][2], "red and green stay distinct on amber"
+# minimum contrast from the keyboard
+app.set_skin("Plain"); mc = app.theme["min_contrast"]
+assert app.adjust_contrast(+0.5) == round(min(7.0, mc + 0.5), 1) and app.theme["min_contrast"] == round(min(7.0, mc + 0.5), 1)
+assert app.adjust_contrast(-0.5) == round(mc, 1)
+for _ in range(20):
+    app.adjust_contrast(+0.5)
+assert app.theme["min_contrast"] == 7.0 and app.adjust_contrast(+0.5) == 7.0, "capped at 7"
+for _ in range(20):
+    app.adjust_contrast(-0.5)
+assert app.theme["min_contrast"] == 1.0 and app.adjust_contrast(-0.5) == 1.0, "and at 1"
+app.root.focus_force(); app.root.update()
+before = app.theme["min_contrast"]
+app.root.event_generate("<Control-asterisk>"); app.root.update()
+assert app.theme["min_contrast"] == round(before + 0.5, 1), "Ctrl-* raises it"
+app.root.event_generate("<Control-slash>"); app.root.update()
+assert app.theme["min_contrast"] == before, "Ctrl-/ lowers it"
+app.reset_skin_edits(); app.set_skin(name)                       # leave no edits behind
 
 # the default skin rescues the hard cases without touching colours that already pass
 app.set_skin("Plain")

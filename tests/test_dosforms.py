@@ -1,0 +1,220 @@
+"""DOS look: pick-from-a-list fields, the paragraph editor, the gradient maker and the customize form
+(modes, lists, interface mode against pretend game output)."""
+import json, os, sys, tempfile, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import sanctuary as sc
+import colortools as ct
+import custom
+import dosui
+import tkinter as tk
+
+home = tempfile.mkdtemp()
+os.environ["USERPROFILE"] = os.environ["HOME"] = home
+sc.SETTINGS_PATH = os.path.join(home, "s.json")
+sc.user_skin_dir = lambda: os.path.join(tempfile.mkdtemp(), "none")
+json.dump({"ui_mode": "dos"}, open(sc.SETTINGS_PATH, "w"))
+root = tk.Tk()
+app = sc.App(root)
+root.geometry("1200x720+10+10")
+
+
+def pump(t=0.3):
+    end = time.time() + t
+    while time.time() < end:
+        root.update(); time.sleep(0.01)
+
+
+def key(w, ks):
+    w.event_generate("<%s>" % ks); pump(0.35)
+
+
+def overlay():
+    return app._overlay if app._overlay_open() else None
+
+
+def focus_field(d, k):
+    i = [f["key"] for f in d._fields].index(k)
+    d._set_focus(d._stops.index(("field", i))); pump(0.1)
+
+
+def menu_pick(label):
+    m = overlay(); assert isinstance(m, dosui.DosMenu), type(m)
+    names = [it["label"] if it else None for it in m._items]
+    m.select(names.index(next(n for n in names if n and n.startswith(label)))); pump(0.1)
+    key(m, "Return")
+
+
+pump(0.8)
+assert app.dos
+sent = []
+app.conn = type("C", (), {"send": lambda self, b: sent.append(b.decode().rstrip("\r\n")) or True, "close": lambda self, *a: None})()
+app.connected = True
+
+# ---- the dialog field type itself
+got = []
+d = dosui.DosDialog(app.root, "T", [{"key": "a", "label": "Pick", "type": "pick", "value": "one", "width": 12},
+                                    {"key": "b", "label": "Text", "type": "text", "value": "hello", "width": 10}],
+                    [("OK", "ok")], app._dc(), app.f_norm, lambda r, v: got.append((r, v)), width=40)
+app._overlay = d; d.open(); pump(0.3)
+assert d.values() == {"a": "one", "b": "hello"}
+key(d, "Return")
+assert got and got[0][0] == ("pick", "a") and got[0][1]["a"] == "one", got
+# a click on the field does the same
+got.clear(); d = dosui.DosDialog(app.root, "T", [{"key": "a", "label": "Pick", "type": "pick", "value": "x", "width": 12}],
+                                 [("OK", "ok")], app._dc(), app.f_norm, lambda r, v: got.append(r), width=40)
+app._overlay = d; d.open(); pump(0.3)
+col, row = d._hits[0][2] + 1, d._hits[0][4]
+d._on_click(type("E", (), {"x": col * d.cw + 2, "y": row * d.lh + 2})()); pump(0.2)
+assert got == [("pick", "a")], got
+
+# ---- the paragraph editor
+done = []
+ed = app.dos_edit_text("Description", "first\nsecond", lambda t: done.append(t)); pump(0.3)
+assert isinstance(ed, dosui.DosTextEditor) and ed.is_open() and app._overlay_open()
+assert ed.text() == "first\nsecond" and ed._cv.focus_get() is ed._cv
+ed._cv.insert("end", "\nthird"); ed._cv.event_generate("<Control-s>"); pump(0.3)
+assert done == ["first\nsecond\nthird"] and not app._overlay_open(), "Ctrl-S keeps the text"
+ed = app.dos_edit_text("Description", "keep me", lambda t: done.append(t)); pump(0.3)
+ed._cv.insert("end", " changed"); ed._cv.event_generate("<Escape>"); pump(0.3)
+assert done[-1] is None and not app._overlay_open(), "Esc throws the changes away"
+ed = app.dos_edit_text("x", "", lambda t: done.append(t)); pump(0.2)
+app.input.focus_force(); pump(0.2); app.input.event_generate("<Escape>"); pump(0.3)
+assert not app._overlay_open(), "Esc closes it even when focus strayed"
+
+# ---- gradient maker: Enter opens lists
+app._grad_state = {"pattern": "Fire", "mode": "stretch", "text": "", "prefix": "", "smooth": True}
+d = app.open_gradient(); pump(0.4)
+assert [f["type"] for f in d._fields] == ["pick", "pick", "text", "text", "check"]
+focus_field(d, "pattern"); key(d, "Return")
+m = overlay(); assert isinstance(m, dosui.DosMenu)
+labels = [it["label"] for it in m._items if it]
+assert "Fire" in labels and "Rainbow" in labels and "Create new..." in labels and "Import a shared one..." in labels
+assert "Delete one of mine..." not in labels, "nothing of mine to delete yet"
+assert m._items[labels.index("Fire")].get("swatch"), "each pattern shows a colour swatch"
+menu_pick("Ocean"); pump(0.4)
+assert app._grad_state["pattern"] == "Ocean"
+d = overlay(); assert d._fields[0]["shown"] == "Ocean"
+focus_field(d, "mode"); key(d, "Return")
+m = overlay(); labels = [it["label"] for it in m._items if it]
+assert any(l.startswith("edges") and "middle" in l for l in labels), labels
+menu_pick("edges"); pump(0.4)
+assert app._grad_state["mode"] == "edges" and overlay()._fields[1]["shown"] == "edges"
+# create a pattern
+d = overlay(); focus_field(d, "pattern"); key(d, "Return"); menu_pick("Create new"); pump(0.4)
+d = overlay(); assert isinstance(d, dosui.DosDialog)
+d._fields[0]["entry"].insert(0, "My Blues"); d._fields[1]["entry"].insert(0, "17 21 27 #00ccff")
+d._press(0); pump(0.5)
+assert [g["name"] for g in app.cfg["gradients"]] == ["My Blues"] and len(app.cfg["gradients"][0]["colours"]) == 4
+assert app._grad_state["pattern"] == "My Blues" and overlay()._fields[0]["shown"] == "My Blues"
+# a bad one keeps the dialog open with the reason
+d = overlay(); focus_field(d, "pattern"); key(d, "Return"); menu_pick("Create new"); pump(0.4)
+d = overlay(); d._fields[0]["entry"].insert(0, "Bad"); d._fields[1]["entry"].insert(0, "999 nonsense")
+d._press(0); pump(0.5)
+d = overlay(); assert isinstance(d, dosui.DosDialog) and "Colours" in [f["label"] for f in d._fields] and len(app.cfg["gradients"]) == 1
+d._press(1); pump(0.4)                                     # Cancel goes back to the gradient maker
+# share and import
+d = overlay(); assert d is not None and d._title == "Gradient"
+d._press([b["result"] for b in d._buttons].index("share")); pump(0.5)
+assert app.root.clipboard_get().startswith("sgrad1:My Blues:17,21,27,"), app.root.clipboard_get()
+line = app.root.clipboard_get()
+app.delete_pattern("My Blues"); assert app.cfg["gradients"] == []
+d = overlay(); focus_field(d, "pattern"); key(d, "Return"); menu_pick("Import a shared"); pump(0.4)
+d = overlay(); d._fields[0]["entry"].insert(0, "garbage"); d._press(0); pump(0.5)
+d = overlay(); assert "not a shared gradient" in d._message and app.cfg["gradients"] == []
+d._fields[0]["entry"].delete(0, "end"); d._fields[0]["entry"].insert(0, "here: " + line); d._press(0); pump(0.5)
+assert [g["name"] for g in app.cfg["gradients"]] == ["My Blues"] and app._grad_state["pattern"] == "My Blues"
+d = overlay(); focus_field(d, "pattern"); key(d, "Return")
+assert "Delete one of mine..." in [it["label"] for it in overlay()._items if it]
+menu_pick("Delete one"); pump(0.4); menu_pick("My Blues"); pump(0.5)
+assert app.cfg["gradients"] == []
+app.dos_close_overlay(); pump(0.2)
+
+# ---- the customize form
+app._cust_mode, app._cust_type, app._cust_values = "cli", "clothing", custom.blank()
+d = app._dos_customize(custom.blank(), 1); pump(0.4)
+types = {f["key"]: f["type"] for f in d._fields}
+assert types["_mode"] == types["_type"] == types["size"] == types["layer"] == "pick" and types["item"] == types["names"] == "text"
+assert "itype" not in types and "count" not in types, "game-editor fields are hidden in command-line mode"
+assert all(len(f["label"]) <= d._labw for f in d._fields) and "Item word" in [f["label"] for f in d._fields]
+focus_field(d, "size"); key(d, "Return"); menu_pick("large"); pump(0.4)
+assert app._cust_values["size"] == "large" and overlay()._fields[[f["key"] for f in overlay()._fields].index("size")]["shown"] == "large"
+d = overlay(); focus_field(d, "layer"); key(d, "Return"); menu_pick("3"); pump(0.4)
+assert app._cust_values["layer"] == "3"
+d = overlay(); d._fields[[f["key"] for f in d._fields].index("names")]["entry"].insert(0, "red scarf")
+d._press([b["result"] for b in d._buttons].index("next")); pump(0.5)
+d = overlay(); assert "Page 2" in d._title or "page 2" in d._title
+assert app._cust_values["names"] == "red scarf" and app._cust_values["size"] == "large", "page 1 is remembered"
+focus_field(d, "cover"); key(d, "Return")
+m = overlay(); labels = [it["label"] for it in m._items if it]
+assert labels[:3] == ["hands", "forearms", "upperarms"] and len(labels) == 19 and labels[-1] == "Done"
+menu_pick("neck"); pump(0.4)
+m = overlay()
+neck_items = [it for it in m._items if it and it["label"] == "neck"]
+assert neck_items[0]["checked"], "ticked"
+menu_pick("chest"); pump(0.4)
+menu_pick("Done"); pump(0.5)
+assert app._cust_values["cover"] == "neck, chest", app._cust_values["cover"]
+d = overlay(); assert d._fields[0]["shown"] == "neck, chest"
+focus_field(d, "description"); key(d, "Return")
+ed = overlay(); assert isinstance(ed, dosui.DosTextEditor)
+ed._cv.insert("1.0", "Soft silk.\nIt smells of rain."); ed._cv.event_generate("<Control-s>"); pump(0.5)
+assert app._cust_values["description"] == "Soft silk.\nIt smells of rain."
+d = overlay(); assert d._fields[[f["key"] for f in d._fields].index("description")]["shown"] == "Soft silk. (+1 lines)"
+# send in command-line mode
+app._cust_values["item"] = "scarf"; sent.clear()
+d._press([b["result"] for b in d._buttons].index("send")); pump(0.5)
+assert sent[0] == "customize scarf names red scarf" and "customize scarf cover clear" in sent and "customize scarf cover chest" in sent
+assert sent[-4:] == ["customize scarf description", "Soft silk.", "It smells of rain.", "@"], sent
+app.dos_close_overlay()
+
+# ---- interface mode: against pretend game output
+app._cust_mode = "interface"
+d = app._dos_customize(dict(custom.blank(), mode="interface", itype="Clothing", cost="5", names="red scarf",
+                            shortstring="a red scarf", cover="neck"), 1); pump(0.4)
+types = {f["key"]: f["type"] for f in d._fields}
+assert "item" not in types and types["itype"] == "pick" and "count" in types, "interface mode shows the editor's fields"
+focus_field(d, "itype"); key(d, "Return")
+labels = [it["label"] for it in overlay()._items if it]
+assert labels[0] == "(leave alone)" and labels[1:] == list(custom.ITEM_TYPES)
+menu_pick("Phone"); pump(0.4)
+assert app._cust_values["itype"] == "Phone"
+sent.clear()
+ok, msg = app.send_customize(dict(app._cust_values), back=lambda: None)
+assert ok and sent == ["type Phone", "cost 5", "names red scarf", "short a red scarf", "cover clear", "cover neck"], sent
+assert "customize" not in " ".join(sent), "no 'customize <item>' prefix in the game's editor"
+app.dos_close_overlay(); pump(0.2)
+screen_before = app.out.get("1.0", "end")
+for l in ("Done.", "Object", "Type: Phone.", "Cost: 5.000000", "Size: Small", "Names: red scarf", "Short: a red scarf",
+          "Long: ", "Description:", "", "Wear: ", "Coverage cleared.", "Done.", "Object", "Type: Phone.", "Cost: 5.000000",
+          "Names: red scarf", "Short: a red scarf", "Description:", "A nice phone.", "Wear: ",
+          "Bob says, 'hello there'", "Options are: hands, forearms and clear"):
+    app._on_data((l + "\n\r").encode())
+pump(0.3)
+mid = app.out.get("1.0", "end")
+assert "Names: red scarf" not in mid and "Cost: 5.000000" not in mid, "the editor's chatter is gathered, not scrolled"
+assert app._iface is not None
+pump(1.6)
+after = app.out.get("1.0", "end")
+assert after.count("Names: red scarf") == 1 and after.count("Object") == 1, "only the finished item is shown"
+assert "A nice phone." in after and "Bob says, 'hello there'" in after and "Options are: hands" in after, "chat and errors are not lost"
+assert "Coverage cleared." not in after and "Size: Small" not in after
+rv = overlay(); assert isinstance(rv, dosui.DosDialog) and rv._title == "Game item editor"
+sent.clear(); rv._press([b["result"] for b in rv._buttons].index("done")); pump(0.4)
+assert sent == ["done"], "Done sends 'done' to the game"
+# not in the editor: nothing is hidden
+app._cust_values = dict(custom.blank(), mode="interface", names="x")
+sent.clear(); ok, m = app.send_customize(app._cust_values)
+for l in ("You can't do that.", "What?"):
+    app._on_data((l + "\n\r").encode())
+pump(1.6)
+after = app.out.get("1.0", "end")
+assert "You can't do that." in after and "What?" in after and "did not see the game's item editor" in after
+assert not app._overlay_open()
+# nothing to send / not connected
+assert not app.send_customize(dict(custom.blank(), mode="interface"))[0]
+app.connected = False
+assert app.send_customize(dict(custom.blank(), mode="interface", names="x"))[1] == "Not connected."
+app.connected = True; app._cust_mode = "cli"
+
+root.update(); root.destroy()
+print("dos forms tests OK")

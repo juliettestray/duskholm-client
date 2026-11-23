@@ -43,6 +43,12 @@ def check(name):
     cv = o._cv
     pump(0.15)
     width = int(cv.winfo_reqwidth())
+    alltext = " ".join(cv.itemcget(i, "text") for i in cv.find_all() if cv.type(i) == "text")
+    for f in getattr(o, "_fields", []):
+        if f["type"] in ("text", "pick") and f["label"].strip() and f["label"].strip() not in alltext:
+            problems.append("%s: the label %r is cut short" % (name, f["label"]))
+        if f["type"] == "pick" and f.get("shown", "").strip() and f["shown"].strip() not in alltext:
+            problems.append("%s: the value %r of %r is cut short" % (name, f["shown"], f["label"]))
     for item in cv.find_all():
         if cv.type(item) != "text":
             continue
@@ -73,8 +79,22 @@ cases = [
     ("alias form", lambda: app._dos_alias_form(None, None)), ("worlds", app.open_worlds), ("prompt", app.edit_prompt),
     ("font", app.choose_font), ("update", lambda: app.show_update(rel)), ("restart", lambda: app.confirm_restart("x.exe")),
     ("quit", app.dos_confirm_quit), ("design book", lambda: app._dos_design_book(lambda d: None, lambda: None)),
+    ("gradient pattern list", lambda: app._dos_pick_pattern(dict(app._grad_state))),
+    ("gradient new pattern", lambda: app._dos_new_pattern(dict(app._grad_state))),
+    ("gradient import", lambda: app._dos_import_pattern(dict(app._grad_state))),
+    ("customize 1 (game editor)", lambda: (setattr(app, "_cust_mode", "interface"), app._dos_customize(custom.blank(), 1))[1]),
+    ("customize 2 (game editor)", lambda: app._dos_customize(custom.blank(), 2)),
+    ("customize kinds", lambda: app._dos_customize_pick("itype", custom.blank(), 1)),
+    ("customize cover list", lambda: app._dos_customize_pick("cover", custom.blank(), 2)),
+    ("customize mode list", lambda: app._dos_customize_pick("_mode", custom.blank(), 1)),
+    ("item editor review", lambda: app._iface_review({"back": None})),
 ]
+app._cust_mode = "cli"
 for name, fn in cases:
+    if name == "customize 1 (game editor)":
+        app._cust_mode = "interface"
+    if name == "customize mode list":
+        app._cust_mode = "cli"
     try:
         fn()
     except Exception as e:                       # a screen that cannot open is a problem too
