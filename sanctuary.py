@@ -62,6 +62,7 @@ import extras                       # timers, clock, notepad, moon window, hotke
 import toolsui                      # gradient maker, hex converter, customize form
 import colortools
 import custom as customize_data
+import worldfile
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -1757,6 +1758,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         f.add_command(label="Gradient maker...   Alt+G", command=self.open_gradient)
         f.add_command(label="Hex to xterm...   Alt+H", command=self.open_hex)
         f.add_command(label="Customize form...   Alt+K", command=self.open_customize)
+        f.add_command(label="Export world settings...", command=self.open_export)
+        f.add_command(label="Import world settings...", command=self.open_import)
         f.add_command(label="Hotkeys...", command=self.open_hotkeys)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
@@ -2775,6 +2778,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             {"label": "Gradient maker...", "hotkey": "G", "shortcut": "Alt-G", "action": self.open_gradient},
             {"label": "Hex to xterm...", "hotkey": "Y", "shortcut": "Alt-H", "action": self.open_hex},
             {"label": "Customize form...", "hotkey": "Z", "shortcut": "Alt-K", "action": self.open_customize},
+            {"label": "Export world settings...", "hotkey": "Q", "action": self.open_export},
+            {"label": "Import world settings...", "hotkey": "R", "action": self.open_import},
             {"label": "Hotkeys...", "hotkey": "J", "action": self.open_hotkeys},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
@@ -4818,6 +4823,132 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         if changed:
             self._save_settings()
 
+    # ---- world settings files (.snc) -----------------------------------------------------
+    def _world_tools(self):
+        return {"clean_world": clean_world, "validate_trigger": triggers.validate_trigger,
+                "validate_alias": triggers.validate_alias, "validate_prompt": prompts.validate_profile,
+                "validate_panes": layout.validate_panes if layout else (lambda x: []),
+                "validate_layout": (lambda d, k=None: layout.validate_layout(d, known_panes=k)) if layout
+                else (lambda d, k=None: {"regions": [], "min_main_cols": 80}),
+                "validate_gradients": colortools.validate_saved, "validate_designs": customize_data.validate_designs}
+
+    def _current_world(self):
+        host, port = self.v_host.get().strip(), self.v_port.get().strip()
+        for w in self.cfg.get("worlds", []):
+            if w["host"].lower() == host.lower() and str(w["port"]) == port:
+                return dict(w)
+        try:
+            return clean_world({"name": host[:40] or "World", "host": host, "port": int(port), "tls": self.v_tls.get(),
+                                "note": ""}) or {"name": "World", "host": DEFAULT_HOST, "port": TLS_PORT, "tls": True, "note": ""}
+        except ValueError:
+            return {"name": "World", "host": DEFAULT_HOST, "port": TLS_PORT, "tls": True, "note": ""}
+
+    def default_export_path(self):
+        w = self._current_world()
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", w["name"]).strip("._") or "world"
+        return os.path.join(os.path.expanduser("~"), "Sanctuary-%s%s" % (safe, worldfile.EXT))
+
+    def export_world_file(self, path, parts=worldfile.PARTS):
+        path = os.path.expanduser(str(path or "").strip().strip('"'))
+        if not path:
+            return False, "Give a file name."
+        if not path.lower().endswith(worldfile.EXT):
+            path += worldfile.EXT
+        if os.path.exists(path):
+            return False, "%s already exists; choose another name (nothing was overwritten)." % path
+        data = worldfile.dumps(worldfile.build(self.cfg, self._current_world(), parts))
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(data)
+        except OSError as e:
+            return False, "Could not write the file: %s" % (e.strerror or type(e).__name__)
+        return True, "Saved %s (%d bytes)." % (path, len(data.encode("utf-8")))
+
+    def import_world_file(self, path):
+        path = os.path.expanduser(str(path or "").strip().strip('"'))
+        try:
+            if os.path.getsize(path) > worldfile.MAX_BYTES:
+                return False, ["That file is too big to be a world file."]
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read(worldfile.MAX_BYTES + 1)
+        except (OSError, UnicodeError) as e:
+            return False, ["Could not read that file: %s" % (getattr(e, "strerror", None) or type(e).__name__)]
+        bundle, why = worldfile.loads(text)
+        if bundle is None:
+            return False, [why]
+        said = worldfile.merge(self.cfg, bundle, self._world_tools())
+        self._save_settings()
+        if layout is not None:
+            self.layout_panes()
+        return True, said or ["Nothing new in that file."]
+
+    def open_export(self):
+        labels = {"triggers": "Triggers", "aliases": "Aliases", "panes": "Pane layout", "prompts": "Prompt formats",
+                  "gradients": "Gradient patterns", "designs": "Design book"}
+        if self.dos:
+            fields = [{"key": "path", "label": "File", "type": "text", "value": self.default_export_path(), "width": 50}]
+            fields += [{"key": p, "label": labels[p], "type": "check", "value": True} for p in worldfile.PARTS]
+
+            def result(res, vals):
+                if res == "export":
+                    ok, m = self.export_world_file(vals.get("path", ""), [p for p in worldfile.PARTS if vals.get(p)])
+                    self.system(m)
+                    if not ok:
+                        self._reopen(self.open_export)
+            return self._dos_dialog("Export world settings", fields, [("Export", "export"), ("Cancel", "cancel")],
+                                    result, width=70, message="Saves the current world and what you tick, as one .snc file.")
+        from tkinter import filedialog
+        top = tk.Toplevel(self.root)
+        top.title("Export world settings")
+        top.transient(self.root)
+        vs = {p: tk.BooleanVar(value=True) for p in worldfile.PARTS}
+        tk.Label(top, text="Save the current world, and:", anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        for p in worldfile.PARTS:
+            tk.Checkbutton(top, text=labels[p], variable=vs[p]).pack(anchor="w", padx=24)
+
+        def go():
+            path = filedialog.asksaveasfilename(parent=top, defaultextension=worldfile.EXT, initialdir=os.path.expanduser("~"),
+                                                initialfile=os.path.basename(self.default_export_path()),
+                                                filetypes=[("Sanctuary world", "*" + worldfile.EXT), ("All files", "*.*")])
+            if not path:
+                return
+            if os.path.exists(path):                      # the file dialog already asked about replacing it
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            ok, m = self.export_world_file(path, [p for p in worldfile.PARTS if vs[p].get()])
+            self.system(m)
+            if ok:
+                top.destroy()
+        bf = tk.Frame(top)
+        bf.pack(pady=10)
+        tk.Button(bf, text="Choose file...", command=go).pack(side="left", padx=4)
+        tk.Button(bf, text="Cancel", command=top.destroy).pack(side="left", padx=4)
+        self._theme_tree(top)
+        return top
+
+    def open_import(self):
+        if self.dos:
+            def result(res, vals):
+                if res == "import":
+                    ok, lines = self.import_world_file(vals.get("path", ""))
+                    for ln in lines:
+                        self.system(ln)
+                    if not ok:
+                        self._reopen(self.open_import)
+            return self._dos_dialog("Import world settings", [{"key": "path", "label": "File", "type": "text", "value": "",
+                                                               "width": 52}],
+                                    [("Import", "import"), ("Cancel", "cancel")], result, width=72,
+                                    message="Triggers that send commands and all aliases arrive switched off.")
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=self.root, initialdir=os.path.expanduser("~"),
+                                          filetypes=[("Sanctuary world", "*" + worldfile.EXT), ("All files", "*.*")])
+        if path:
+            ok, lines = self.import_world_file(path)
+            for ln in lines:
+                self.system(ln)
+
     def open_worlds(self):
         if self.dos:
             return self.dos_worlds()
@@ -5127,6 +5258,19 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         cmd, arg = cmd.lower(), arg.strip()
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg):
             return
+        if cmd == "export":
+            if arg:
+                self.system(self.export_world_file(arg)[1])
+            else:
+                self.open_export()
+            return
+        if cmd == "import":
+            if arg:
+                for ln in self.import_world_file(arg)[1]:
+                    self.system(ln)
+            else:
+                self.open_import()
+            return
         if cmd in ("help", "?"):
             self.system("Local commands:\n"
                         "  /connect [host [port]]   /disconnect   /reconnect   /quit\n"
@@ -5136,7 +5280,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
                         "  /clear                   //text sends \"/text\" to the game\n"
                         "  /timer 10m [label]       /timer list | cancel [n]   (also 21:30, game 21:30)\n"
                         "  /moon   /notes   /hotkeys\n"
-                        "  /hex ff8800              /gradient [text]   /customize")
+                        "  /hex ff8800              /gradient [text]   /customize\n"
+                        "  /export [file]           /import file   (world settings, .snc)")
         elif cmd == "connect":
             bits = arg.split()
             if bits:

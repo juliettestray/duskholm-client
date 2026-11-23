@@ -49,8 +49,8 @@ assert app.make_gradient({"pattern": "my blues", "mode": "cycle", "text": "abcd"
 assert not app.save_pattern("Fire", "1 2")[0] and not app.save_pattern("", "1 2")[0] and not app.save_pattern("x", "nonsense")[0]
 assert app.delete_pattern("MY BLUES") and app.cfg["gradients"] == [] and not app.delete_pattern("Fire")
 app._local("/gradient Hello there"); pump(0.2)
-assert app.input.get().startswith("`196") and "Hello" not in app.input.get() or "`" in app.input.get()
-assert "Hello there" in txt().replace("\n", " ") or "H" in txt()
+assert app.input.get().startswith("`196H") and app.input.get().endswith("`x")
+assert "Hello there" in txt(), "the coloured line is shown on screen"
 win = app.open_gradient(); pump(0.4); assert win.winfo_exists()
 win.destroy(); app._grad_win = None
 app.set_dos_mode(True); pump(0.4)
@@ -58,7 +58,6 @@ box = app.open_gradient(); pump(0.3); assert isinstance(box, dosui.DosDialog)
 app.dos_close_overlay(); pump(0.2)
 app._grad_state = dict(app._grad_state, text="Shiny")
 app.show_coloured(app.make_gradient(app._grad_state)[0]); pump(0.2)
-i = app.out.search("S", "end", backwards=True, stopindex="1.0")
 tags = [t for t in app.out.tag_names(app.out.search("Shiny", "1.0")) if t.startswith("s")]
 assert tags and app.out.tag_cget(tags[0], "foreground")
 app.set_dos_mode(False); pump(0.3)
@@ -66,7 +65,6 @@ app.set_dos_mode(False); pump(0.3)
 # ---- customize
 sent.clear()
 app.cfg["custom_form"] = True
-app._on_enter_text = None
 app.input.delete(0, "end"); app.input.insert(0, "customize"); root.update()
 app._on_enter(None); pump(0.4)
 assert app._cust_win is not None and not sent, "typing 'customize' opens the form instead of sending it"
