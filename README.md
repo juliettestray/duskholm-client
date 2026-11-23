@@ -25,6 +25,11 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   and never sent automatically.
 - Connection safety: sends never block the window, cancelling aborts a stalled TLS
   handshake, and a late event from an old connection can't disconnect a new one.
+- **Auto-reconnect** (Options menu, off by default). If the connection drops unexpectedly it
+  retries every 30 seconds, showing a countdown, until it gets back in; you land on the
+  game's login prompt (passwords are never stored). It does not retry after you disconnect
+  yourself, after you send `quit` (the game closes the connection), when you press
+  **Cancel retry**, or on a TLS certificate error, which retrying can't fix.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -52,6 +57,7 @@ GPL-3.0, see [LICENSE](LICENSE).
 python tests/test_client.py       # parser assertions, then the GUI against a fake server
 python tests/test_hardening.py    # outgoing cleanup, passwords, cancel, stale events, settings
 python tests/test_fuzz.py         # 41 adversarial parser checks (~10 s)
+python tests/test_reconnect.py    # auto-reconnect against a fake server that goes up and down
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

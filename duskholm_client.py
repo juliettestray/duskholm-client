@@ -38,6 +38,8 @@ TLS_PORT = 3001
 SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".duskholm_client.json")
 MAX_SCROLLBACK_LINES = 20000
 KEEPALIVE_SECONDS = 120
+RECONNECT_SECONDS = 30   # wait between automatic reconnect attempts
+QUIT_GRACE = 15          # a close this soon after the user sent "quit" is intentional
 
 # telnet
 IAC, DONT, DO, WONT, WILL, SB, SE, GA, NOP = 255, 254, 253, 252, 251, 250, 240, 249, 241
@@ -512,7 +514,8 @@ def clean_settings(cfg):
         else DEFAULT_HOST
     cfg["port"] = to_int(cfg.get("port"), TLS_PORT, 1, 65535)
     cfg["font_size"] = to_int(cfg.get("font_size"), 11, 7, 28)
-    for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True)):
+    for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True),
+                       ("auto_reconnect", False)):
         if not isinstance(cfg.get(k), bool):
             cfg[k] = default
     al = cfg.get("aliases")
@@ -650,6 +653,10 @@ class App:
         self.logfile = None
         self.last_send = time.time()
         self._tags = set()
+        self._retrying = False        # auto-reconnect is active (waiting or mid-attempt)
+        self._reconnect_job = None
+        self._reconnect_at = 0.0
+        self._quit_sent_at = 0.0      # when the user last sent "quit"
 
         root.title("Duskholm")
         root.configure(bg=BG)
@@ -665,7 +672,8 @@ class App:
     # ---- settings ----------------------------------------------------
     def _load_settings(self):
         cfg = {"host": DEFAULT_HOST, "port": TLS_PORT, "tls": True, "verify": True,
-               "font_size": 11, "aliases": {}, "bell": True, "keepalive": True}
+               "font_size": 11, "aliases": {}, "bell": True, "keepalive": True,
+               "auto_reconnect": False}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -767,6 +775,9 @@ class App:
                           command=lambda: self.cfg.update(bell=self.v_bell.get()))
         o.add_checkbutton(label="Send keep-alive", variable=self.v_keep,
                           command=lambda: self.cfg.update(keepalive=self.v_keep.get()))
+        self.v_auto = tk.BooleanVar(value=self.cfg["auto_reconnect"])
+        o.add_checkbutton(label="Auto-reconnect when disconnected", variable=self.v_auto,
+                          command=self._auto_toggled)
         m.add_cascade(label="Options", menu=o)
         self.root.config(menu=m)
 
@@ -857,6 +868,8 @@ class App:
         if kind == "data":
             self._on_data(payload)
         elif kind == "connected":
+            self._retrying = False
+            self._quit_sent_at = 0.0      # a "quit" from an earlier session means nothing now
             self.connecting, self.connected = False, True
             self.term = Terminal(want_mxp=True)
             self.input.configure(show="")
@@ -868,12 +881,19 @@ class App:
             self._set_disconnected()
             self.system("Could not connect: %s" % payload)
             if "CERTIFICATE" in payload.upper():
+                self._cancel_reconnect()      # retrying cannot fix a certificate problem
                 self.system("TLS certificate was not accepted. Options > Verify TLS certificate "
                             "turns checking off, or use the plain port 3000.")
+            elif self._retrying:              # this was an automatic attempt: keep trying
+                self._schedule_reconnect("Reconnect failed.")
         elif kind == "closed":
             if self.connected:
                 self._set_disconnected()
                 self.system(payload)
+                if time.time() - self._quit_sent_at < QUIT_GRACE:
+                    self.system("You quit, so the client will not reconnect.")
+                else:
+                    self._schedule_reconnect("Disconnected unexpectedly.")
 
     def _on_data(self, data):
         pieces = []
@@ -933,6 +953,8 @@ class App:
             return
         parts = [line] if secret else self._expand(line)
         for part in parts:
+            if not secret and part.split(None, 1)[:1] == ["quit"]:
+                self._quit_sent_at = time.time()   # the close that follows is intentional
             clean, dropped, truncated = sanitize_outgoing(part)
             if dropped:
                 self.system("%d character%s the game can't accept %s removed from that line."
@@ -999,13 +1021,15 @@ class App:
                 self.v_port.set(bits[1])
                 self.v_tls.set(bits[1] == str(TLS_PORT))
             if not self.connected:
+                self._cancel_reconnect()
                 self.toggle_connection()
         elif cmd == "reconnect":
+            self._cancel_reconnect()
             if self.connected or self.connecting:
                 self.toggle_connection()
             self.root.after(300, self.toggle_connection)
         elif cmd == "disconnect":
-            if self.connected or self.connecting:
+            if self.connected or self.connecting or self._retrying:
                 self.toggle_connection()
         elif cmd == "quit":
             self.on_quit()
@@ -1041,28 +1065,73 @@ class App:
 
     def toggle_connection(self):
         if self.connected or self.connecting:
+            self._cancel_reconnect()
             self.conn.close()
-            self.connected = self.connecting = False
-            self.input.configure(show="")
-            self.btn.configure(text="Connect")
-            self.status.configure(text="Disconnected")
+            self._set_disconnected()
             self.system("Disconnected.")
             return
+        if self._retrying:                  # waiting to retry: this click cancels
+            self._cancel_reconnect(announce=True)
+            return
+        self._start_connect()
+
+    def _start_connect(self, auto=False):
         host = self.v_host.get().strip()
         try:
             port = int(self.v_port.get())
         except ValueError:
             messagebox.showerror("Port", "Port must be a number.")
+            self._cancel_reconnect()
             return
         self.cfg.update(host=host, port=port, tls=self.v_tls.get())
         self._save_settings()
         self.connecting = True
         self.btn.configure(text="Cancel")
         self.status.configure(text="Connecting…")
-        self.system("Connecting to %s:%d…" % (host, port))
+        self.system("%s %s:%d…" % ("Reconnecting to" if auto else "Connecting to", host, port))
         self.gen += 1
         self.conn = Connection(self.q, self.gen)
         self.conn.open(host, port, self.v_tls.get(), self.v_verify.get())
+
+    # ---- auto-reconnect ----------------------------------------------
+    def _auto_toggled(self):
+        self.cfg["auto_reconnect"] = self.v_auto.get()
+        if not self.v_auto.get():
+            self._cancel_reconnect(announce=self._retrying and not self.connecting)
+
+    def _schedule_reconnect(self, reason):
+        """Called after an unexpected drop or a failed attempt. No-op unless enabled."""
+        if not self.cfg.get("auto_reconnect"):
+            return
+        self._retrying = True
+        self._reconnect_at = time.time() + RECONNECT_SECONDS
+        self.btn.configure(text="Cancel retry")
+        self.system("%s Retrying every %d seconds (Options > Auto-reconnect; Cancel retry to stop)."
+                    % (reason, RECONNECT_SECONDS))
+        self._reconnect_tick()
+
+    def _reconnect_tick(self):
+        self._reconnect_job = None
+        if not self._retrying or self.connected or self.connecting:
+            return
+        left = int(self._reconnect_at - time.time() + 0.999)
+        if left <= 0:
+            self._start_connect(auto=True)
+            return
+        self.status.configure(text="Reconnecting in %ds" % left)
+        self._reconnect_job = self.root.after(min(1000, left * 1000), self._reconnect_tick)
+
+    def _cancel_reconnect(self, announce=False):
+        was = self._retrying
+        self._retrying = False
+        if self._reconnect_job is not None:
+            self.root.after_cancel(self._reconnect_job)
+            self._reconnect_job = None
+        if was and not self.connected and not self.connecting:
+            self.btn.configure(text="Connect")
+            self.status.configure(text="Disconnected")
+        if announce and was:
+            self.system("Auto-reconnect cancelled.")
 
     def toggle_log(self, path=None):
         if self.logfile:
@@ -1090,6 +1159,7 @@ class App:
         return self._zoom(+1 if e.delta > 0 else -1)
 
     def on_quit(self):
+        self._cancel_reconnect()
         self.conn.close()
         if self.logfile:
             self.logfile.close()
