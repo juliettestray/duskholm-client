@@ -126,7 +126,7 @@ joined = b"".join(received)
 assert b"hunter2\r\n" in joined, joined
 
 # alias + local command + literal slash
-app.cfg["aliases"]["gg"] = "look;say hi $*"
+app.cfg["alias_rules"] = [{"name": "gg", "enabled": True, "body": "look;say hi %*"}]
 app.input.insert(0, "gg there"); app._on_enter(None)
 app.input.insert(0, "//wave"); app._on_enter(None)
 app.input.insert(0, "/help"); app._on_enter(None)

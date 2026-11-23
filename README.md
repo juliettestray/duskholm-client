@@ -1,8 +1,8 @@
 # Sanctuary
 
 A small, dependency-free telnet client for MUDs, built for Duskholm and other Haven-style games.
-Three Python files (`sanctuary.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for
-configurable prompt formats), tkinter only (ships with the standard Windows Python installer).
+Four Python files (`sanctuary.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for
+configurable prompt formats, `triggers.py` for triggers and aliases), tkinter only (ships with the standard Windows Python installer).
 Keep them together. Double-click `Sanctuary.pyw`, or run `pythonw sanctuary.py`, to start it
 without a console window.
 
@@ -121,6 +121,28 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   groups, plus which groups are gauges, counters, cooldowns or text, with a live test line.
   Patterns are checked for safety (no catastrophic backtracking, backreferences or lookbehind).
 - **Line spacing**: extra pixels between lines, 0-12 (Font dialog, or F7 in the DOS look).
+- **Triggers** (`Ctrl+T`, or `/triggers`). A trigger watches the lines the game sends and does
+  something when one matches: *highlight* the match or the whole line, *hide* the line from the
+  screen (it stays in your log), *send* a command, *beep*, or print a client *note*. Patterns are
+  either **plain** (`*` is a wildcard that you can reuse as `%1`, `%2`; `^` and `$` anchor to the
+  start or end of the line; matching is anywhere in the line and ignores case) or **regular
+  expressions** (a toggle in the editor), where `%0` is the whole match, `%1`-`%9` the groups and
+  `%{name}` a named group. A trigger can have a priority (higher runs first) and can stop the
+  ones after it. The editor has a live test line. Ready-made presets match Duskholm's real wording:
+  `[OOC] Name: 'text'` and friends (Guide, Newbie, Legends), and `Name tells you 'text'` /
+  `... tells you OOCly 'text'`. Safety: regexes are checked against catastrophic backtracking,
+  commands a trigger sends are split on `;` *before* captures are filled in (so text from other
+  players can never add commands), and a rate limit stops a runaway loop.
+  Plain patterns stop a `*` at the first possible end, so end a pattern with `$` to take the
+  whole rest of a line (`* tells you *$`).
+- **Aliases** (`Ctrl+A`, or `/alias name body`, `/unalias`, `/aliases`). An alias is a first word
+  that expands to commands: `;` separates them and `%1`-`%9` / `%*` are your arguments. With no `%`
+  in the body, what you type after the alias is added to the last command. Old aliases written
+  with `$*` are converted to `%*` automatically.
+- **Whole lines.** To act on lines before they are drawn, the client now collects each line first.
+  An unfinished line (a prompt) still appears after about a tenth of a second, and the stat bar
+  sees it immediately. *Options > Hide the prompt line* keeps the prompt off the screen (the bar
+  still shows it).
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -160,6 +182,8 @@ python tests/test_polish.py       # skin switch re-fit, readable DOS colours, sc
 python tests/test_prompts.py      # the prompt-format engine (parsing, validation, safety)
 python tests/test_features.py     # ATDT, fake telnet, worlds, prompt editors, line spacing
 python tests/test_rename.py       # the name, settings migration from the old name, the launcher
+python tests/test_triggers.py     # the trigger/alias engine (matching, safety, expansion)
+python tests/test_rules.py        # triggers, aliases and whole-line output, end to end
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

@@ -92,7 +92,8 @@ specs = dict(app.statbar.specs())
 assert specs["M:3"] == dc.ANSI16[9] and specs["K:2"] == dc.ANSI16[9], "cooling down is red"
 assert "North 1/5:1/5" in specs and "Sprawled" in specs and specs["ST 1"] == dc.ALERT_FG
 
-# the prompt text itself is still in the scrollback
+# the prompt text itself is still in the scrollback (shown a moment after the bar updates)
+pump(0.4)
 assert "[200/350DF 1ST 2WN 0LG M:3 K:2" in app.out.get("1.0", "end-1c")
 
 # menu toggle hides / shows

@@ -61,7 +61,7 @@ app.toggle_connection(); pump(0.8)
 assert app.connected and ready.is_set()
 
 # password prompt: no alias expansion, no '//' unescape, nothing echoed or remembered
-app.cfg["aliases"]["gg"] = "look;say hi"
+app.cfg["alias_rules"] = [{"name": "gg", "enabled": True, "body": "look;say hi"}]
 conn_box[0].sendall(bytes([IAC, WILL, 1])); pump(0.4)
 assert app.term.echo_off
 for pw in ("gg", "//secret", "päss"):

@@ -38,6 +38,10 @@ from tkinter import colorchooser, messagebox, simpledialog
 
 import dosui
 import prompts
+try:
+    import triggers
+except ImportError:                 # no trigger engine installed: output passes straight through
+    triggers = None
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -49,6 +53,7 @@ APP_NAME = "Sanctuary"   # every user-visible mention of the client's name comes
 MIN_FONT, MAX_FONT = 7, 40
 RECONNECT_SECONDS = 30   # wait between automatic reconnect attempts
 QUIT_GRACE = 15          # a close this soon after the user sent "quit" is intentional
+PARTIAL_FLUSH_MS = 120   # an unfinished line (a prompt) is shown after this long without a newline
 
 # telnet
 IAC, DONT, DO, WONT, WILL, SB, SE, GA, NOP = 255, 254, 253, 252, 251, 250, 240, 249, 241
@@ -893,6 +898,18 @@ def clean_settings(cfg):
         if len(custom) >= 20:
             break
     cfg["prompt_custom"] = custom
+    cfg["hide_prompt"] = cfg.get("hide_prompt") is True
+    if triggers is not None:
+        raw = cfg.get("triggers") if isinstance(cfg.get("triggers"), list) else []
+        cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in raw[:1000]) if t is not None][:500]
+        rules = cfg.get("alias_rules")
+        if not isinstance(rules, list):
+            legacy = cfg.get("aliases") if isinstance(cfg.get("aliases"), dict) else {}
+            rules = triggers.migrate_legacy_aliases(
+                {k: v.replace("$*", "%*") for k, v in legacy.items() if isinstance(k, str) and isinstance(v, str)})
+        cfg["alias_rules"] = [a for a in (triggers.validate_alias(x) for x in rules[:400]) if a is not None][:200]
+    else:
+        cfg["triggers"], cfg["alias_rules"] = [], []
     so = cfg.get("skin_overrides")
     cfg["skin_overrides"] = ({k: v for k, v in list(so.items())[:50]
                               if isinstance(k, str) and len(k) < 60 and isinstance(v, dict)}
@@ -909,6 +926,143 @@ def clean_settings(cfg):
                                                                 cfg.get("geometry", "")):
         cfg.pop("geometry", None)
     return cfg
+
+_COLOUR_NAMES = {"black": 0, "red": 1, "green": 2, "yellow": 3, "blue": 4, "magenta": 5, "cyan": 6, "white": 7}
+
+
+def parse_colour_field(text):
+    """A highlight colour typed by the user: '' -> None, '#rrggbb' -> that, 0-15 or a colour name
+    (optionally 'bright red') -> a palette index. Raises ValueError on anything else."""
+    t = str(text or "").strip().lower()
+    if not t:
+        return None
+    if HEX_RE.match(t):
+        return t
+    if t.isascii() and t.isdigit() and int(t) < 16:
+        return int(t)
+    bright = t.startswith("bright ")
+    name = t[7:] if bright else t
+    if name in _COLOUR_NAMES:
+        return _COLOUR_NAMES[name] + (8 if bright else 0)
+    raise ValueError("a colour is #rrggbb, a number 0-15, or a name like 'red' / 'bright cyan'")
+
+
+def colour_field_text(c):
+    return "" if c is None else (c if isinstance(c, str) else str(c))
+
+
+def trigger_from_values(v):
+    """Build a trigger from the editors' simple values. Returns (trigger_or_None, message)."""
+    if triggers is None:
+        return None, "The trigger engine is not installed."
+    try:
+        fg, bg = parse_colour_field(v.get("fg")), parse_colour_field(v.get("bg"))
+    except ValueError as e:
+        return None, "Highlight colour: %s" % e
+    try:
+        prio = int(str(v.get("priority", "0")).strip() or "0")
+    except ValueError:
+        return None, "Priority must be a whole number (higher runs first)."
+    actions = []
+    if fg is not None or bg is not None or v.get("bold"):
+        actions.append({"type": "highlight", "fg": fg, "bg": bg, "bold": bool(v.get("bold")),
+                        "scope": "line" if v.get("whole") else "match"})
+    if v.get("hide"):
+        actions.append({"type": "gag"})
+    if str(v.get("send", "")).strip():
+        actions.append({"type": "send", "text": str(v["send"]).strip(), "echo": bool(v.get("echo", True))})
+    if v.get("beep"):
+        actions.append({"type": "beep"})
+    if str(v.get("note", "")).strip():
+        actions.append({"type": "note", "text": str(v["note"]).strip()})
+    actions += [a for a in (v.get("keep") or []) if isinstance(a, dict)]     # actions the editor has no controls for
+    if not actions:
+        return None, "Choose at least one action (highlight, hide, send, beep or note)."
+    trig = {"name": str(v.get("name", "")).strip(), "enabled": bool(v.get("enabled", True)),
+            "mode": "regex" if v.get("regex") else "plain", "pattern": str(v.get("pattern", "")),
+            "ignore_case": bool(v.get("ignore_case", True)), "priority": prio, "stop": bool(v.get("stop")),
+            "actions": actions}
+    ok_trig = triggers.validate_trigger(trig)
+    if ok_trig is None:
+        ok, msg, _m = triggers.check_trigger(trig, str(v.get("sample", "")) or "x")
+        return None, msg if not ok else "That trigger cannot be used."
+    return ok_trig, "OK"
+
+
+# Ready-made triggers for Duskholm's actual wording (act_comm.c): channels print "[OOC] Name: 'text'"
+# (or "[OOC] Name emote text"); tells print "Name tells you 'text'" and "Name tells you OOCly 'text'".
+_PRESET_DEFS = [
+    {"name": "Highlight OOC channel", "mode": "plain", "pattern": "^[OOC]*", "priority": 0,
+     "actions": [{"type": "highlight", "fg": 14, "scope": "line"}]},
+    {"name": "Highlight Guide channel", "mode": "plain", "pattern": "^[Guide]*", "priority": 0,
+     "actions": [{"type": "highlight", "fg": 10, "scope": "line"}]},
+    {"name": "Highlight Newbie channel", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
+     "actions": [{"type": "highlight", "fg": 10, "scope": "line"}]},
+    {"name": "Highlight Legends channel", "mode": "plain", "pattern": "^[Legends]*", "priority": 0,
+     "actions": [{"type": "highlight", "fg": 11, "scope": "line"}]},
+    {"name": "Highlight tells", "mode": "plain", "pattern": "* tells you *", "priority": 0,
+     "actions": [{"type": "highlight", "fg": 13, "bold": True, "scope": "line"}]},
+    {"name": "Beep on tell", "mode": "plain", "pattern": "* tells you *", "priority": 0,
+     "actions": [{"type": "beep"}, {"type": "note", "text": "%1 sent you a tell."}]},
+]
+
+
+def trigger_presets():
+    """The built-in trigger presets as valid trigger dicts (empty if the engine is missing)."""
+    if triggers is None:
+        return []
+    return [t for t in (triggers.validate_trigger(dict(d, enabled=False)) for d in _PRESET_DEFS) if t is not None]
+
+
+def values_from_trigger(t):
+    """The editors' simple values for an existing trigger (None for a new one)."""
+    v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
+         "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "hide": False, "send": "",
+         "echo": True, "beep": False, "note": "", "sample": "", "keep": []}
+    if not t:
+        return v
+    v.update(name=t["name"], enabled=t["enabled"], regex=t["mode"] == "regex", pattern=t["pattern"],
+             ignore_case=t["ignore_case"], priority=str(t["priority"]), stop=t["stop"])
+    for a in t["actions"]:
+        k = a["type"]
+        if k == "highlight":
+            v.update(fg=colour_field_text(a.get("fg")), bg=colour_field_text(a.get("bg")),
+                     bold=bool(a.get("bold")), whole=a.get("scope") == "line")
+        elif k == "gag":
+            v["hide"] = True
+        elif k == "send":
+            v.update(send=a["text"], echo=bool(a.get("echo", True)))
+        elif k == "beep":
+            v["beep"] = True
+        elif k == "note":
+            v["note"] = a["text"]
+        else:
+            v["keep"].append(a)
+    return v
+
+
+def apply_highlight(pieces, start, end, fg=None, bg=None, bold=False):
+    """pieces is [(text, style_key)] for one line; returns new pieces where the characters in
+    [start, end) have the given colours (a '#rrggbb' string or a palette index 0-15) and/or bold."""
+    if end <= start or not (fg is not None or bg is not None or bold):
+        return list(pieces)
+    out, pos = [], 0
+    for text, key in pieces:
+        a, b = pos, pos + len(text)
+        pos = b
+        lo, hi = max(start, a) - a, min(end, b) - a
+        if hi <= lo:
+            out.append((text, key))
+            continue
+        kfg, kbg, kbold, kital, kul, kinv = key
+        hkey = (fg if fg is not None else kfg, bg if bg is not None else kbg, kbold or bool(bold), kital, kul, kinv)
+        if lo > 0:
+            out.append((text[:lo], key))
+        out.append((text[lo:hi], hkey))
+        if hi < len(text):
+            out.append((text[hi:], key))
+    return out
+
 
 # ---- saved worlds (the "dialing directory") -------------------------------------------------
 _HOST_RE = re.compile(r"^[A-Za-z0-9._\-]{1,253}$")
@@ -1247,6 +1401,12 @@ class App:
         self._dial_mode = None                        # "modem" (ATDT) / "telnet" (fake CLI) / None
         self._telnet_cli = False                      # the fake telnet command line is active
         self._worlds_win = None                       # the ordinary Worlds dialog, if open
+        self._pending = []                            # [(text, style_key)] of the unfinished output line
+        self._line_plain = ""                         # plain text of the current logical line
+        self._line_flushed = False                    # part of this line is already on screen
+        self._line_hidden_len = 0                     # leading prompt text we chose not to show
+        self._flush_job = None
+        self._guard = triggers.LoopGuard() if triggers is not None else None
         self._dos_job = None                          # 1-second status refresh while in the DOS look
         self._online_since = 0.0
         self._fit_job = None
@@ -1282,7 +1442,8 @@ class App:
                "ui_mode": "normal", "dos_skin": DEFAULT_DOS_SKIN, "fullscreen": False,
                "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0,
                "dos_fit": True, "line_spacing": 0, "worlds": None,
-               "prompt_profile": prompts.DEFAULT_PRESET, "prompt_custom": []}
+               "prompt_profile": prompts.DEFAULT_PRESET, "prompt_custom": [],
+               "triggers": [], "alias_rules": None, "hide_prompt": False}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -1455,6 +1616,10 @@ class App:
             w.bind("<F11>", self.toggle_fullscreen)
             w.bind("<Control-w>", self._on_ctrl_w)
             w.bind("<Control-W>", self._on_ctrl_w)
+            for seq, fn in (("<Control-t>", self.open_triggers), ("<Control-T>", self.open_triggers),
+                            ("<Control-a>", self.open_aliases), ("<Control-A>", self.open_aliases)):
+                w.bind(seq, self._ctrl_handler(fn))
+                self.input.bind(seq, self._ctrl_handler(fn))      # beat the entry's own Ctrl+T / Ctrl+A
             w.bind("<Alt-Return>", self.toggle_fullscreen)
             w.bind("<Alt-d>", self.toggle_dos_mode)
             w.bind("<Alt-D>", self.toggle_dos_mode)
@@ -1470,6 +1635,8 @@ class App:
         f.add_command(label="Connect / Disconnect", command=self.toggle_connection)
         f.add_command(label="Worlds...   Ctrl+W", command=self.open_worlds)
         f.add_command(label="Prompt bar format...", command=self.edit_prompt)
+        f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
+        f.add_command(label="Aliases...   Ctrl+A", command=self.open_aliases)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
         f.add_separator()
@@ -1509,6 +1676,9 @@ class App:
         self.v_auto = tk.BooleanVar(value=self.cfg["auto_reconnect"])
         o.add_checkbutton(label="Auto-reconnect when disconnected", variable=self.v_auto,
                           command=self._auto_toggled)
+        self.v_hideprompt = tk.BooleanVar(value=self.cfg["hide_prompt"])
+        o.add_checkbutton(label="Hide the prompt line (show it in the bar only)", variable=self.v_hideprompt,
+                          command=lambda: self.cfg.update(hide_prompt=self.v_hideprompt.get()))
         m.add_cascade(label="Options", menu=o)
         self._menus = [m, f, v, o, self._skin_menu]
         self._menubar = m
@@ -1798,6 +1968,8 @@ class App:
             {"label": "Connection settings...", "hotkey": "S", "action": self.dos_connect_dialog},
             {"label": "Worlds...", "hotkey": "W", "shortcut": "Ctrl-W", "action": self.open_worlds},
             {"label": "Prompt bar format...", "hotkey": "B", "action": self.edit_prompt},
+            {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
+            {"label": "Aliases...", "hotkey": "A", "shortcut": "Ctrl-A", "action": self.open_aliases},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
              "action": self.toggle_log},
@@ -1834,7 +2006,7 @@ class App:
         new = not self.cfg[key]
         self.cfg[key] = new
         var = {"verify": "v_verify", "bell": "v_bell", "keepalive": "v_keep",
-               "auto_reconnect": "v_auto"}.get(key)
+               "auto_reconnect": "v_auto", "hide_prompt": "v_hideprompt"}.get(key)
         if var:
             getattr(self, var).set(new)
         if key == "auto_reconnect":
@@ -1850,6 +2022,7 @@ class App:
         rows = [("Verify TLS certificate", "V", "verify"), ("Beep on server bell", "B", "bell"),
                 ("Send keep-alive", "K", "keepalive"), ("Auto-reconnect", "R", "auto_reconnect"),
                 ("Auto-fit font to screen", "A", "dos_autofit"),
+                ("Hide prompt line (bar only)", "H", "hide_prompt"),
                 ("Screen width follows window", "W", "dos_fit"),
                 ("Dial / connect messages", "D", "dos_flourish")]
         items = [{"label": lbl, "hotkey": hk, "checked": bool(self.cfg[k]),
@@ -2152,6 +2325,478 @@ class App:
                                 message="Pattern groups, e.g. (?P<hp>[0-9]+)  -  Gauges: HP=hp/hpmax  "
                                         "Counters: ST=st  Cooldowns: M=m  Text: facing")
 
+    # ---- triggers and aliases ---------------------------------------------------------------
+    def _save_triggers(self, lst):
+        self.cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in lst) if t is not None][:500]
+        self._save_settings()
+
+    def _save_aliases(self, lst):
+        self.cfg["alias_rules"] = [a for a in (triggers.validate_alias(x) for x in lst) if a is not None][:200]
+        self._save_settings()
+
+    def _store_trigger(self, index, trig):
+        lst = list(self.cfg["triggers"])
+        if any(t["name"].lower() == trig["name"].lower() and i != index for i, t in enumerate(lst)):
+            return False, "There is already a trigger called '%s'." % trig["name"]
+        if index is None:
+            if len(lst) >= 500:
+                return False, "Too many triggers (500 maximum)."
+            lst.append(trig)
+        else:
+            lst[index] = trig
+        self._save_triggers(lst)
+        return True, "Saved '%s'." % trig["name"]
+
+    def _store_alias(self, index, alias):
+        lst = list(self.cfg["alias_rules"])
+        if any(a["name"].lower() == alias["name"].lower() and i != index for i, a in enumerate(lst)):
+            return False, "There is already an alias called '%s'." % alias["name"]
+        if index is None:
+            if len(lst) >= 200:
+                return False, "Too many aliases (200 maximum)."
+            lst.append(alias)
+        else:
+            lst[index] = alias
+        self._save_aliases(lst)
+        return True, "Saved '%s'." % alias["name"]
+
+    def _toggle_rule(self, kind, index):
+        key = "triggers" if kind == "trigger" else "alias_rules"
+        lst = [dict(x) for x in self.cfg[key]]
+        if 0 <= index < len(lst):
+            lst[index]["enabled"] = not lst[index]["enabled"]
+            (self._save_triggers if kind == "trigger" else self._save_aliases)(lst)
+
+    def _delete_rule(self, kind, index):
+        key = "triggers" if kind == "trigger" else "alias_rules"
+        lst = list(self.cfg[key])
+        if 0 <= index < len(lst):
+            del lst[index]
+            (self._save_triggers if kind == "trigger" else self._save_aliases)(lst)
+
+    def _rules_list_window(self, kind):
+        """The ordinary list window shared by the trigger and alias managers."""
+        attr = "_trig_win" if kind == "trigger" else "_alias_win"
+        cur = getattr(self, attr, None)
+        if cur is not None:
+            try:
+                if cur.winfo_exists():
+                    cur.lift()
+                    return cur
+            except tk.TclError:
+                pass
+        key = "triggers" if kind == "trigger" else "alias_rules"
+        top = tk.Toplevel(self.root)
+        setattr(self, attr, top)
+        top.title("Triggers" if kind == "trigger" else "Aliases")
+        top.transient(self.root)
+        tk.Label(top, text=("Triggers run when a line from the game matches. Higher priority runs first."
+                            if kind == "trigger" else
+                            "An alias is a short word that expands to commands (separate with ;, use %1-%9 and %*).")
+                 ).pack(anchor="w", padx=10, pady=(8, 0))
+        box = tk.Frame(top)
+        box.pack(fill="both", expand=True, padx=10, pady=4)
+        lb = tk.Listbox(box, height=14, width=78, exportselection=False, font=self.f_norm,
+                        highlightthickness=0, activestyle="none")
+        sc = tk.Scrollbar(box, command=lb.yview)
+        lb.configure(yscrollcommand=sc.set)
+        lb.pack(side="left", fill="both", expand=True)
+        sc.pack(side="right", fill="y")
+
+        def label(x):
+            if kind == "trigger":
+                return "%s %-22s %-5s %-28s %s" % ("[x]" if x["enabled"] else "[ ]", x["name"][:22], x["mode"],
+                                                  x["pattern"][:28], triggers.describe_actions(x))
+            return "%s %-16s %s" % ("[x]" if x["enabled"] else "[ ]", x["name"][:16], x["body"])
+
+        def refresh(select=None):
+            lb.delete(0, "end")
+            for x in self.cfg[key]:
+                lb.insert("end", label(x))
+            if self.cfg[key]:
+                i = max(0, min(len(self.cfg[key]) - 1, select or 0))
+                lb.selection_set(i)
+                lb.see(i)
+
+        def current():
+            sel = lb.curselection()
+            return sel[0] if sel else None
+
+        def edit(index):
+            existing = self.cfg[key][index] if index is not None else None
+            (self._trigger_form if kind == "trigger" else self._alias_form)(existing, index, top, refresh)
+
+        def toggle(_e=None):
+            i = current()
+            if i is not None:
+                self._toggle_rule(kind, i)
+                refresh(i)
+            return "break"
+
+        def delete(_e=None):
+            i = current()
+            if i is not None and messagebox.askyesno("Delete", "Delete '%s'?" % self.cfg[key][i]["name"], parent=top):
+                self._delete_rule(kind, i)
+                refresh(i)
+            return "break"
+
+        def preset():
+            menu = tk.Menu(top, tearoff=0)
+            for pr in trigger_presets():
+                menu.add_command(label=pr["name"], command=lambda pr=pr: add_preset(pr))
+            try:
+                menu.tk_popup(top.winfo_pointerx(), top.winfo_pointery())
+            finally:
+                menu.grab_release()
+
+        def add_preset(pr):
+            ok, msg = self._store_trigger(None, dict(pr, enabled=True))
+            if not ok:
+                messagebox.showinfo("Triggers", msg, parent=top)
+            refresh(len(self.cfg[key]) - 1)
+
+        btns = tk.Frame(top)
+        btns.pack(fill="x", padx=10, pady=(4, 10))
+        tk.Button(btns, text="Add...", width=8, command=lambda: edit(None)).pack(side="left")
+        tk.Button(btns, text="Edit...", width=8,
+                  command=lambda: edit(current()) if current() is not None else None).pack(side="left", padx=6)
+        tk.Button(btns, text="On / Off", width=8, command=toggle).pack(side="left")
+        tk.Button(btns, text="Delete", width=8, command=delete).pack(side="left", padx=6)
+        if kind == "trigger":
+            tk.Button(btns, text="Presets...", width=9, command=preset).pack(side="left")
+        tk.Button(btns, text="Close", width=8, command=top.destroy).pack(side="right")
+        lb.bind("<Double-Button-1>", lambda e: edit(current()) if current() is not None else None)
+        lb.bind("<space>", toggle)
+        lb.bind("<Delete>", delete)
+        lb.bind("<Insert>", lambda e: edit(None))
+        top.bind("<Escape>", lambda e: top.destroy())
+        top._actions = dict(listbox=lb, refresh=refresh, edit=edit, toggle=toggle, delete=delete, kind=kind,
+                            add_preset=add_preset)
+        refresh()
+        self._theme_tree(top)
+        lb.focus_set()
+        return top
+
+    def open_triggers(self):
+        if triggers is None:
+            self.system("The trigger engine is not installed.")
+            return None
+        if self.dos:
+            return self.dos_rules("trigger")
+        return self._rules_list_window("trigger")
+
+    def open_aliases(self):
+        if triggers is None:
+            self.system("The alias engine is not installed.")
+            return None
+        if self.dos:
+            return self.dos_rules("alias")
+        return self._rules_list_window("alias")
+
+    def _trigger_form(self, existing, index, parent, refresh):
+        """Add / edit a trigger (ordinary window) with a live test line."""
+        win = tk.Toplevel(parent)
+        win.title("Edit trigger" if existing else "Add trigger")
+        win.transient(parent)
+        v0 = values_from_trigger(existing)
+        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample")}
+        bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole",
+                                                           "hide", "echo", "beep")}
+        r = 0
+
+        def row(label, widget):
+            nonlocal r
+            tk.Label(win, text=label).grid(row=r, column=0, sticky="w", padx=(10, 6), pady=3)
+            widget.grid(row=r, column=1, sticky="w", pady=3, padx=(0, 10))
+            r += 1
+
+        row("Name", tk.Entry(win, textvariable=sv["name"], width=30))
+        row("Pattern", tk.Entry(win, textvariable=sv["pattern"], width=64))
+        mode = tk.Frame(win)
+        tk.Checkbutton(mode, text="Regular expression  (plain: * is a wildcard)", variable=bv["regex"]).pack(side="left")
+        tk.Checkbutton(mode, text="Ignore case", variable=bv["ignore_case"]).pack(side="left", padx=10)
+        row("Match", mode)
+        opts = tk.Frame(win)
+        tk.Checkbutton(opts, text="Enabled", variable=bv["enabled"]).pack(side="left")
+        tk.Checkbutton(opts, text="Stop other triggers", variable=bv["stop"]).pack(side="left", padx=10)
+        tk.Label(opts, text="Priority").pack(side="left", padx=(10, 4))
+        tk.Entry(opts, textvariable=sv["priority"], width=6).pack(side="left")
+        row("", opts)
+        hl = tk.Frame(win)
+        tk.Label(hl, text="text").pack(side="left")
+        tk.Entry(hl, textvariable=sv["fg"], width=10).pack(side="left", padx=(4, 10))
+        tk.Label(hl, text="background").pack(side="left")
+        tk.Entry(hl, textvariable=sv["bg"], width=10).pack(side="left", padx=(4, 10))
+        tk.Checkbutton(hl, text="Bold", variable=bv["bold"]).pack(side="left")
+        tk.Checkbutton(hl, text="Whole line", variable=bv["whole"]).pack(side="left", padx=6)
+        row("Highlight", hl)
+        row("Hide from screen", tk.Checkbutton(win, variable=bv["hide"]))
+        snd = tk.Frame(win)
+        tk.Entry(snd, textvariable=sv["send"], width=48).pack(side="left")
+        tk.Checkbutton(snd, text="Show it", variable=bv["echo"]).pack(side="left", padx=8)
+        row("Send command", snd)
+        row("Beep", tk.Checkbutton(win, variable=bv["beep"]))
+        row("Client note", tk.Entry(win, textvariable=sv["note"], width=64))
+        tk.Label(win, justify="left", wraplength=560,
+                 text="Colours: #rrggbb, 0-15 or a name like 'bright cyan'. In commands and notes: %0 is the match, "
+                      "%1-%9 the wildcards/groups; ; separates commands."
+                 ).grid(row=r, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 0)); r += 1
+        row("Test line", tk.Entry(win, textvariable=sv["sample"], width=64))
+        result = tk.Label(win, text="", wraplength=560, justify="left", anchor="w")
+        result.grid(row=r, column=0, columnspan=2, sticky="we", padx=10, pady=4); r += 1
+
+        def values():
+            v = {k: x.get() for k, x in sv.items()}
+            v.update({k: x.get() for k, x in bv.items()})
+            v["keep"] = v0["keep"]
+            return v
+
+        def test(*_):
+            trig, msg = trigger_from_values(values())
+            if trig is None:
+                result.configure(text=msg)
+            else:
+                result.configure(text=triggers.check_trigger(trig, sv["sample"].get())[1] if sv["sample"].get().strip()
+                                 else "Looks fine. Type a sample line above to test it.")
+
+        def ok():
+            trig, msg = trigger_from_values(values())
+            if trig is None:
+                result.configure(text=msg)
+                return
+            good, msg2 = self._store_trigger(index, trig)
+            if not good:
+                result.configure(text=msg2)
+                return
+            refresh(len(self.cfg["triggers"]) - 1 if index is None else index)
+            win.destroy()
+
+        for x in list(sv.values()) + list(bv.values()):
+            x.trace_add("write", test)
+        row_b = tk.Frame(win)
+        row_b.grid(row=r, column=0, columnspan=2, sticky="e", padx=10, pady=10)
+        tk.Button(row_b, text="OK", width=8, command=ok).pack(side="right")
+        tk.Button(row_b, text="Cancel", width=8, command=win.destroy).pack(side="right", padx=6)
+        win.bind("<Escape>", lambda e: win.destroy())
+        win._vars = (sv, bv)
+        win._ok = ok
+        win._result = result
+        win._values = values
+        test()
+        self._theme_tree(win)
+        return win
+
+    def _alias_form(self, existing, index, parent, refresh):
+        win = tk.Toplevel(parent)
+        win.title("Edit alias" if existing else "Add alias")
+        win.transient(parent)
+        sv = {"name": tk.StringVar(value=existing["name"] if existing else ""),
+              "body": tk.StringVar(value=existing["body"] if existing else ""),
+              "sample": tk.StringVar(value="")}
+        en = tk.BooleanVar(value=existing["enabled"] if existing else True)
+        for r, (label, key, width) in enumerate((("Name", "name", 24), ("Expands to", "body", 70), ("Try arguments", "sample", 40))):
+            tk.Label(win, text=label).grid(row=r, column=0, sticky="w", padx=(10, 6), pady=4)
+            tk.Entry(win, textvariable=sv[key], width=width).grid(row=r, column=1, sticky="w", pady=4, padx=(0, 10))
+        tk.Checkbutton(win, text="Enabled", variable=en).grid(row=3, column=1, sticky="w")
+        tk.Label(win, justify="left", wraplength=560, text="Use ; between commands. %1-%9 are the words you type after the "
+                 "alias, %* is all of them. With no % in the text, whatever you type is added to the last command."
+                 ).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 0))
+        result = tk.Label(win, text="", wraplength=560, justify="left", anchor="w")
+        result.grid(row=5, column=0, columnspan=2, sticky="we", padx=10, pady=4)
+
+        def build():
+            return triggers.validate_alias({"name": sv["name"].get().strip(), "body": sv["body"].get().strip(),
+                                            "enabled": en.get()})
+
+        def test(*_):
+            a = build()
+            if a is None:
+                result.configure(text="Give a name (letters, digits and _!?.+-, no spaces) and what it expands to.")
+            else:
+                result.configure(text="Sends: " + " | ".join(triggers.expand_alias(a, sv["sample"].get())))
+
+        def ok():
+            a = build()
+            if a is None:
+                test()
+                return
+            good, msg = self._store_alias(index, a)
+            if not good:
+                result.configure(text=msg)
+                return
+            refresh(len(self.cfg["alias_rules"]) - 1 if index is None else index)
+            win.destroy()
+
+        for x in sv.values():
+            x.trace_add("write", test)
+        en.trace_add("write", test)
+        row_b = tk.Frame(win)
+        row_b.grid(row=6, column=0, columnspan=2, sticky="e", padx=10, pady=10)
+        tk.Button(row_b, text="OK", width=8, command=ok).pack(side="right")
+        tk.Button(row_b, text="Cancel", width=8, command=win.destroy).pack(side="right", padx=6)
+        win.bind("<Escape>", lambda e: win.destroy())
+        win._vars = (sv, en)
+        win._ok = ok
+        win._result = result
+        test()
+        self._theme_tree(win)
+        return win
+
+    # -- DOS look ----------------------------------------------------------------------------
+    def dos_rules(self, kind, selected=0):
+        key = "triggers" if kind == "trigger" else "alias_rules"
+        if kind == "trigger":
+            cols = [{"title": "On", "width": 3}, {"title": "Name", "width": 18}, {"title": "Mode", "width": 5},
+                    {"title": "Pattern", "width": 0}, {"title": "Actions", "width": 22}]
+            hints = [("Enter", "Edit"), ("A", "Add"), ("Space", "On/Off"), ("Del", "Remove"), ("P", "Presets"),
+                     ("Esc", "Close")]
+        else:
+            cols = [{"title": "On", "width": 3}, {"title": "Name", "width": 14}, {"title": "Expands to", "width": 0}]
+            hints = [("Enter", "Edit"), ("A", "Add"), ("Space", "On/Off"), ("Del", "Remove"), ("Esc", "Close")]
+
+        def rows():
+            out = []
+            for x in self.cfg[key]:
+                on = "yes" if x["enabled"] else ""
+                if kind == "trigger":
+                    out.append({"cells": [on, x["name"], x["mode"], x["pattern"], triggers.describe_actions(x)],
+                                "role": "normal" if x["enabled"] else "dim"})
+                else:
+                    out.append({"cells": [on, x["name"], x["body"]], "role": "normal" if x["enabled"] else "dim"})
+            return out
+
+        def act(name, idx, table):
+            if name in ("select", "edit") and idx is not None:
+                table.close()
+                (self._dos_trigger_form if kind == "trigger" else self._dos_alias_form)(idx, None, 1)
+            elif name == "add":
+                table.close()
+                (self._dos_trigger_form if kind == "trigger" else self._dos_alias_form)(None, None, 1)
+            elif name == "toggle" and idx is not None:
+                self._toggle_rule(kind, idx)
+                table.set_rows(rows(), selected=idx)
+            elif name == "remove" and idx is not None:
+                table.close()
+                victim = self.cfg[key][idx]["name"]
+                self._overlay = dosui.confirm(
+                    self.root, "Remove", "Remove '%s'?" % victim, self._dc(), self.f_norm,
+                    lambda r, v: (self._delete_rule(kind, idx), self._reopen(self.dos_rules, kind, max(0, idx - 1)))
+                    if r == "yes" else self._reopen(self.dos_rules, kind, idx))
+            elif name == "presets" and kind == "trigger":
+                table.close()
+                self._dos_trigger_presets()
+
+        keys = {"Return": "select", "KP_Enter": "select", "Escape": "close", "a": "add", "Insert": "add",
+                "e": "edit", "Delete": "remove", "r": "remove", "space": "toggle"}
+        if kind == "trigger":
+            keys["p"] = "presets"
+        table = dosui.DosTable(self.root, "Triggers" if kind == "trigger" else "Aliases", cols, rows(), self._dc(),
+                               self.f_norm, act, keys=keys, hints=hints, min_width=70, selected=selected)
+        self._overlay = table
+        table.open()
+        return table
+
+    def _dos_trigger_presets(self):
+        items = [{"label": pr["name"], "hotkey": str(i + 1) if i < 9 else None,
+                  "action": (lambda pr=pr: self._dos_add_preset(pr))} for i, pr in enumerate(trigger_presets())]
+        self._dos_menu("Trigger presets", items, back=lambda: self.dos_rules("trigger"))
+
+    def _dos_add_preset(self, pr):
+        ok, msg = self._store_trigger(None, dict(pr, enabled=True))
+        self.system(msg)
+        self._reopen(self.dos_rules, "trigger", max(0, len(self.cfg["triggers"]) - 1))
+
+    def _dos_trigger_form(self, index, values, page):
+        """Two pages: what to match, then what to do. `values` carries entries between pages."""
+        if values is None:
+            values = values_from_trigger(self.cfg["triggers"][index] if index is not None else None)
+        t = lambda k, label, w=40: {"key": k, "label": label, "type": "text", "value": str(values[k]), "width": w}
+        c = lambda k, label: {"key": k, "label": label, "type": "check", "value": bool(values[k])}
+        if page == 1:
+            fields = [t("name", "Name", 30), t("pattern", "Pattern", 46), c("regex", "Regular expression"),
+                      c("ignore_case", "Ignore case"), c("enabled", "Enabled"), c("stop", "Stop other triggers"),
+                      t("priority", "Priority", 6), t("sample", "Test line", 46)]
+            buttons = [("Actions >", "next"), ("Test", "test"), ("Cancel", "cancel")]
+            title = "Trigger: match"
+            msg = "Plain: * is a wildcard. %1-%9 / %0 can be used in commands."
+        else:
+            fields = [t("fg", "Highlight text", 12), t("bg", "Highlight background", 12), c("bold", "Bold"),
+                      c("whole", "Colour the whole line"), c("hide", "Hide line from screen"),
+                      t("send", "Send command", 40), c("echo", "Show sent command"), c("beep", "Beep"),
+                      t("note", "Client note", 40)]
+            buttons = [("Save", "save"), ("< Back", "back"), ("Cancel", "cancel")]
+            title = "Trigger: actions"
+            msg = "Colours: #rrggbb, 0-15, or a name like 'bright cyan'."
+
+        def result(res, vals):
+            values.update(vals)
+            values["keep"] = values.get("keep", [])
+            if res == "cancel":
+                self._reopen(self.dos_rules, "trigger", index or 0)
+                return
+            if res == "next":
+                self._reopen(lambda: self._dos_trigger_form(index, values, 2))
+                return
+            if res == "back":
+                self._reopen(lambda: self._dos_trigger_form(index, values, 1))
+                return
+            trig, msg2 = trigger_from_values(values)
+            if res == "test":
+                text = msg2 if trig is None else (triggers.check_trigger(trig, str(values.get("sample", "")))[1]
+                                                  if str(values.get("sample", "")).strip() else "Looks fine. Add a test line to try it.")
+                self._overlay = dosui.show_message(self.root, "Test", text, self._dc(), self.f_norm,
+                                                   on_result=lambda r, v: self._reopen(lambda: self._dos_trigger_form(index, values, 1)))
+                return
+            if trig is None:
+                self.system(msg2)
+                self._reopen(lambda: self._dos_trigger_form(index, values, 2 if page == 2 else 1))
+                return
+            good, msg3 = self._store_trigger(index, trig)
+            self.system(msg3)
+            if not good:
+                self._reopen(lambda: self._dos_trigger_form(index, values, 1))
+            else:
+                self._reopen(self.dos_rules, "trigger", len(self.cfg["triggers"]) - 1 if index is None else index)
+
+        return self._dos_dialog(title, fields, buttons, result, width=66, message=msg)
+
+    def _dos_alias_form(self, index, values, page=1):
+        if values is None:
+            ex = self.cfg["alias_rules"][index] if index is not None else None
+            values = {"name": ex["name"] if ex else "", "body": ex["body"] if ex else "",
+                      "enabled": ex["enabled"] if ex else True, "sample": ""}
+        fields = [{"key": "name", "label": "Name", "type": "text", "value": values["name"], "width": 22},
+                  {"key": "body", "label": "Expands to", "type": "text", "value": values["body"], "width": 46},
+                  {"key": "enabled", "label": "Enabled", "type": "check", "value": bool(values["enabled"])},
+                  {"key": "sample", "label": "Try arguments", "type": "text", "value": values["sample"], "width": 30}]
+
+        def result(res, vals):
+            values.update(vals)
+            if res == "cancel":
+                self._reopen(self.dos_rules, "alias", index or 0)
+                return
+            a = triggers.validate_alias({"name": values["name"].strip(), "body": values["body"].strip(),
+                                         "enabled": values["enabled"]})
+            if res == "test":
+                text = ("Sends: " + " | ".join(triggers.expand_alias(a, values["sample"]))) if a else \
+                    "Give a name (letters, digits and _!?.+-, no spaces) and what it expands to."
+                self._overlay = dosui.show_message(self.root, "Test", text, self._dc(), self.f_norm,
+                                                   on_result=lambda r, v: self._reopen(lambda: self._dos_alias_form(index, values)))
+                return
+            if a is None:
+                self.system("Give a name (no spaces) and what it expands to.")
+                self._reopen(lambda: self._dos_alias_form(index, values))
+                return
+            good, msg = self._store_alias(index, a)
+            self.system(msg)
+            if not good:
+                self._reopen(lambda: self._dos_alias_form(index, values))
+            else:
+                self._reopen(self.dos_rules, "alias", len(self.cfg["alias_rules"]) - 1 if index is None else index)
+
+        return self._dos_dialog("Alias", fields, [("Save", "save"), ("Test", "test"), ("Cancel", "cancel")], result,
+                                width=62, message="Use ; between commands. %1-%9 / %* are your arguments.")
+
     def _reopen(self, fn, *args):
         """Re-open a menu once the one that just ran its action has fully closed."""
         self.root.after_idle(lambda: fn(*args) if self.dos and not self._overlay_open() else None)
@@ -2340,6 +2985,13 @@ class App:
 
         return self._dos_dialog("Font size", fields, [("OK", "ok"), ("Cancel", "cancel")], result, width=46,
                                 message="Setting a size turns font auto-fit off.")
+
+    def _ctrl_handler(self, fn):
+        def handler(_e=None):
+            if not self._overlay_open():
+                fn()
+            return "break"
+        return handler
 
     def _on_ctrl_w(self, _e=None):
         if not self._overlay_open():
@@ -2587,8 +3239,11 @@ class App:
         self.set_skin(name)
         return fp
 
-    def _append(self, pieces):
-        """pieces: [(text, tagname_or_None)]"""
+    def _append(self, pieces, _internal=False):
+        """pieces: [(text, tagname_or_None)]. Anything written by the client itself first lets an
+        unfinished server line (a prompt) appear, so the order on screen is always the true order."""
+        if not _internal and (self._pending or self._flush_job is not None):
+            self._flush_partial()
         at_bottom = self.out.yview()[1] >= 0.999
         self.out.configure(state="normal")
         for text, tag in pieces:
@@ -2614,11 +3269,13 @@ class App:
                 pass
 
     def system(self, text):
+        self._settle()
         # start on a fresh line if the server's prompt is sitting at the end of one
         prefix = "\n" if self.out.get("end-2c", "end-1c") not in ("\n", "") else ""
         self._append([(prefix + "[" + text + "]\n", "system")])
 
     def clear(self):
+        self._pending, self._line_plain, self._line_flushed, self._line_hidden_len = [], "", False, 0
         self.out.configure(state="normal")
         self.out.delete("1.0", "end")
         self.out.configure(state="disabled")
@@ -2655,7 +3312,7 @@ class App:
 
     def _on_root_destroy(self, e):
         if e.widget is self.root:
-            for job in (self._pump_job, self._reconnect_job, self._fit_job, self._dos_job):
+            for job in (self._pump_job, self._reconnect_job, self._fit_job, self._dos_job, self._flush_job):
                 if job is not None:
                     try:
                         self.root.after_cancel(job)
@@ -2766,12 +3423,13 @@ class App:
             self._statbar_hide()
 
     def _on_data(self, data):
-        pieces = []
+        had_text = False
         for ev in self.term.feed(data):
             k = ev[0]
             if k == "text":
-                pieces.append((ev[1], self._tag_for(ev[2])))
+                had_text = True
                 self._track_prompt(ev[1])
+                self._feed_text(ev[1], ev[2])
             elif k == "send":
                 self.conn.send(ev[1])
             elif k == "echo":
@@ -2780,9 +3438,124 @@ class App:
                     self.hist_pos = len(self.history)
             elif k == "bell" and self.cfg.get("bell"):
                 self.root.bell()
-        if pieces:
-            self._append(pieces)
+        if self._pending and self._flush_job is None:
+            self._flush_job = self.root.after(PARTIAL_FLUSH_MS, self._flush_partial)
+        if had_text:
             self._update_statbar()
+
+    # ---- whole lines: triggers can act on a line before it is shown ----------------------
+    def _feed_text(self, text, key):
+        """Collect text into the current line; a complete line goes through the trigger engine."""
+        while True:
+            i = text.find("\n")
+            if i < 0:
+                if text:
+                    self._pending.append((text, key))
+                    self._line_plain += text
+                return
+            head = text[:i]
+            if head:
+                self._pending.append((head, key))
+                self._line_plain += head
+            self._finish_line(key)
+            text = text[i + 1:]
+
+    def _log_raw(self, text):
+        if self.logfile:
+            try:
+                self.logfile.write(text)
+                self.logfile.flush()
+            except OSError:
+                pass
+
+    def _settle(self):
+        """Show any unfinished line now (before something else is written after it)."""
+        if self._pending or self._flush_job is not None:
+            self._flush_partial()
+
+    def _flush_partial(self):
+        if self._flush_job is not None:
+            try:
+                self.root.after_cancel(self._flush_job)
+            except tk.TclError:
+                pass
+            self._flush_job = None
+        if not self._pending:
+            return
+        pieces, self._pending = self._pending, []
+        if (self.cfg.get("hide_prompt") and not self._line_flushed and not self._line_hidden_len
+                and prompts.parse_prompt(self._line_plain, self.current_profile()) is not None):
+            self._line_hidden_len = len(self._line_plain)   # the bar shows it; keep it off the screen
+            self._log_raw(self._line_plain)
+            return
+        self._append([(t, self._tag_for(k)) for t, k in pieces], _internal=True)
+        self._line_flushed = True
+
+    def _finish_line(self, key):
+        pieces, plain = self._pending, self._line_plain
+        flushed, hidden = self._line_flushed, self._line_hidden_len
+        self._pending, self._line_plain, self._line_flushed, self._line_hidden_len = [], "", False, 0
+        if self._flush_job is not None:
+            try:
+                self.root.after_cancel(self._flush_job)
+            except tk.TclError:
+                pass
+            self._flush_job = None
+        if hidden:
+            plain = plain[hidden:]
+            if not pieces:
+                return                                    # nothing but the hidden prompt: drop it and its newline
+        shown, effects = self._run_triggers(pieces, plain, flushed)
+        if shown is None:                                 # hidden by a trigger
+            self._log_raw(plain + "\n")
+        else:
+            segs = [(t, self._tag_for(k)) for t, k in shown]
+            segs.append(("\n", self._tag_for(key)))
+            self._append(segs, _internal=True)
+        for fx in effects:
+            self._do_effect(fx)
+
+    def _run_triggers(self, pieces, plain, flushed):
+        """Returns (pieces_to_show_or_None, side_effects). Highlight and hide only apply to text
+        that has not been drawn yet; commands, beeps and notes always run."""
+        if triggers is None or not plain or not any(t.get("enabled", True) for t in self.cfg["triggers"]):
+            return pieces, []
+        self._guard.begin_line()
+        gag, effects = False, []
+        for trig, m in triggers.match_line(plain, self.cfg["triggers"]):
+            for act in trig["actions"]:
+                kind = act["type"]
+                if kind == "highlight" and not flushed:
+                    lo, hi = (0, len(plain)) if act.get("scope") == "line" else (m["start"], m["end"])
+                    pieces = apply_highlight(pieces, lo, hi, act.get("fg"), act.get("bg"), act.get("bold", False))
+                elif kind == "gag":
+                    gag = True
+                elif kind == "send":
+                    effects.append(("send", trig["name"], act, m["captures"]))
+                elif kind == "beep":
+                    effects.append(("beep",))
+                elif kind == "note":
+                    effects.append(("note", triggers.expand(act["text"], m["captures"])))
+        if gag and not flushed:
+            return None, effects
+        return pieces, effects
+
+    def _do_effect(self, fx):
+        if fx[0] == "beep":
+            if self.cfg.get("bell"):
+                self.root.bell()
+        elif fx[0] == "note":
+            self.system(fx[1])
+        elif fx[0] == "send":
+            _kind, name, act, caps = fx
+            for cmd in triggers.expand_commands(act["text"], caps):   # split first: game text can never add commands
+                if not self.connected:
+                    return
+                if self._guard.allow(name):
+                    self.send_line(cmd, echo=act.get("echo", True))
+                else:
+                    self.system("Trigger '%s' stopped: too many commands too fast." % name)
+                    return
 
     # ---- input -------------------------------------------------------
     def _on_enter(self, _e):
@@ -2810,6 +3583,7 @@ class App:
 
     def _say(self, text):
         """Plain output line from the client itself (modem / telnet replies), no brackets."""
+        self._settle()
         prefix = "\n" if self.out.get("end-2c", "end-1c") not in ("\n", "") else ""
         self._append([(prefix + text + "\n", None)])
 
@@ -3211,19 +3985,16 @@ class App:
         self.last_send = time.time()
 
     def _expand(self, line):
-        """Alias expansion. Alias templates may hold several commands separated by ';'
-        and use $* for the arguments (otherwise arguments are appended)."""
-        word, _, rest = line.partition(" ")
-        tmpl = self.cfg["aliases"].get(word)
-        if tmpl is None:
+        """Alias expansion: an alias is a first word that expands to one or more commands
+        (separated by ';', arguments as %1-%9 and %*; with no % in the body, the arguments are
+        simply appended to the last command)."""
+        if triggers is None:
             return [line]
-        rest = rest.strip()
-        parts = [p.strip() for p in tmpl.split(";") if p.strip()]
-        if "$*" in tmpl:
-            return [p.replace("$*", rest) for p in parts]
-        if rest and parts:
-            parts[-1] = parts[-1] + " " + rest
-        return parts
+        word, _, rest = line.partition(" ")
+        alias = triggers.find_alias(word, self.cfg["alias_rules"])
+        if alias is None:
+            return [line]
+        return triggers.expand_alias(alias, rest)
 
     def _hist(self, d):
         if not self.history or self.term.echo_off:
@@ -3268,6 +4039,8 @@ class App:
             self.open_worlds()
         elif cmd == "prompt":
             self.edit_prompt()
+        elif cmd == "triggers":
+            self.open_triggers()
         elif cmd == "dial":
             self._dial_command("ATDT " + arg) if arg else self.system("Usage: /dial host [port] [tls|plain] or a saved world's name")
         elif cmd == "reconnect":
@@ -3284,21 +4057,30 @@ class App:
             self.clear()
         elif cmd == "alias":
             name, _, exp = arg.partition(" ")
-            if not name or not exp.strip():
-                self.system("Usage: /alias name expansion")
+            a = triggers.validate_alias({"name": name, "body": exp.strip(), "enabled": True}) if triggers else None
+            if a is None:
+                self.system("Usage: /alias name expansion   (use ; between commands, %1-%9 / %* for arguments)")
             else:
-                self.cfg["aliases"][name] = exp.strip()
-                self._save_settings()
-                self.system("Alias %s = %s" % (name, exp.strip()))
+                rules = [r for r in self.cfg["alias_rules"] if r["name"].lower() != a["name"].lower()]
+                if len(rules) >= 200:
+                    self.system("Too many aliases (200 maximum).")
+                else:
+                    rules.append(a)
+                    self.cfg["alias_rules"] = rules
+                    self._save_settings()
+                    self.system("Alias %s = %s" % (a["name"], a["body"]))
         elif cmd == "unalias":
-            if self.cfg["aliases"].pop(arg, None) is not None:
+            rules = [r for r in self.cfg["alias_rules"] if r["name"].lower() != arg.strip().lower()]
+            if len(rules) < len(self.cfg["alias_rules"]):
+                self.cfg["alias_rules"] = rules
                 self._save_settings()
-                self.system("Removed alias %s." % arg)
+                self.system("Removed alias %s." % arg.strip())
             else:
                 self.system("No such alias.")
         elif cmd == "aliases":
-            al = self.cfg["aliases"]
-            self.system("\n".join("%s = %s" % kv for kv in sorted(al.items())) if al else "No aliases.")
+            al = self.cfg["alias_rules"]
+            self.system("\n".join("%s%s = %s" % (r["name"], "" if r["enabled"] else " (off)", r["body"])
+                                  for r in sorted(al, key=lambda r: r["name"].lower())) if al else "No aliases.")
         elif cmd == "log":
             self.toggle_log(arg or None)
         else:
