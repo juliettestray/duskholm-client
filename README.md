@@ -222,6 +222,26 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 
 Settings live in `~/.sanctuary.json`.
 
+## Updating, and making a release
+
+**Updating.** `/update` (or File > Check for updates) asks GitHub whether a newer release exists.
+It never runs by itself unless you switch on *Options > Check for updates when Sanctuary starts*,
+and it sends nothing about you. If there is one you see what is new and choose *Install update*,
+*Skip this version* or *Later*. The download is checked against the SHA-256 published with the
+release and only then offered; Sanctuary closes, swaps itself and starts again (the old program is
+kept as `Sanctuary.old.exe` next to it). Running from the Python source, it only tells you where to
+download, since you update with `git pull`. A checksum shows the download is what was published; it
+does not prove who published it. Windows may also show a SmartScreen warning for an unsigned program.
+
+**Making a release** (for the maintainer):
+
+```
+# 1. bump version.py (e.g. 1.0.1), commit, push
+# 2. python make_exe.py          -> dist/Sanctuary-1.0.1-win64.zip and .zip.sha256
+# 3. tag the commit v1.0.1 and publish a GitHub release for the tag with both files attached
+#    and the changes in its description (that text is what the update window shows)
+```
+
 ## Local commands
 
 Local commands start with `/` (the game has none). `//text` sends `/text`.
@@ -277,6 +297,7 @@ python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flood control, review
 python tests/test_access.py       # screen reader mode end to end with a fake voice
+python tests/test_updater.py      # update check/install against a fake local GitHub
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

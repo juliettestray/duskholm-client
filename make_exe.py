@@ -2,9 +2,11 @@
 
     python make_exe.py
 
-Needs PyInstaller (`pip install pyinstaller`). Writes dist/Sanctuary.exe and
-dist/Sanctuary-<commit>-win64.zip (the exe, README and licence). Nothing here is needed to
+Needs PyInstaller (`pip install pyinstaller`). Writes dist/Sanctuary.exe,
+dist/Sanctuary-<version>-win64.zip (the exe, README and licence) and the matching .sha256 file
+that the in-program updater checks. Nothing here is needed to
 run Sanctuary from source."""
+import hashlib
 import os
 import subprocess
 import sys
@@ -34,15 +36,22 @@ def main():
     if not os.path.exists(exe):
         print("No exe was produced.")
         return 1
-    zpath = os.path.join(HERE, "dist", "Sanctuary-%s-win64.zip" % commit())
+    sys.path.insert(0, HERE)
+    import version
+    zpath = os.path.join(HERE, "dist", "Sanctuary-%s-win64.zip" % version.__version__)
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(exe, "Sanctuary/Sanctuary.exe")
         for name in ("README.md", "LICENSE"):
             p = os.path.join(HERE, name)
             if os.path.exists(p):
                 z.write(p, "Sanctuary/" + name)
+    digest = hashlib.sha256(open(zpath, "rb").read()).hexdigest()
+    with open(zpath + ".sha256", "w", encoding="ascii", newline="\n") as f:
+        f.write("%s  %s\n" % (digest, os.path.basename(zpath)))
     print("Built", exe)
     print("Zip  ", zpath)
+    print("Sum  ", zpath + ".sha256", digest)
+    print("Commit", commit())
     return 0
 
 

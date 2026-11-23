@@ -65,6 +65,7 @@ import custom as customize_data
 import worldfile
 import speech
 import access
+import updateui
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -898,6 +899,7 @@ EXTRA_BOOLS = [
     ("custom_form", True, "Fill-in form when I type 'customize'", "Customize form", "F"),
     ("screen_reader", False, "Screen reader mode", "Screen reader mode", "Y"),
     ("sr_alerts", True, "Screen reader: announce stun, health and ready timers", "Reader alerts", "T"),
+    ("update_check", False, "Check for updates when Sanctuary starts", "Check for updates at start", "G"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
@@ -947,6 +949,8 @@ def clean_settings(cfg):
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
+    us = cfg.get("update_skip")
+    cfg["update_skip"] = us if isinstance(us, str) and re.fullmatch(r"[vV]?[0-9.]{1,20}", us) else ""
     si = cfg.get("sr_interval")
     cfg["sr_interval"] = 0 if not isinstance(si, int) or isinstance(si, bool) or si <= 0 else max(5, min(3600, si))
     sr = cfg.get("sr_rate")
@@ -1478,7 +1482,7 @@ class Connection:
                 pass
 
 
-class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
+class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
         self.cfg = self._load_settings()
@@ -1509,6 +1513,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
         self._extras_init()
         self._tools_init()
         self._access_init()
+        self._update_init()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
         self._cd_job = None
         self._mono = None
@@ -1565,6 +1570,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
         self.system("%s client. Type /help for local commands, or press Connect." % APP_NAME)
         if self.cfg.get("screen_reader"):
             self.root.after(400, lambda: self.set_screen_reader(True, announce=True))
+        if self.cfg.get("update_check"):
+            self.root.after(6000, lambda: self.check_for_updates(manual=False))
 
     # ---- settings ----------------------------------------------------
     def _load_settings(self):
@@ -1790,6 +1797,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
         f.add_command(label="Export world settings...", command=self.open_export)
         f.add_command(label="Import world settings...", command=self.open_import)
         f.add_command(label="Hotkeys...", command=self.open_hotkeys)
+        f.add_command(label="Check for updates...", command=self.check_for_updates)
         f.add_command(label="About...   F12", command=self.open_about)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
@@ -2853,6 +2861,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
             {"label": "Export world settings...", "hotkey": "E", "action": self.open_export},
             {"label": "Import world settings...", "hotkey": "I", "action": self.open_import},
             {"label": "Hotkeys...", "hotkey": "K", "action": self.open_hotkeys},
+            {"label": "Check for updates...", "hotkey": "U", "action": self.check_for_updates},
         ]
         return self._dos_menu("Tools", items, back=self.dos_main_menu)
 
@@ -5376,7 +5385,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
     def _local(self, line):
         cmd, _, arg = line[1:].partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
-        if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg):
+        if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
+                or self._update_command(cmd, arg):
             return
         if cmd == "export":
             if arg:
@@ -5402,7 +5412,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
                         "  /moon   /notes   /hotkeys\n"
                         "  /hex ff8800              /gradient [text]   /customize\n"
                         "  /export [file]           /import file   (world settings, .snc)\n"
-                        "  /sr on|off|status|help|test   screen reader mode")
+                        "  /sr on|off|status|help|test   screen reader mode\n"
+                        "  /update                  check for a newer Sanctuary")
         elif cmd == "connect":
             bits = arg.split()
             if bits:

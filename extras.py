@@ -472,21 +472,19 @@ class ExtrasMixin:
         return top
 
     # ---- about -------------------------------------------------------------------------
-    ABOUT_TEXT = ("Sanctuary\n"
-                  "A telnet client for Duskholm and other Haven-style MUDs.\n\n"
-                  "Credits: coming soon.\n\n"
-                  "https://github.com/juliettestray/sanctuary")
+    def about_text(self):
+        return "Sanctuary"
 
     def open_about(self):
         if self.dos:
             if self._overlay_open():
                 return None
-            self._overlay = dosui.show_message(self.root, "About", self.ABOUT_TEXT, self._dc(), self.f_norm)
+            self._overlay = dosui.show_message(self.root, "About", self.about_text(), self._dc(), self.f_norm)
             return self._overlay
         top = tk.Toplevel(self.root)
         top.title("About Sanctuary")
         top.transient(self.root)
-        tk.Label(top, text=self.ABOUT_TEXT, justify="left", padx=20, pady=14).pack()
+        tk.Label(top, text=self.about_text(), justify="left", padx=20, pady=14).pack()
         tk.Button(top, text="Close", width=10, command=top.destroy).pack(pady=(0, 12))
         top.bind("<Escape>", lambda e: top.destroy())
         self._theme_tree(top)
