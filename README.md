@@ -18,6 +18,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `</color>`, `<b>`, `<i>`, `<u>` and the `&lt; &gt; &amp;` entities. Other tags
   are ignored (their text still shows).
 - **Colour**: ANSI 16-colour, xterm-256 (`38;5;N`) and truecolor.
+- **Outgoing text is cleaned to what the game accepts.** The server keeps only printable
+  ASCII from typed lines, so smart quotes, em-dashes, ellipses, accents and tabs would
+  otherwise vanish silently. The client converts them (`don’t` → `don't`, `—` → `--`,
+  `é` → `e`) and tells you if anything had to be dropped. Pastes are flattened to one line
+  and never sent automatically.
+- Connection safety: sends never block the window, cancelling aborts a stalled TLS
+  handshake, and a late event from an old connection can't disconnect a new one.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -29,7 +36,7 @@ Local commands start with `/` (the game has none). `//text` sends `/text`.
 
 | Command | Does |
 | --- | --- |
-| `/connect [host [port]]`, `/disconnect`, `/quit` | connection control |
+| `/connect [host [port]]`, `/disconnect`, `/reconnect`, `/quit` | connection control |
 | `/alias name a;b $*` | define an alias; `;` separates commands, `$*` is the arguments (otherwise they are appended to the last command) |
 | `/unalias name`, `/aliases` | remove / list aliases |
 | `/log [file]` | start or stop logging |

@@ -26,6 +26,8 @@ import ssl
 import sys
 import threading
 import time
+import traceback
+import unicodedata
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox
@@ -77,6 +79,46 @@ def mxp_color(value):
     if value in MXP_NAMED:
         return ANSI16[MXP_NAMED[value]]
     return None
+
+
+# The server keeps only printable ASCII from typed lines (comm.c read_from_buffer:
+# isascii && isprint) and truncates lines at MAX_INPUT_LENGTH (6000), so anything else
+# would vanish silently: pasted smart quotes, em-dashes, accents, tabs. Map them to ASCII.
+MAX_LINE = 5990
+_TRANSLIT = {
+    "‘": "'", "’": "'", "‚": "'", "′": "'", "ʼ": "'",
+    "“": '"', "”": '"', "„": '"', "″": '"',
+    "–": "-", "−": "-", "—": "--", "―": "--",
+    "…": "...", "•": "*", "·": "*",
+    "\t": " ", "\r": " ", "\n": " ", " ": " ", " ": " ", " ": " ",
+    " ": " ", " ": " ", " ": " ", "　": " ",
+    "​": "", "‌": "", "‍": "", "﻿": "",
+}
+
+
+def sanitize_outgoing(line):
+    """Returns (clean_line, dropped, truncated): printable ASCII only, tabs/newlines as
+    spaces, typographic characters transliterated, accents stripped. `dropped` counts
+    characters that could not be represented; `truncated` is True if the line was cut."""
+    out, dropped = [], 0
+    for ch in line:
+        if " " <= ch <= "~":
+            out.append(ch)
+            continue
+        if ch in _TRANSLIT:
+            out.append(_TRANSLIT[ch])
+            continue
+        base = "".join(c for c in unicodedata.normalize("NFKD", ch)
+                       if not unicodedata.combining(c))
+        if base and all(" " <= c <= "~" for c in base):
+            out.append(base)
+        else:
+            dropped += 1
+    clean = "".join(out)
+    truncated = len(clean) > MAX_LINE
+    if truncated:
+        clean = clean[:MAX_LINE]
+    return clean, dropped, truncated
 
 
 ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "quot": '"', "apos": "'", "nbsp": " "}
@@ -361,61 +403,126 @@ class Terminal:
 # GUI
 # =========================================================================
 
+def clean_settings(cfg):
+    """A hand-edited or corrupt settings file must never stop the client from starting."""
+    def to_int(v, default, lo, hi):
+        try:
+            return max(lo, min(hi, int(v)))
+        except (TypeError, ValueError):
+            return default
+
+    cfg["host"] = cfg["host"].strip() if isinstance(cfg.get("host"), str) and cfg["host"].strip() \
+        else DEFAULT_HOST
+    cfg["port"] = to_int(cfg.get("port"), TLS_PORT, 1, 65535)
+    cfg["font_size"] = to_int(cfg.get("font_size"), 11, 7, 28)
+    for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True)):
+        if not isinstance(cfg.get(k), bool):
+            cfg[k] = default
+    al = cfg.get("aliases")
+    cfg["aliases"] = {k: v for k, v in al.items() if isinstance(k, str) and isinstance(v, str)
+                      and k and " " not in k} if isinstance(al, dict) else {}
+    if not isinstance(cfg.get("geometry"), str) or not re.match(r"^\d+x\d+([+-]-?\d+){0,2}$",
+                                                                cfg.get("geometry", "")):
+        cfg.pop("geometry", None)
+    return cfg
+
 class Connection:
     """Socket owner. Reads on a thread, hands events to the GUI through a queue."""
 
-    def __init__(self, q):
+    def __init__(self, q, gen=0):
         self.q = q
+        self.gen = gen            # every event is tagged so the GUI can ignore stale ones
         self.sock = None
+        self.closing = False
         self._lock = threading.Lock()
+        self._out = queue.Queue()  # writes happen on their own thread, never the GUI's
+        self._thread = None
+
+    def _put(self, kind, payload=None):
+        self.q.put((self.gen, kind, payload))
 
     def open(self, host, port, use_tls, verify):
-        threading.Thread(target=self._run, args=(host, port, use_tls, verify), daemon=True).start()
+        self._thread = threading.Thread(target=self._run, args=(host, port, use_tls, verify),
+                                        daemon=True)
+        self._thread.start()
+
+    def _register(self, s):
+        """Make `s` the live socket so close() can interrupt whatever it is doing. If we were
+        cancelled in the meantime, drop it and report False."""
+        with self._lock:
+            if self.closing:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+                return False
+            self.sock = s
+            return True
 
     def _run(self, host, port, use_tls, verify):
         try:
             s = socket.create_connection((host, port), timeout=12)
+            if not self._register(s):
+                return
             if use_tls:
                 ctx = ssl.create_default_context()
                 if not verify:
                     ctx.check_hostname = False
                     ctx.verify_mode = ssl.CERT_NONE
-                s = ctx.wrap_socket(s, server_hostname=host)
+                # handshake after registering, so Cancel can abort a stalled one
+                s = ctx.wrap_socket(s, server_hostname=host, do_handshake_on_connect=False)
+                if not self._register(s):
+                    return
+                s.do_handshake()
             s.settimeout(None)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except Exception as e:  # noqa: BLE001
-            self.q.put(("failed", str(e)))
+            if not self.closing:
+                self._put("failed", str(e))
             return
-        with self._lock:
-            self.sock = s
-        self.q.put(("connected", None))
+        if self.closing:
+            return
+        threading.Thread(target=self._writer, args=(s,), daemon=True).start()
+        self._put("connected")
         reason = "Connection closed by server."
         try:
             while True:
                 data = s.recv(8192)
                 if not data:
                     break
-                self.q.put(("data", data))
+                self._put("data", data)
         except OSError as e:
-            if self.sock is None:
-                return  # we closed it ourselves
             reason = "Connection lost: %s" % e
-        self.q.put(("closed", reason))
+        if not self.closing:
+            self._put("closed", reason)
+        self._out.put(None)
+
+    def _writer(self, s):
+        while True:
+            raw = self._out.get()
+            if raw is None:
+                return
+            try:
+                s.sendall(raw)
+            except OSError as e:
+                if not self.closing:
+                    self._put("closed", "Send failed: %s" % e)
+                self.close()
+                return
 
     def send(self, raw):
+        """Queue bytes for the writer thread. False if there is no live connection."""
         with self._lock:
-            s = self.sock
-        if s is None:
-            return False
-        try:
-            s.sendall(raw)
-            return True
-        except OSError:
-            return False
+            ok = self.sock is not None and not self.closing
+        if ok:
+            self._out.put(raw)
+        return ok
 
     def close(self):
         with self._lock:
+            self.closing = True
             s, self.sock = self.sock, None
+        self._out.put(None)
         if s:
             try:
                 s.shutdown(socket.SHUT_RDWR)
@@ -437,7 +544,8 @@ class App:
             self.cfg["port"] = port
             self.cfg["tls"] = (port == TLS_PORT)
         self.q = queue.Queue()
-        self.conn = Connection(self.q)
+        self.gen = 0
+        self.conn = Connection(self.q, self.gen)
         self.term = Terminal(want_mxp=True)
         self.connected = False
         self.connecting = False
@@ -463,10 +571,12 @@ class App:
                "font_size": 11, "aliases": {}, "bell": True, "keepalive": True}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-                cfg.update(json.load(f))
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                cfg.update(loaded)
         except (OSError, ValueError):
             pass
-        return cfg
+        return clean_settings(cfg)
 
     def _save_settings(self):
         self.cfg["geometry"] = self.root.geometry()
@@ -529,6 +639,8 @@ class App:
         self.input.bind("<Prior>", lambda e: self.out.yview_scroll(-1, "pages"))
         self.input.bind("<Next>", lambda e: self.out.yview_scroll(1, "pages"))
         self.input.bind("<Escape>", lambda e: self.input.delete(0, "end"))
+        self.input.bind("<<Paste>>", self._on_paste)
+        self.input.bind("<Control-v>", self._on_paste)
         for w in (self.root,):
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
@@ -613,41 +725,58 @@ class App:
 
     # ---- network pump ------------------------------------------------
     def _pump(self):
+        # Always reschedules, whatever happens: an exception here must never silently
+        # kill network handling for the rest of the session.
         try:
-            while True:
-                kind, payload = self.q.get_nowait()
-                if kind == "data":
-                    self._on_data(payload)
-                elif kind == "connected":
-                    self.connecting, self.connected = False, True
-                    self.term = Terminal(want_mxp=True)
-                    self.input.configure(show="")
-                    self.btn.configure(text="Disconnect")
-                    self.status.configure(text="Connected")
-                    self.system("Connected to %s:%s%s." % (self.v_host.get(), self.v_port.get(),
-                                                            " (TLS)" if self.v_tls.get() else ""))
-                elif kind == "failed":
-                    self.connecting = False
-                    self.btn.configure(text="Connect")
-                    self.status.configure(text="Disconnected")
-                    self.system("Could not connect: %s" % payload)
-                    if "CERTIFICATE" in payload.upper():
-                        self.system("TLS certificate was not accepted. Options > Verify TLS certificate "
-                                    "turns checking off, or use the plain port 3000.")
-                elif kind == "closed":
-                    if self.connected:
-                        self.connected = False
-                        self.input.configure(show="")
-                        self.btn.configure(text="Connect")
-                        self.status.configure(text="Disconnected")
-                        self.system(payload)
-        except queue.Empty:
-            pass
-        if (self.connected and self.cfg.get("keepalive") and
-                time.time() - self.last_send > KEEPALIVE_SECONDS):
-            self.conn.send(bytes([IAC, NOP]))
-            self.last_send = time.time()
-        self.root.after(25, self._pump)
+            deadline = time.time() + 0.02      # keep the window responsive during bursts
+            while time.time() < deadline:
+                try:
+                    gen, kind, payload = self.q.get_nowait()
+                except queue.Empty:
+                    break
+                if gen != self.conn.gen:
+                    continue                   # event from a connection we already dropped
+                try:
+                    self._handle_event(kind, payload)
+                except Exception:  # noqa: BLE001
+                    traceback.print_exc()
+                    self.system("Internal error handling %s (see console); carrying on." % kind)
+            if (self.connected and self.cfg.get("keepalive") and
+                    time.time() - self.last_send > KEEPALIVE_SECONDS):
+                self.conn.send(bytes([IAC, NOP]))
+                self.last_send = time.time()
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+        finally:
+            self.root.after(25, self._pump)
+
+    def _set_disconnected(self):
+        self.connecting = self.connected = False
+        self.input.configure(show="")
+        self.btn.configure(text="Connect")
+        self.status.configure(text="Disconnected")
+
+    def _handle_event(self, kind, payload):
+        if kind == "data":
+            self._on_data(payload)
+        elif kind == "connected":
+            self.connecting, self.connected = False, True
+            self.term = Terminal(want_mxp=True)
+            self.input.configure(show="")
+            self.btn.configure(text="Disconnect")
+            self.status.configure(text="Connected")
+            self.system("Connected to %s:%s%s." % (self.v_host.get(), self.v_port.get(),
+                                                    " (TLS)" if self.v_tls.get() else ""))
+        elif kind == "failed":
+            self._set_disconnected()
+            self.system("Could not connect: %s" % payload)
+            if "CERTIFICATE" in payload.upper():
+                self.system("TLS certificate was not accepted. Options > Verify TLS certificate "
+                            "turns checking off, or use the plain port 3000.")
+        elif kind == "closed":
+            if self.connected:
+                self._set_disconnected()
+                self.system(payload)
 
     def _on_data(self, data):
         pieces = []
@@ -675,23 +804,48 @@ class App:
             self.history.append(line)
             del self.history[:-500]
         self.hist_pos, self.draft = len(self.history), ""
-        if not secret and line.startswith("/") and not line.startswith("//"):
-            self._local(line)
-            return "break"
-        if line.startswith("//"):
-            line = line[1:]
-        self.send_line(line, echo=not secret)
+        if not secret:
+            if line.startswith("/") and not line.startswith("//"):
+                self._local(line)
+                return "break"
+            if line.startswith("//"):
+                line = line[1:]
+        self.send_line(line, echo=not secret, secret=secret)
         return "break"
 
-    def send_line(self, line, echo=True):
+    def _on_paste(self, _e):
+        # Entry would insert newlines as odd glyphs; flatten them (never auto-send a paste).
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            return "break"
+        clean, _dropped, _trunc = sanitize_outgoing(text)
+        try:
+            if self.input.selection_present():
+                self.input.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        self.input.insert("insert", clean)
+        return "break"
+
+    def send_line(self, line, echo=True, secret=False):
+        """secret=True (password prompt): no alias expansion, no local echo, and nothing
+        about the content ever appears in a message."""
         if not self.connected:
             self.system("Not connected.")
             return
-        for part in self._expand(line):
+        parts = [line] if secret else self._expand(line)
+        for part in parts:
+            clean, dropped, truncated = sanitize_outgoing(part)
+            if dropped:
+                self.system("%d character%s the game can't accept %s removed from that line."
+                            % (dropped, "" if dropped == 1 else "s", "was" if dropped == 1 else "were"))
+            if truncated:
+                self.system("Line cut to %d characters (the game's limit is about 6000)." % MAX_LINE)
             if echo:
-                self._append([(part + "\n", "echo")])
-            raw = part.encode("utf-8", "replace").replace(b"\xff", b"\xff\xff") + b"\r\n"
-            if not self.conn.send(raw):
+                self._append([(clean + "\n", "echo")])
+            # clean is printable ASCII, so no IAC (0xFF) can occur and no escaping is needed
+            if not self.conn.send(clean.encode("ascii") + b"\r\n"):
                 self.system("Send failed.")
                 return
         self.last_send = time.time()
@@ -735,7 +889,7 @@ class App:
         cmd, arg = cmd.lower(), arg.strip()
         if cmd in ("help", "?"):
             self.system("Local commands:\n"
-                        "  /connect [host [port]]   /disconnect   /quit\n"
+                        "  /connect [host [port]]   /disconnect   /reconnect   /quit\n"
                         "  /alias name expansion    (use ; between commands, $* for arguments)\n"
                         "  /unalias name            /aliases\n"
                         "  /log [file]              start or stop logging\n"
@@ -749,6 +903,10 @@ class App:
                 self.v_tls.set(bits[1] == str(TLS_PORT))
             if not self.connected:
                 self.toggle_connection()
+        elif cmd == "reconnect":
+            if self.connected or self.connecting:
+                self.toggle_connection()
+            self.root.after(300, self.toggle_connection)
         elif cmd == "disconnect":
             if self.connected or self.connecting:
                 self.toggle_connection()
@@ -805,7 +963,8 @@ class App:
         self.btn.configure(text="Cancel")
         self.status.configure(text="Connecting…")
         self.system("Connecting to %s:%d…" % (host, port))
-        self.conn = Connection(self.q)
+        self.gen += 1
+        self.conn = Connection(self.q, self.gen)
         self.conn.open(host, port, self.v_tls.get(), self.v_verify.get())
 
     def toggle_log(self, path=None):
