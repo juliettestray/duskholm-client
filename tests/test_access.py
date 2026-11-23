@@ -103,7 +103,7 @@ app.sr_stop(); assert ("stop",) in fb.events
 # ---- stats and alerts
 prompt("[350/350DF 10ST 0WN 0LG M:0 K:0 (North 1/5:1/5)] ")
 fb.said.clear(); app.sr_stats()
-assert fb.said == ["DF 350 of 350 (100 percent). stun 10. wounds 0. LG 0. move timer ready. attack timer ready. North 1/5:1/5."], fb.said
+assert fb.said == ["def 350 of 350 (100 percent). stun 10. wounds 0. LG 0. move timer ready. attack timer ready. North 1/5:1/5."], fb.said
 fb.said.clear()
 prompt("[350/350DF 60ST 0WN 0LG M:2 K:1 (North 1/5:1/5)] ")
 assert "Stun 60" in fb.said, fb.said
@@ -122,6 +122,23 @@ app.cfg["sr_alerts"] = False; n = len(fb.said)
 prompt("[350/350DF 99ST 0WN 0LG M:2 K:1 (North 1/5:1/5)] ")
 assert len(fb.said) == n, "alerts can be switched off"
 app.cfg["sr_alerts"] = True
+
+# ---- def and stun read at intervals
+fb.said.clear()
+assert app.cfg["sr_interval"] == 0 and app._sr_interval_job is None
+assert app.set_sr_interval(2) == 5, "the shortest interval is 5 seconds"
+assert app._sr_interval_job is not None
+app._last_prompt = dict(app._last_prompt, hp=(200, 350, "DF"), counters=[("ST", 62), ("WN", 0)], cooldowns=[])
+app._sr_interval_tick()
+assert fb.said[-1] == "def 200 of 350. stun 62.", fb.said
+assert app._sr_interval_job is not None, "and it carries on"
+app._local("/sr interval 30"); assert app.cfg["sr_interval"] == 30
+app._local("/sr interval off"); assert app.cfg["sr_interval"] == 0 and app._sr_interval_job is None
+app._local("/sr interval nonsense"); assert app.cfg["sr_interval"] == 0
+app.set_sr_interval(9999); assert app.cfg["sr_interval"] == 3600; app.set_sr_interval(0)
+app.set_sr_interval(60); app.connected = False; n = len(fb.said); app._sr_interval_tick()
+assert len(fb.said) == n, "nothing is read when you are not connected"
+app.connected = True; app.set_sr_interval(0)
 
 # ---- other keys, mute, commands
 fb.said.clear(); app.sr_time(); assert fb.said and fb.said[-1].startswith("The time is") and "moon" in fb.said[-1]
@@ -160,6 +177,7 @@ app.set_dos_mode(False); pump(0.3)
 c = sc.clean_settings({"host": "x", "screen_reader": "yes", "sr_voice": "robot", "sr_rate": 99, "sr_alerts": 5})
 assert c["screen_reader"] is False and c["sr_voice"] == "auto" and c["sr_rate"] == 10 and c["sr_alerts"] is True
 assert sc.clean_settings({"host": "x", "sr_rate": True})["sr_rate"] == 0
+assert [sc.clean_settings({"host": "x", "sr_interval": v})["sr_interval"] for v in (None, True, -3, 0, 2, 45, 99999, "x")] == [0, 0, 0, 0, 5, 45, 3600, 0]
 
 root.update(); root.destroy()
 print("access tests OK")

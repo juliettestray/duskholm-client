@@ -30,6 +30,7 @@ class AccessMixin:
         self.speech = speech.Speech()
         self._sr_alert = {}
         self._sr_pane_lines = {}             # pane title -> last lines (for the pane key)
+        self._sr_interval_job = None
 
     # ---- state -------------------------------------------------------------------------
     def sr_on(self):
@@ -49,12 +50,14 @@ class AccessMixin:
             self.speech.muted = False
             self._sr_alert = {}
             self.root.title("Sanctuary (screen reader mode)")
+            self._sr_schedule_interval()
             if announce:
                 self.system("Screen reader mode on. " + msg)
                 self.speech.say_now("Screen reader mode on. " + msg + " " + HELP_TEXT)
         else:
             self.speech.stop()
             self.speech.set_backend(speech.NullBackend())
+            self._sr_cancel_interval()
             self.root.title("Sanctuary")
             if announce:
                 self.system("Screen reader mode off.")
@@ -144,6 +147,46 @@ class AccessMixin:
         for s in said:
             self.speech.say_now(s)
 
+    # ---- reading stats at intervals ----------------------------------------------------
+    def _sr_cancel_interval(self):
+        if self._sr_interval_job is not None:
+            try:
+                self.root.after_cancel(self._sr_interval_job)
+            except Exception:
+                pass
+            self._sr_interval_job = None
+
+    def _sr_schedule_interval(self):
+        self._sr_cancel_interval()
+        secs = int(self.cfg.get("sr_interval", 0) or 0)
+        if self.sr_on() and secs > 0:
+            try:
+                self._sr_interval_job = self.root.after(secs * 1000, self._sr_interval_tick)
+            except Exception:
+                self._sr_interval_job = None
+
+    def _sr_interval_tick(self):
+        self._sr_interval_job = None
+        if self.sr_on() and self.connected and self._last_prompt:
+            text = speech.describe_interval(self._prompt_view())
+            if text:
+                self.speech.say(text, record=False)
+        self._sr_schedule_interval()
+
+    def set_sr_interval(self, secs):
+        secs = int(secs)
+        secs = 0 if secs <= 0 else max(5, min(3600, secs))
+        self.cfg["sr_interval"] = secs
+        var = getattr(self, "_sr_interval_var", None)
+        if var is not None:
+            try:
+                var.set(secs if secs in (0, 10, 15, 30, 60, 120, 300) else -1)
+            except Exception:
+                pass
+        self._save_settings()
+        self._sr_schedule_interval()
+        return secs
+
     # ---- review keys -------------------------------------------------------------------
     def _sr_off_message(self):
         if not self.sr_on():
@@ -223,9 +266,10 @@ class AccessMixin:
         a = arg.lower().split()
         if not a or a[0] == "status":
             on = "on" if self.sr_on() else "off"
-            self.system("Screen reader mode is %s. Voice: %s (%s). Rate: %s. Alerts: %s." % (
+            self.system("Screen reader mode is %s. Voice: %s (%s). Rate: %s. Alerts: %s. Stats every: %s." % (
                 on, self.cfg.get("sr_voice", "auto"), self.speech.backend.name, self.cfg.get("sr_rate", 0),
-                "on" if self.cfg.get("sr_alerts", True) else "off"))
+                "on" if self.cfg.get("sr_alerts", True) else "off",
+                ("%d seconds" % self.cfg["sr_interval"]) if self.cfg.get("sr_interval") else "off"))
         elif a[0] in ("on", "off"):
             self._set_extra("screen_reader", a[0] == "on")
         elif a[0] == "help":
@@ -246,9 +290,13 @@ class AccessMixin:
         elif a[0] == "alerts" and len(a) > 1 and a[1] in ("on", "off"):
             self._set_extra("sr_alerts", a[1] == "on")
             self.system("Alerts %s." % a[1])
+        elif a[0] == "interval" and len(a) > 1 and (a[1] == "off" or re.fullmatch(r"\d{1,4}", a[1])):
+            secs = self.set_sr_interval(0 if a[1] == "off" else int(a[1]))
+            msg = "Stats are read every %d seconds." % secs if secs else "Interval reading is off."
+            self.system(msg)
         elif a[0] == "test":
             self.speech.say_now("This is a speech test. If you can hear this, speech is working.")
         else:
             self.system("Usage: /sr on|off|status|help|test, /sr voice auto|nvda|jaws|windows|off, "
-                        "/sr rate -10..10, /sr alerts on|off")
+                        "/sr rate -10..10, /sr alerts on|off, /sr interval off|SECONDS")
         return True

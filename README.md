@@ -200,7 +200,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `Alt+C` read the time and the moon, `Alt+Q` stop speaking, `Alt+Z` mute. `/sr help` says it all
   again. Triggers gain two actions, **Speak** (say a message, optionally interrupting) and **Don't
   read this line aloud**. `/sr voice auto|nvda|jaws|windows|off`, `/sr rate -10..10` (Windows voice),
-  `/sr alerts on|off`, `/sr test`.
+  `/sr alerts on|off`, `/sr test`. Defence is read as "def". `/sr interval 30` (or Options >
+  Screen reader: read def and stun) reads your def and stun aloud every 30 seconds while connected;
+  `/sr interval off` stops it.
   This mode has only been exercised with a fake voice so far; feedback from people who use a
   screen reader every day is very welcome.
 - **World settings files** (File > Export / Import world settings, `/export`, `/import`): one

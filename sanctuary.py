@@ -947,6 +947,8 @@ def clean_settings(cfg):
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
+    si = cfg.get("sr_interval")
+    cfg["sr_interval"] = 0 if not isinstance(si, int) or isinstance(si, bool) or si <= 0 else max(5, min(3600, si))
     sr = cfg.get("sr_rate")
     cfg["sr_rate"] = max(-10, min(10, sr)) if isinstance(sr, int) and not isinstance(sr, bool) else 0
     cfg["gradients"] = colortools.validate_saved(cfg.get("gradients"))
@@ -1845,6 +1847,15 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
                                     command=lambda k=key: self._set_extra(k, self._xvars[k].get()))
             o.add_cascade(label=label, menu=sub)
             self._extra_menus = getattr(self, "_extra_menus", []) + [sub]
+        sri = tk.Menu(o, tearoff=0)
+        cur = self.cfg.get("sr_interval", 0)
+        self._sr_interval_var = tk.IntVar(value=cur if cur in (0, 10, 15, 30, 60, 120, 300) else -1)
+        for secs, label in ((0, "off"), (10, "every 10 seconds"), (15, "every 15 seconds"), (30, "every 30 seconds"),
+                            (60, "every minute"), (120, "every 2 minutes"), (300, "every 5 minutes")):
+            sri.add_radiobutton(label=label, value=secs, variable=self._sr_interval_var,
+                                command=lambda: self.set_sr_interval(self._sr_interval_var.get()))
+        o.add_cascade(label="Screen reader: read def and stun...", menu=sri)
+        self._extra_menus = getattr(self, "_extra_menus", []) + [sri]
         m.add_cascade(label="Options", menu=o)
         self._menus = [m, f, v, o, self._skin_menu] + getattr(self, "_extra_menus", [])
         self._menubar = m

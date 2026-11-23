@@ -65,7 +65,23 @@ def clean_for_speech(text):
     return t[:MAX_SPOKEN]
 
 
-LABEL_WORDS = {"ST": "stun", "WN": "wounds", "M": "move timer", "K": "attack timer"}
+LABEL_WORDS = {"DF": "def", "ST": "stun", "WN": "wounds", "M": "move timer", "K": "attack timer"}
+
+
+def describe_interval(p, labels=None):
+    """The short line read out at intervals: defence and stun only."""
+    if not p:
+        return ""
+    words = dict(LABEL_WORDS, **(labels or {}))
+    bits = []
+    hp = p.get("hp")
+    if hp:
+        cur, mx, label = hp
+        bits.append("%s %d of %d" % (words.get(label, label), cur, mx) if mx else "%s %d" % (words.get(label, label), cur))
+    for label, n in p.get("counters") or []:
+        if label.upper() == "ST":
+            bits.append("%s %d" % (words.get(label, label), n))
+    return ". ".join(bits) + "." if bits else ""
 
 
 def describe_prompt(p, labels=None):

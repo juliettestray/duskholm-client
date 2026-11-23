@@ -16,10 +16,13 @@ assert len(C("x" * 5000)) == sp.MAX_SPOKEN and C("[OOC] Bob: 'hi'") == "[OOC] Bo
 P = {"hp": (350, 350, "DF"), "gauges": [("DF", 350, 350)], "counters": [("ST", 80), ("WN", 1), ("LG", 0)],
      "cooldowns": [("M", 3), ("K", 0)], "text": ["North 1/5:1/5"]}
 d = sp.describe_prompt(P)
-assert d == "DF 350 of 350 (100 percent). stun 80. wounds 1. LG 0. move timer 3 seconds. attack timer ready. North 1/5:1/5.", d
+assert d == "def 350 of 350 (100 percent). stun 80. wounds 1. LG 0. move timer 3 seconds. attack timer ready. North 1/5:1/5.", d
 assert sp.describe_prompt(None) == "No stats yet." and sp.describe_prompt({}) == "No stats yet." and sp.describe_prompt({"counters": []}) == "."
 assert "move timer 1 second." in sp.describe_prompt({"cooldowns": [("M", 1)]})
 assert sp.describe_prompt({"hp": (5, 0, "X")}) == "X 5 of 0."
+assert sp.describe_interval(P) == "def 350 of 350. stun 80."
+assert sp.describe_interval({"hp": (7, 0, "DF")}) == "def 7." and sp.describe_interval(None) == "" and sp.describe_interval({}) == ""
+assert sp.describe_interval({"counters": [("WN", 2)]}) == "", "only def and stun are read at intervals"
 
 
 class Clock:
