@@ -137,6 +137,20 @@ app.dos_close_overlay(); pump(0.2)
 app._local("/moon"); pump(0.3); assert app._overlay_open(); app.dos_close_overlay()
 app.set_dos_mode(False); pump(0.3)
 
+# about (F12)
+t = app.open_about(); pump(0.2); assert t.winfo_exists(); t.destroy()
+app.set_dos_mode(True); pump(0.4)
+a = app.open_about(); pump(0.3); assert isinstance(a, dosui.DosDialog) and app._overlay_open()
+app.dos_close_overlay(); pump(0.2)
+assert ("F12", "About") in app.dosbar._hints[0], "the hint bar lists F12"
+app.set_dos_mode(False); pump(0.3)
+app.root.focus_force(); pump(0.2)
+shown = []
+app.open_about = lambda: shown.append(1)
+app.root.event_generate("<F12>"); pump(0.2)
+assert shown == [1], "F12 opens About"
+del app.open_about
+
 # hotkeys: defaults work, a change moves the key, a clash is refused
 opened = []
 app.open_moon = lambda: opened.append("moon")

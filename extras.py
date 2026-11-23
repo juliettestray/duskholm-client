@@ -145,7 +145,7 @@ HOTKEYS = {
     "timers": ("Timers", "Alt-T"), "dos_toggle": ("DOS look on/off", "Alt-D"),
     "gradient": ("Gradient maker", "Alt-G"), "hex": ("Hex to xterm", "Alt-H"), "customize": ("Customize form", "Alt-K"),
 }
-FIXED_KEYS = {"F1": "Help", "F2": "Dial / hang up", "F3": "Log", "F5": "Skin", "F6": "Colours", "F7": "Font",
+FIXED_KEYS = {"F12": "About", "F1": "Help", "F2": "Dial / hang up", "F3": "Log", "F5": "Skin", "F6": "Colours", "F7": "Font",
               "F10": "Menu", "F11": "Full screen", "Alt-X": "Exit", "Ctrl-1..9": "Select pane tab",
               "Alt-1..9, Alt-0": "Fold pane areas"}
 
@@ -455,6 +455,28 @@ class ExtrasMixin:
         lbl = tk.Label(top, text=text, justify="left", font=self.f_norm, padx=16, pady=10)
         lbl.pack()
         tk.Button(top, text="Close", width=10, command=top.destroy).pack(pady=(0, 10))
+        top.bind("<Escape>", lambda e: top.destroy())
+        self._theme_tree(top)
+        top.focus_set()
+        return top
+
+    # ---- about -------------------------------------------------------------------------
+    ABOUT_TEXT = ("Sanctuary\n"
+                  "A telnet client for Duskholm and other Haven-style MUDs.\n\n"
+                  "Credits: coming soon.\n\n"
+                  "https://github.com/juliettestray/sanctuary")
+
+    def open_about(self):
+        if self.dos:
+            if self._overlay_open():
+                return None
+            self._overlay = dosui.show_message(self.root, "About", self.ABOUT_TEXT, self._dc(), self.f_norm)
+            return self._overlay
+        top = tk.Toplevel(self.root)
+        top.title("About Sanctuary")
+        top.transient(self.root)
+        tk.Label(top, text=self.ABOUT_TEXT, justify="left", padx=20, pady=14).pack()
+        tk.Button(top, text="Close", width=10, command=top.destroy).pack(pady=(0, 12))
         top.bind("<Escape>", lambda e: top.destroy())
         self._theme_tree(top)
         top.focus_set()

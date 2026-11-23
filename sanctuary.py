@@ -1734,6 +1734,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             for n in range(0, 10):
                 w.bind("<Alt-Key-%d>" % n, lambda e, n=n: (self.toggle_pane_area(n), "break")[1])
             w.bind("<Alt-Return>", self.toggle_fullscreen)
+            w.bind("<F12>", lambda e: (self.open_about(), "break")[1])
             w.bind("<Configure>", self._on_configure, add="+")
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
@@ -1761,6 +1762,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         f.add_command(label="Export world settings...", command=self.open_export)
         f.add_command(label="Import world settings...", command=self.open_import)
         f.add_command(label="Hotkeys...", command=self.open_hotkeys)
+        f.add_command(label="About...   F12", command=self.open_about)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
         f.add_separator()
@@ -2715,7 +2717,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             up = self.connected or self.connecting
             bar.set_hints([("F1", "Help"), ("F2", "Hangup" if up else "Dial"), ("F3", "Log"),
                            ("F5", "Skin"), ("F6", "Colours"), ("F7", "Font"), ("F10", "Menu"),
-                           ("F11", "Full"), ("^W", "Worlds")],
+                           ("F11", "Full"), ("F12", "About"), ("^W", "Worlds")],
                            right="Alt-D Normal  Alt-X Exit")
             cw = max(1, self.f_norm.measure("0"))
             cols = int(bar.winfo_width() / cw) if bar.winfo_width() > 100 else int(self.cfg["dos_cols"])
@@ -2796,6 +2798,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             {"label": "Normal look", "hotkey": "N", "shortcut": "Alt-D",
              "action": lambda: self.set_dos_mode(False)},
             None,
+            {"label": "About", "shortcut": "F12", "action": self.open_about},
             {"label": "Help", "hotkey": "H", "shortcut": "F1", "action": self.dos_help},
             {"label": "Exit", "hotkey": "X", "shortcut": "Alt-X", "action": self.dos_confirm_quit},
         ]
