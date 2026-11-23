@@ -1,8 +1,8 @@
 # Sanctuary
 
 A small, dependency-free telnet client for MUDs, built for Duskholm and other Haven-style games.
-Four Python files (`sanctuary.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for
-configurable prompt formats, `triggers.py` for triggers and aliases), tkinter only (ships with the standard Windows Python installer).
+Five Python files (`sanctuary.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for
+configurable prompt formats, `triggers.py` for triggers and aliases, `layout.py` for pane geometry), tkinter only (ships with the standard Windows Python installer).
 Keep them together. Double-click `Sanctuary.pyw`, or run `pythonw sanctuary.py`, to start it
 without a console window.
 
@@ -139,6 +139,16 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   that expands to commands: `;` separates them and `%1`-`%9` / `%*` are your arguments. With no `%`
   in the body, what you type after the alias is added to the last command. Old aliases written
   with `$*` are converted to `%*` automatically.
+- **Capture panes** (`Ctrl+P`, File > Panes / layout). Lines can be copied into small in-client
+  panes (OOC, Tells, Guide ...) docked to the top, bottom, left or right of the main text. In the
+  DOS look they are plain regions of the screen with a tab row, not windows. A trigger's *Send to
+  pane* field names the pane (it is created on first use); the line **stays in the main window**
+  unless the rule's *hide from the main window* box is ticked. Presets: Long strip on top / on the
+  bottom, Right column (one or two stacked), Left column, Top strip + right column, or define up to
+  three areas yourself as `side size panes` (e.g. `right 40 OOC, Tells`) with a live preview. The
+  main text always keeps at least 80 columns: areas that would squeeze it are narrowed, then hidden.
+  Several panes in one area become tabs (`Ctrl+1`..`9` select, `*3` shows unread lines). Ready-made
+  trigger presets capture OOC, tells and Guide/Newbie.
 - **Whole lines.** To act on lines before they are drawn, the client now collects each line first.
   An unfinished line (a prompt) still appears after about a tenth of a second, and the stat bar
   sees it immediately. *Options > Hide the prompt line* keeps the prompt off the screen (the bar
@@ -184,6 +194,8 @@ python tests/test_features.py     # ATDT, fake telnet, worlds, prompt editors, l
 python tests/test_rename.py       # the name, settings migration from the old name, the launcher
 python tests/test_triggers.py     # the trigger/alias engine (matching, safety, expansion)
 python tests/test_rules.py        # triggers, aliases and whole-line output, end to end
+python tests/test_layout_engine.py  # pane geometry (pure)
+python tests/test_panes.py        # capture panes, routing, manager, both looks
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

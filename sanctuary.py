@@ -42,6 +42,10 @@ try:
     import triggers
 except ImportError:                 # no trigger engine installed: output passes straight through
     triggers = None
+try:
+    import layout                   # geometry of the capture panes
+except ImportError:
+    layout = None
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -910,6 +914,11 @@ def clean_settings(cfg):
         cfg["alias_rules"] = [a for a in (triggers.validate_alias(x) for x in rules[:400]) if a is not None][:200]
     else:
         cfg["triggers"], cfg["alias_rules"] = [], []
+    if layout is not None:
+        cfg["panes"] = layout.validate_panes(cfg.get("panes") if isinstance(cfg.get("panes"), list) else [])
+        cfg["layout"] = layout.validate_layout(cfg.get("layout"), known_panes=[p["name"] for p in cfg["panes"]])
+    else:
+        cfg["panes"], cfg["layout"] = [], {"regions": [], "min_main_cols": 80}
     so = cfg.get("skin_overrides")
     cfg["skin_overrides"] = ({k: v for k, v in list(so.items())[:50]
                               if isinstance(k, str) and len(k) < 60 and isinstance(v, dict)}
@@ -971,6 +980,8 @@ def trigger_from_values(v):
         actions.append({"type": "gag"})
     if str(v.get("send", "")).strip():
         actions.append({"type": "send", "text": str(v["send"]).strip(), "echo": bool(v.get("echo", True))})
+    if str(v.get("pane", "")).strip():
+        actions.append({"type": "route", "pane": str(v["pane"]).strip(), "gag": bool(v.get("pane_gag"))})
     if v.get("beep"):
         actions.append({"type": "beep"})
     if str(v.get("note", "")).strip():
@@ -1004,6 +1015,14 @@ _PRESET_DEFS = [
      "actions": [{"type": "highlight", "fg": 13, "bold": True, "scope": "line"}]},
     {"name": "Beep on tell", "mode": "plain", "pattern": "* tells you *", "priority": 0,
      "actions": [{"type": "beep"}, {"type": "note", "text": "%1 sent you a tell."}]},
+    {"name": "Capture OOC to a pane", "mode": "plain", "pattern": "^[OOC]*", "priority": 0,
+     "actions": [{"type": "route", "pane": "OOC"}]},
+    {"name": "Capture tells to a pane", "mode": "plain", "pattern": "* tells you *", "priority": 0,
+     "actions": [{"type": "route", "pane": "Tells"}]},
+    {"name": "Capture Guide / Newbie to a pane", "mode": "plain", "pattern": "^[Guide]*", "priority": 0,
+     "actions": [{"type": "route", "pane": "Guide"}]},
+    {"name": "Capture Newbie to a pane", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
+     "actions": [{"type": "route", "pane": "Guide"}]},
 ]
 
 
@@ -1018,7 +1037,7 @@ def values_from_trigger(t):
     """The editors' simple values for an existing trigger (None for a new one)."""
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
          "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "hide": False, "send": "",
-         "echo": True, "beep": False, "note": "", "sample": "", "keep": []}
+         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False}
     if not t:
         return v
     v.update(name=t["name"], enabled=t["enabled"], regex=t["mode"] == "regex", pattern=t["pattern"],
@@ -1036,6 +1055,8 @@ def values_from_trigger(t):
             v["beep"] = True
         elif k == "note":
             v["note"] = a["text"]
+        elif k == "route":
+            v.update(pane=a["pane"], pane_gag=bool(a.get("gag")))
         else:
             v["keep"].append(a)
     return v
@@ -1407,6 +1428,12 @@ class App:
         self._line_hidden_len = 0                     # leading prompt text we chose not to show
         self._flush_job = None
         self._guard = triggers.LoopGuard() if triggers is not None else None
+        self._panes = {}                              # pane key (lower-case name) -> runtime dict
+        self._region_ui = {}                          # region id -> {"frame": Frame, "labels": {key: Label}}
+        self._region_active = {}                      # region id -> active pane key
+        self._panes_active = False                    # a pane layout is in force
+        self._pane_geom = None                        # last compute_layout() result
+        self._layout_job = None
         self._dos_job = None                          # 1-second status refresh while in the DOS look
         self._online_since = 0.0
         self._fit_job = None
@@ -1443,7 +1470,8 @@ class App:
                "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0,
                "dos_fit": True, "line_spacing": 0, "worlds": None,
                "prompt_profile": prompts.DEFAULT_PRESET, "prompt_custom": [],
-               "triggers": [], "alias_rules": None, "hide_prompt": False}
+               "triggers": [], "alias_rules": None, "hide_prompt": False,
+               "panes": [], "layout": {"regions": [], "min_main_cols": 80}}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -1584,6 +1612,7 @@ class App:
         # holder = the coloured "overscan" border; in the DOS look the 80-column screen is
         # centred inside it, in the normal look the screen simply fills it
         self._holder = self._reg(tk.Frame(self.root), "holder")
+        self._holder.bind("<Configure>", self._on_holder_configure, add="+")
         mid = self._mid = self._reg(tk.Frame(self._holder), "frame")
         # height=4: the pane must REQUEST little and expand into what is left, otherwise at large
         # font sizes its default 24-row request squeezes the stat bar and input line off-screen.
@@ -1616,7 +1645,10 @@ class App:
             w.bind("<F11>", self.toggle_fullscreen)
             w.bind("<Control-w>", self._on_ctrl_w)
             w.bind("<Control-W>", self._on_ctrl_w)
+            for n in range(1, 10):
+                w.bind("<Control-Key-%d>" % n, lambda e, n=n: (self.select_pane_number(n), "break")[1])
             for seq, fn in (("<Control-t>", self.open_triggers), ("<Control-T>", self.open_triggers),
+                            ("<Control-p>", self.open_panes), ("<Control-P>", self.open_panes),
                             ("<Control-a>", self.open_aliases), ("<Control-A>", self.open_aliases)):
                 w.bind(seq, self._ctrl_handler(fn))
                 self.input.bind(seq, self._ctrl_handler(fn))      # beat the entry's own Ctrl+T / Ctrl+A
@@ -1637,6 +1669,7 @@ class App:
         f.add_command(label="Prompt bar format...", command=self.edit_prompt)
         f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
         f.add_command(label="Aliases...   Ctrl+A", command=self.open_aliases)
+        f.add_command(label="Panes / layout...   Ctrl+P", command=self.open_panes)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
         f.add_separator()
@@ -1729,20 +1762,27 @@ class App:
             self._style_tag(name)
         return name
 
+    def _text_widgets(self):
+        """The main text area and every pane's text area (they share one set of colour tags)."""
+        return [self.out] + [p["text"] for p in self._panes.values()]
+
     def _style_tag(self, name):
         key = self._tag_keys[name]
         _fg, _bg, bold, ital, ul, _inv = key
         font = {(0, 0): self.f_norm, (1, 0): self.f_bold,
                 (0, 1): self.f_ital, (1, 1): self.f_bi}[(int(bold), int(ital))]
         fg, bg = self._tag_colors(key)
-        self.out.tag_configure(name, foreground=fg, background=bg, underline=bool(ul), font=font)
+        for w in self._text_widgets():
+            w.tag_configure(name, foreground=fg, background=bg, underline=bool(ul), font=font)
 
     def _restyle_tags(self):
         th = self.theme
         for name in self._tags:
             self._style_tag(name)
-        self.out.tag_configure("echo", foreground=ensure_contrast(th["echo"], th["bg"], th["min_contrast"]))
-        self.out.tag_configure("system", foreground=ensure_contrast(th["system"], th["bg"], th["min_contrast"]))
+        for w in self._text_widgets():
+            w.tag_configure("echo", foreground=ensure_contrast(th["echo"], th["bg"], th["min_contrast"]))
+            w.tag_configure("system", foreground=ensure_contrast(th["system"], th["bg"], th["min_contrast"]))
+        self._style_region_ui()
 
     def apply_theme(self):
         """Push self.theme into every widget, every text tag (so the scrollback recolours),
@@ -1772,6 +1812,368 @@ class App:
         self.statbar.set_theme(th)
         self._restyle_dosbar()
 
+    # ---- capture panes ---------------------------------------------------------------------
+    def _find_pane_def(self, key):
+        for d in self.cfg["panes"]:
+            if d["name"].lower() == key:
+                return d
+        return None
+
+    def pane_ensure(self, name):
+        """The runtime pane called `name`, creating it (and, if nothing is docked yet, a sensible
+        default place for it) the first time a trigger routes a line there."""
+        key = str(name).strip().lower()
+        if layout is None or not key:
+            return None
+        pane = self._panes.get(key)
+        if pane is not None:
+            return pane
+        d = self._find_pane_def(key)
+        if d is None:
+            if len(self.cfg["panes"]) >= layout.MAX_PANES:
+                return None
+            d = layout.validate_pane({"name": str(name).strip()})
+            if d is None:
+                return None
+            self.cfg["panes"] = self.cfg["panes"] + [d]
+        text = tk.Text(self._holder, font=self.f_norm, wrap="word", state="disabled", height=2, width=8,
+                       borderwidth=0, highlightthickness=0, padx=8, pady=4, cursor="arrow")
+        self._reg(text, "text")
+        sb = self._reg(tk.Scrollbar(self._holder, command=text.yview), "scroll")
+        dsb = dosui.DosScrollbar(self._holder, text.yview, dosui.dos_colors(self.theme), self.f_norm)
+        pane = {"key": key, "text": text, "sb": sb, "dsb": dsb, "history": [], "unread": 0}
+        text.configure(yscrollcommand=lambda a, b, k=key: self._on_pane_scroll(k, a, b))
+        text.bind("<Button-1>", lambda e: self.root.after_idle(self.input.focus_set), add="+")
+        text.bind("<KeyPress>", self._out_key)
+        self._panes[key] = pane
+        for w, role in ((text, "text"), (sb, "scroll")):
+            try:
+                w.configure(**self._role_options(role))
+            except tk.TclError:
+                pass
+        for tag in self._tags:                         # the new area needs the colour tags too
+            self._style_tag(tag)
+        text.tag_configure("echo"), text.tag_configure("system")
+        self._restyle_tags()
+        self._apply_spacing()
+        if layout.find_region(self.cfg["layout"], d["name"]) is None:
+            self._auto_place(d["name"])
+        self._save_settings()
+        self.schedule_layout()
+        return pane
+
+    def _auto_place(self, name):
+        lay = self.cfg["layout"]
+        if not lay["regions"]:
+            self.cfg["layout"] = layout.preset_layout("Right column", [p["name"] for p in self.cfg["panes"]])
+            self.system("Captured lines get their own area on the right. Change it under File > Panes / layout (Ctrl+P).")
+        else:
+            regions = [dict(r, panes=list(r["panes"])) for r in lay["regions"]]
+            regions[0]["panes"].append(name)
+            self.cfg["layout"] = layout.validate_layout(dict(lay, regions=regions),
+                                                        known_panes=[p["name"] for p in self.cfg["panes"]])
+
+    def pane_append(self, name, pieces):
+        """Add one line (styled pieces) to a pane; it keeps a history, trims to its limit and counts
+        unread lines while its tab is not showing."""
+        pane = self.pane_ensure(name)
+        if pane is None:
+            return
+        d = self._find_pane_def(pane["key"])
+        if d is None:
+            return
+        pieces = [(t, k) for t, k in pieces if t]
+        if d["timestamps"]:
+            pieces = [(time.strftime("[%H:%M] "), (self.theme["dim"], None, False, False, False, False))] + pieces
+        text = pane["text"]
+        at_bottom = text.yview()[1] >= 0.999
+        text.configure(state="normal")
+        for t, k in pieces:
+            text.insert("end", t, self._tag_for(k))
+        text.insert("end", "\n")
+        pane["history"].append(pieces)
+        over = len(pane["history"]) - d["max_lines"]
+        if over > 0:
+            del pane["history"][:over]
+            text.delete("1.0", "%d.0" % (over + 1))
+        text.configure(state="disabled")
+        if at_bottom:
+            text.see("end")
+        if not self._pane_visible(pane["key"]):
+            pane["unread"] += 1
+            self._style_region_ui()
+
+    def pane_clear(self, key):
+        pane = self._panes.get(str(key).lower())
+        if pane:
+            pane["text"].configure(state="normal")
+            pane["text"].delete("1.0", "end")
+            pane["text"].configure(state="disabled")
+            pane["history"].clear()
+            pane["unread"] = 0
+            self._style_region_ui()
+
+    def pane_delete(self, name):
+        key = str(name).strip().lower()
+        pane = self._panes.pop(key, None)
+        if pane:
+            for w in (pane["text"], pane["sb"], pane["dsb"]):
+                self._themed = [(x, r) for x, r in self._themed if x is not w]
+                try:
+                    w.destroy()
+                except tk.TclError:
+                    pass
+        self.cfg["panes"] = [d for d in self.cfg["panes"] if d["name"].lower() != key]
+        self.cfg["layout"] = layout.validate_layout(
+            self.cfg["layout"], known_panes=[d["name"] for d in self.cfg["panes"]])
+        self._region_active = {r: k for r, k in self._region_active.items() if k != key}
+        self._save_settings()
+        self.schedule_layout()
+
+    def _pane_region(self, key):
+        d = self._find_pane_def(key)
+        return layout.find_region(self.cfg["layout"], d["name"]) if d else None
+
+    def _pane_visible(self, key):
+        reg = self._pane_region(key)
+        if reg is None or not self._panes_active or self._pane_geom is None:
+            return False
+        if reg["id"] not in self._pane_geom["regions"]:
+            return False
+        return self._active_pane_key(reg) == key
+
+    def _active_pane_key(self, reg):
+        keys = [n.lower() for n in reg["panes"]]
+        cur = self._region_active.get(reg["id"])
+        return cur if cur in keys else (keys[0] if keys else None)
+
+    def select_pane(self, key):
+        key = str(key).lower()
+        reg = self._pane_region(key)
+        if reg is None:
+            return False
+        self._region_active[reg["id"]] = key
+        if key in self._panes:
+            self._panes[key]["unread"] = 0
+        self.layout_panes()
+        return True
+
+    def select_pane_number(self, n):
+        names = layout.region_pane_names(self.cfg["layout"]) if layout else []
+        if 1 <= n <= len(names):
+            self.select_pane(names[n - 1])
+
+    def _on_pane_scroll(self, key, first, last):
+        pane = self._panes.get(key)
+        if pane is None:
+            return
+        pane["sb"].set(first, last)
+        pane["dsb"].set(first, last)
+        self._pane_scroll_visibility(key)
+
+    def _pane_scroll_visibility(self, key):
+        """In the DOS look a pane's scrollbar replaces its right-hand cell, only when needed."""
+        pane = self._panes.get(key)
+        if pane is None or not self.dos or not self._panes_active or self._pane_geom is None:
+            return
+        try:
+            first, last = pane["text"].yview()
+            reg = self._pane_region(key)
+            info = self._pane_geom["regions"].get(reg["id"]) if reg else None
+            show = info is not None and self._active_pane_key(reg) == key and (first > 0.0 or last < 1.0)
+            if show:
+                bx, by, bw, bh = info["body"]
+                pane["dsb"].place(x=bx + bw - self.f_norm.measure("0"), y=by, height=bh)
+                pane["dsb"].lift()
+            else:
+                pane["dsb"].place_forget()
+        except (tk.TclError, KeyError, TypeError):
+            pass
+
+    def schedule_layout(self, delay=30):
+        if self._layout_job is not None:
+            try:
+                self.root.after_cancel(self._layout_job)
+            except tk.TclError:
+                pass
+        try:
+            self._layout_job = self.root.after(delay, self.layout_panes)
+        except tk.TclError:
+            self._layout_job = None
+
+    def _on_holder_configure(self, e):
+        if e.widget is self._holder and (self._panes_active or self.cfg["layout"]["regions"]):
+            self.schedule_layout()
+
+    def _pane_cell(self):
+        return max(1, self.f_norm.measure("0")), max(1, self.f_norm.metrics("linespace") + int(self.cfg["line_spacing"]))
+
+    def _panes_extra(self):
+        """(extra columns, extra rows) the docked regions take beside/above the main text, so the
+        DOS font fit leaves room for them."""
+        if layout is None or not self.cfg["layout"]["regions"]:
+            return 0, 0
+        cols = {"left": 0, "right": 0}
+        rows = {"top": 0, "bottom": 0}
+        for r in self.cfg["layout"]["regions"]:
+            if r["side"] in cols:
+                cols[r["side"]] = max(cols[r["side"]], r["size"] + 1)
+            else:
+                rows[r["side"]] = max(rows[r["side"]], r["size"] + 2)
+        return sum(cols.values()), sum(rows.values())
+
+    def layout_panes(self):
+        """Place the main text and the docked pane regions. With no regions the window keeps its
+        ordinary arrangement (apply_layout)."""
+        self._layout_job = None
+        if layout is None:
+            return
+        regions = self.cfg["layout"]["regions"]
+        if not regions:
+            if self._panes_active:
+                self._panes_active, self._pane_geom = False, None
+                self._hide_pane_widgets()
+                self.apply_layout()
+            return
+        W, H = self._holder.winfo_width(), self._holder.winfo_height()
+        if W < 100 or H < 60:
+            return
+        cw, lh = self._pane_cell()
+        gap = (cw // 2) if self.dos else 4
+        pad = 16 + (2 * cw if self.dos else 0)
+        res = layout.compute_layout(self.cfg["layout"], W, H, cw, lh, header_h=lh + 4, gap=gap, pad_x=pad)
+        first_time = not self._panes_active
+        self._panes_active, self._pane_geom = True, res
+        mx, my, mw, mh = res["main"]
+        self._mid.pack_forget()
+        self._mid.place_forget()
+        if self.dos:
+            self._mid.place(x=mx + cw, y=my, width=max(1, mw - 2 * cw), height=mh)
+        else:
+            self._mid.place(x=mx, y=my, width=mw, height=mh)
+        if first_time:
+            self.out.pack_forget()
+            self._sb.pack_forget()
+            if self.dos:
+                self.out.configure(yscrollcommand=self._on_dos_yscroll)
+                self.out.pack(fill="both", expand=True)
+            else:
+                self.out.configure(yscrollcommand=self._sb.set)
+                self._sb.pack(side="right", fill="y")
+                self.out.pack(side="left", fill="both", expand=True)
+        self._dosscroll.place_forget()
+        self._dos_scroll_visibility()
+        shown = res["regions"]
+        keep_frames = set()
+        sbw = max(14, int(self._sb.winfo_reqwidth() or 17))
+        for reg in regions:
+            info = shown.get(reg["id"])
+            ui = self._region_ui.get(reg["id"])
+            if info is None:
+                if ui:
+                    ui["frame"].place_forget()
+                continue
+            if ui is None:
+                ui = self._region_ui[reg["id"]] = {"frame": tk.Frame(self._holder), "labels": {}}
+            keep_frames.add(reg["id"])
+            hx, hy, hw, hh = info["header"]
+            ui["frame"].place(x=hx, y=hy, width=hw, height=hh)
+            ui["frame"].lift()
+            self._sync_region_labels(reg, ui)
+        for rid, ui in self._region_ui.items():
+            if rid not in keep_frames:
+                ui["frame"].place_forget()
+        # pane bodies
+        placed = set()
+        for reg in regions:
+            info = shown.get(reg["id"])
+            if info is None:
+                continue
+            active = self._active_pane_key(reg)
+            pane = self._panes.get(active) if active else None
+            if pane is None:
+                continue
+            bx, by, bw, bh = info["body"]
+            if self.dos:
+                pane["text"].place(x=bx, y=by, width=bw, height=bh)
+                pane["sb"].place_forget()
+            else:
+                pane["text"].place(x=bx, y=by, width=max(1, bw - sbw), height=bh)
+                pane["sb"].place(x=bx + bw - sbw, y=by, width=sbw, height=bh)
+            pane["unread"] = 0
+            placed.add(active)
+        for key, pane in self._panes.items():
+            if key not in placed:
+                pane["text"].place_forget()
+                pane["sb"].place_forget()
+                pane["dsb"].place_forget()
+        for key in placed:
+            self._pane_scroll_visibility(key)
+        self._style_region_ui()
+
+    def _hide_pane_widgets(self):
+        for pane in self._panes.values():
+            for w in (pane["text"], pane["sb"], pane["dsb"]):
+                w.place_forget()
+        for ui in self._region_ui.values():
+            ui["frame"].place_forget()
+
+    def _sync_region_labels(self, reg, ui):
+        want = [n.lower() for n in reg["panes"]]
+        for key in list(ui["labels"]):
+            if key not in want:
+                ui["labels"].pop(key).destroy()
+        for name in reg["panes"]:
+            key = name.lower()
+            if key not in ui["labels"]:
+                lbl = tk.Label(ui["frame"], padx=6, cursor="hand2")
+                lbl.bind("<Button-1>", lambda e, k=key: self.select_pane(k))
+                ui["labels"][key] = lbl
+        for lbl in ui["labels"].values():
+            lbl.pack_forget()
+        for key in want:
+            ui["labels"][key].pack(side="left", fill="y")
+        if not want:
+            empty = ui["labels"].setdefault("", tk.Label(ui["frame"], text=" (no panes) ", padx=6))
+            empty.pack(side="left")
+        elif "" in ui["labels"]:
+            ui["labels"].pop("").destroy()
+
+    def _style_region_ui(self):
+        """Tab headers: the active tab is highlighted, tabs with unread lines say how many."""
+        if not self._region_ui:
+            return
+        th = self.theme
+        if self.dos:
+            c = self._dc()
+            base_bg, base_fg = c["dos_bar2_bg"], c["dos_bar2_fg"]
+            act_bg, act_fg = c["dos_menu_sel_bg"], c["dos_menu_sel_fg"]
+            alert = c["dos_key_fg"]
+        else:
+            base_bg, base_fg = th["panel"], th["fg"]
+            act_bg, act_fg = th["select"], th["fg"]
+            alert = th["alert"]
+        for reg in (self.cfg["layout"]["regions"] if layout else []):
+            ui = self._region_ui.get(reg["id"])
+            if not ui:
+                continue
+            try:
+                ui["frame"].configure(bg=base_bg)
+                active = self._active_pane_key(reg)
+                for key, lbl in ui["labels"].items():
+                    d = self._find_pane_def(key) if key else None
+                    title = d["title"] if d else ""
+                    unread = self._panes[key]["unread"] if key in self._panes else 0
+                    text = " %s%s " % (title, "*%d" % unread if unread else "")
+                    if not key:
+                        continue
+                    is_act = key == active
+                    lbl.configure(text=text, font=self.f_bold if unread else self.f_norm,
+                                  bg=act_bg if is_act else base_bg,
+                                  fg=act_fg if is_act else (alert if unread else base_fg))
+            except tk.TclError:
+                pass
+
     # ---- look: layout, DOS mode, full screen, font fit ------------------------
     def apply_layout(self):
         """Arrange the window for the current look. Normal: toolbar, text, stat bar, input.
@@ -1796,7 +2198,9 @@ class App:
             if self.dosbar is not None:
                 self.dosbar.pack(fill="x")
             self._dos_scroll_visibility()
+            self._panes_active = False
         else:
+            self._panes_active = False
             self.root.config(menu=self._menubar)
             self._top.pack(fill="x")
             self._holder.pack(fill="both", expand=True)
@@ -1837,6 +2241,8 @@ class App:
                 pass
         if self._dosscroll is not None:
             self._dosscroll.restyle(self._dc(), self.f_norm)
+        for pane in self._panes.values():
+            pane["dsb"].restyle(self._dc(), self.f_norm)
         if self._overlay_open():
             # an open menu/dialog caches the cell size: re-measure it when the font or theme changes
             try:
@@ -1970,6 +2376,7 @@ class App:
             {"label": "Prompt bar format...", "hotkey": "B", "action": self.edit_prompt},
             {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
             {"label": "Aliases...", "hotkey": "A", "shortcut": "Ctrl-A", "action": self.open_aliases},
+            {"label": "Panes / layout...", "hotkey": "V", "shortcut": "Ctrl-P", "action": self.open_panes},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
              "action": self.toggle_log},
@@ -2499,9 +2906,9 @@ class App:
         win.title("Edit trigger" if existing else "Add trigger")
         win.transient(parent)
         v0 = values_from_trigger(existing)
-        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample")}
+        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane")}
         bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole",
-                                                           "hide", "echo", "beep")}
+                                                           "hide", "echo", "beep", "pane_gag")}
         r = 0
 
         def row(label, widget):
@@ -2536,6 +2943,10 @@ class App:
         tk.Checkbutton(snd, text="Show it", variable=bv["echo"]).pack(side="left", padx=8)
         row("Send command", snd)
         row("Beep", tk.Checkbutton(win, variable=bv["beep"]))
+        cap = tk.Frame(win)
+        tk.Entry(cap, textvariable=sv["pane"], width=24).pack(side="left")
+        tk.Checkbutton(cap, text="Also hide from the main window", variable=bv["pane_gag"]).pack(side="left", padx=8)
+        row("Send to pane", cap)
         row("Client note", tk.Entry(win, textvariable=sv["note"], width=64))
         tk.Label(win, justify="left", wraplength=560,
                  text="Colours: #rrggbb, 0-15 or a name like 'bright cyan'. In commands and notes: %0 is the match, "
@@ -2723,6 +3134,7 @@ class App:
             fields = [t("fg", "Highlight text", 12), t("bg", "Highlight background", 12), c("bold", "Bold"),
                       c("whole", "Colour the whole line"), c("hide", "Hide line from screen"),
                       t("send", "Send command", 40), c("echo", "Show sent command"), c("beep", "Beep"),
+                      t("pane", "Send to pane", 24), c("pane_gag", "...and hide from main window"),
                       t("note", "Client note", 40)]
             buttons = [("Save", "save"), ("< Back", "back"), ("Cancel", "cancel")]
             title = "Trigger: actions"
@@ -2796,6 +3208,168 @@ class App:
 
         return self._dos_dialog("Alias", fields, [("Save", "save"), ("Test", "test"), ("Cancel", "cancel")], result,
                                 width=62, message="Use ; between commands. %1-%9 / %* are your arguments.")
+
+    # ---- panes manager ---------------------------------------------------------------------
+    PANE_SYNTAX = ("One line per area: side size panes. Side: top, bottom, left or right. Size is "
+                   "rows (top/bottom) or columns (left/right). Panes are separated by commas, e.g. "
+                   "'right 40 OOC, Tells'.")
+
+    def _pane_lines(self):
+        out = []
+        for r in self.cfg["layout"]["regions"]:
+            out.append("%s %d %s" % (r["side"], r["size"], ", ".join(r["panes"])))
+        return (out + ["", "", ""])[:3] if len(out) <= 3 else out[:3]
+
+    def _panes_parse(self, lines):
+        """Text lines -> (layout, new pane definitions, message). Layout is None when nothing is wrong
+        enough to refuse but nothing can be shown (empty lines mean no areas)."""
+        if layout is None:
+            return None, [], "The layout module is missing."
+        regions, defs = [], {d["name"].lower(): d for d in self.cfg["panes"]}
+        for n, line in enumerate(l.strip() for l in lines):
+            if not line:
+                continue
+            parts = line.split(None, 2)
+            side = parts[0].lower()
+            if side not in layout.SIDES:
+                return None, [], "Line %d: the side must be top, bottom, left or right." % (n + 1)
+            if len(parts) < 2 or not parts[1].isdigit():
+                return None, [], "Line %d: put a size (a number) after the side." % (n + 1)
+            names = []
+            for nm in (parts[2].split(",") if len(parts) > 2 else []):
+                d = layout.validate_pane({"name": nm})
+                if d is None:
+                    continue
+                if d["name"].lower() not in defs:
+                    if len(defs) >= layout.MAX_PANES:
+                        return None, [], "At most %d panes." % layout.MAX_PANES
+                    defs[d["name"].lower()] = d
+                if d["name"].lower() not in [x.lower() for x in names]:
+                    names.append(defs[d["name"].lower()]["name"])
+            regions.append({"id": "r%d" % (len(regions) + 1), "side": side, "size": int(parts[1]),
+                            "weight": 1, "panes": names})
+        lay = layout.validate_layout({"regions": regions, "min_main_cols": 80},
+                                     known_panes=[d["name"] for d in defs.values()])
+        return lay, list(defs.values()), "OK"
+
+    def _panes_preview_text(self, lines):
+        lay, _defs, msg = self._panes_parse(lines)
+        if lay is None:
+            return msg
+        if not lay["regions"]:
+            return "(no areas: the window is just the main text)"
+        return "\n".join(layout.ascii_preview(lay, cols=60, rows=18))
+
+    def _panes_save(self, lines):
+        lay, defs, msg = self._panes_parse(lines)
+        if lay is None:
+            return False, msg
+        self.cfg["panes"] = defs
+        self.cfg["layout"] = lay
+        for d in defs:
+            if d["name"].lower() in self._panes or layout.find_region(lay, d["name"]):
+                self.pane_ensure(d["name"])
+        self._save_settings()
+        self.layout_panes()
+        self.schedule_layout(5)
+        return True, "Panes saved."
+
+    def _preset_lines(self, name):
+        lay = layout.preset_layout(name, [d["name"] for d in self.cfg["panes"]] or ["OOC", "Tells"])
+        return [("%s %d %s" % (r["side"], r["size"], ", ".join(r["panes"]))).strip() for r in lay["regions"]][:3]
+
+    def open_panes(self):
+        if layout is None:
+            self.system("The layout module is missing.")
+            return
+        if self.dos:
+            return self._dos_panes_form(self._pane_lines())
+        if getattr(self, "_panes_win", None) is not None:
+            try:
+                self._panes_win.lift()
+                return
+            except tk.TclError:
+                self._panes_win = None
+        win = self._panes_win = tk.Toplevel(self.root)
+        win.title("Panes / layout")
+        win.transient(self.root)
+        vars_ = [tk.StringVar(value=l) for l in self._pane_lines()]
+        tk.Label(win, justify="left", wraplength=520, text=self.PANE_SYNTAX + " The main text always keeps at "
+                 "least 80 columns; areas that would squeeze it are narrowed, then hidden.").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 4))
+        pr = tk.Frame(win)
+        pr.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
+        tk.Label(pr, text="Preset").pack(side="left")
+        pv = tk.StringVar(value="(choose)")
+        for i, v in enumerate(vars_):
+            tk.Entry(win, textvariable=v, width=60).grid(row=2 + i, column=0, columnspan=2, sticky="w", padx=10, pady=2)
+        prev = tk.Label(win, justify="left", anchor="nw", font=self.f_norm, relief="sunken", padx=4, pady=2)
+        prev.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=6)
+        msg = tk.Label(win, text="", anchor="w", justify="left", wraplength=520)
+        msg.grid(row=7, column=0, columnspan=2, sticky="we", padx=10)
+
+        def refresh(*_):
+            lines = [v.get() for v in vars_]
+            lay, _d, m = self._panes_parse(lines)
+            prev.configure(text=self._panes_preview_text(lines))
+            msg.configure(text="" if lay is not None else m)
+
+        def preset(name):
+            for v, l in zip(vars_, (self._preset_lines(name) + ["", "", ""])):
+                v.set(l)
+            refresh()
+
+        om = tk.OptionMenu(pr, pv, *layout.PRESETS, command=preset)
+        om.pack(side="left", padx=6)
+        for v in vars_:
+            v.trace_add("write", refresh)
+
+        def save():
+            ok, m = self._panes_save([v.get() for v in vars_])
+            if ok:
+                close()
+            else:
+                msg.configure(text=m)
+
+        def close():
+            self._panes_win = None
+            win.destroy()
+
+        bf = tk.Frame(win)
+        bf.grid(row=8, column=0, columnspan=2, sticky="e", padx=10, pady=8)
+        tk.Button(bf, text="Save", width=10, command=save).pack(side="left", padx=4)
+        tk.Button(bf, text="Cancel", width=10, command=close).pack(side="left")
+        win.protocol("WM_DELETE_WINDOW", close)
+        refresh()
+        self._theme_tree(win)
+        return win
+
+    def _dos_panes_form(self, lines, note=None):
+        names = ", ".join(layout.PRESETS)
+        fields = [{"key": "l%d" % i, "label": "Area %d" % (i + 1), "type": "text", "value": l, "width": 44}
+                  for i, l in enumerate((list(lines) + ["", "", ""])[:3])]
+        buttons = [("Save", "save"), ("Preview", "preview"), ("Presets", "presets"), ("Cancel", "cancel")]
+
+        def result(res, vals):
+            cur = [vals.get("l%d" % i, "") for i in range(3)]
+            if res == "cancel":
+                return
+            if res == "presets":
+                items = [{"label": n, "action": (lambda n=n: self._reopen(self._dos_panes_form, self._preset_lines(n)))}
+                         for n in layout.PRESETS]
+                self._reopen(lambda: self._dos_menu("Layout presets", items))
+                return
+            if res == "preview":
+                self._overlay = dosui.show_message(self.root, "Preview", self._panes_preview_text(cur), self._dc(),
+                                                   self.f_norm, on_result=lambda r, v: self._reopen(self._dos_panes_form, cur))
+                return
+            ok, m = self._panes_save(cur)
+            if not ok:
+                self._reopen(self._dos_panes_form, cur, m)
+            else:
+                self.system(m)
+
+        return self._dos_dialog("Panes / layout", fields, buttons, result, width=66, message=note or self.PANE_SYNTAX)
 
     def _reopen(self, fn, *args):
         """Re-open a menu once the one that just ran its action has fully closed."""
@@ -3095,7 +3669,11 @@ class App:
                 first, last = self.out.yview()
             scrollable = self.dos and (float(first) > 0.0 or float(last) < 1.0)
             if scrollable and not self._dosscroll.winfo_ismapped():
-                self._dosscroll.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
+                if self._panes_active and self._pane_geom is not None:
+                    mx, my, mw, mh = self._pane_geom["main"]
+                    self._dosscroll.place(x=mx + mw - self.f_norm.measure("0"), y=my, height=mh)
+                else:
+                    self._dosscroll.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
                 self._dosscroll.lift()
             elif not scrollable and self._dosscroll.winfo_ismapped():
                 self._dosscroll.place_forget()
@@ -3104,7 +3682,8 @@ class App:
 
     def _apply_spacing(self):
         n = int(self.cfg["line_spacing"])
-        self.out.configure(spacing2=n, spacing3=n)       # between wrapped lines / after each line
+        for w in self._text_widgets():
+            w.configure(spacing2=n, spacing3=n)           # between wrapped lines / after each line
 
     def apply_spacing(self, n):
         self.cfg["line_spacing"] = max(0, min(12, int(n)))
@@ -3122,6 +3701,8 @@ class App:
         if not self.cfg["dos_fit"]:
             return fixed
         w = self._holder.winfo_width()
+        if self._panes_active and self._pane_geom is not None:
+            w = self._pane_geom["main"][2]                 # beside docked panes the main area is narrower
         if w < 100:
             return fixed
         cw = max(1, self.f_norm.measure("0"))
@@ -3134,7 +3715,7 @@ class App:
         if int(self.out.cget("width")) != n:
             self.out.configure(width=n)
 
-    def _fit_size(self, min_cols, avail_w, avail_h):
+    def _fit_size(self, min_cols, avail_w, avail_h, extra_rows=0):
         """Largest font size at which at least `min_cols` columns (plus the two border cells)
         fit the width and 25 rows (as in 80x25 DOS) fit the height."""
         if self._measure_font is None:
@@ -3142,7 +3723,7 @@ class App:
         f = self._measure_font
         for size in range(MAX_FONT, MIN_FONT - 1, -1):
             f.configure(family=self.font_family, size=size)
-            if f.measure("0") * (min_cols + 2) + 16 <= avail_w and (f.metrics("linespace") + int(self.cfg["line_spacing"])) * 25 <= avail_h:
+            if f.measure("0") * (min_cols + 2) + 16 <= avail_w and (f.metrics("linespace") + int(self.cfg["line_spacing"])) * (25 + extra_rows) <= avail_h:
                 return size
         return MIN_FONT
 
@@ -3156,10 +3737,12 @@ class App:
             w, h = self._holder.winfo_width(), self._holder.winfo_height()
             if w >= 100 and h >= 60:
                 min_cols = 80 if self.cfg["dos_fit"] else int(self.cfg["dos_cols"])
-                size = self._fit_size(min_cols, w, h)
+                xc, xr = self._panes_extra()
+                size = self._fit_size(min_cols + xc, w, h, xr)
                 if size != self.f_norm.cget("size"):
                     self._set_font_size(size)
         self._update_dos_cols()
+        self.schedule_layout(5)
 
     def _on_configure(self, e):
         if e.widget is self.root and self.dos:
@@ -3312,7 +3895,8 @@ class App:
 
     def _on_root_destroy(self, e):
         if e.widget is self.root:
-            for job in (self._pump_job, self._reconnect_job, self._fit_job, self._dos_job, self._flush_job):
+            for job in (self._pump_job, self._reconnect_job, self._fit_job, self._dos_job, self._flush_job,
+                        self._layout_job):
                 if job is not None:
                     try:
                         self.root.after_cancel(job)
@@ -3521,7 +4105,7 @@ class App:
         if triggers is None or not plain or not any(t.get("enabled", True) for t in self.cfg["triggers"]):
             return pieces, []
         self._guard.begin_line()
-        gag, effects = False, []
+        gag, effects, routes = False, [], []
         for trig, m in triggers.match_line(plain, self.cfg["triggers"]):
             for act in trig["actions"]:
                 kind = act["type"]
@@ -3530,18 +4114,27 @@ class App:
                     pieces = apply_highlight(pieces, lo, hi, act.get("fg"), act.get("bg"), act.get("bold", False))
                 elif kind == "gag":
                     gag = True
+                elif kind == "route":
+                    routes.append(act["pane"])
+                    gag = gag or bool(act.get("gag"))        # copy by default; "hide from main" is per rule
                 elif kind == "send":
                     effects.append(("send", trig["name"], act, m["captures"]))
                 elif kind == "beep":
                     effects.append(("beep",))
                 elif kind == "note":
                     effects.append(("note", triggers.expand(act["text"], m["captures"])))
+        if routes:
+            snapshot = list(pieces) if pieces else [(plain, (None, None, False, False, False, False))]
+            for pane in routes:
+                effects.insert(0, ("route", pane, snapshot))      # panes get the line before commands run
         if gag and not flushed:
             return None, effects
         return pieces, effects
 
     def _do_effect(self, fx):
-        if fx[0] == "beep":
+        if fx[0] == "route":
+            self.pane_append(fx[1], fx[2])
+        elif fx[0] == "beep":
             if self.cfg.get("bell"):
                 self.root.bell()
         elif fx[0] == "note":
