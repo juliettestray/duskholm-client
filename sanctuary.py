@@ -50,6 +50,14 @@ try:
     import layout                   # geometry of the capture panes
 except ImportError:
     layout = None
+try:
+    import emojis                   # :name: <-> emoji
+except ImportError:
+    emojis = None
+try:
+    import boxes                    # join ASCII boxes into solid lines
+except ImportError:
+    boxes = None
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -1840,24 +1848,37 @@ class App:
     _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 
     @staticmethod
+    def _trim_url(url):
+        """A link without the punctuation that follows it in a sentence."""
+        while url and (url[-1] in ".,;:!?'\"" or (url[-1] == ")" and url.count("(") < url.count(")"))
+                       or (url[-1] == "]" and url.count("[") < url.count("]"))):
+            url = url[:-1]
+        return url
+
+    @staticmethod
     def find_urls(text):
         """[(start, end)] of http(s) links in `text`, without trailing punctuation."""
         out = []
         for m in App._URL_RE.finditer(text):
-            url, end = m.group(), m.end()
-            while url and (url[-1] in ".,;:!?'\"" or (url[-1] == ")" and url.count("(") < url.count(")"))
-                           or (url[-1] == "]" and url.count("[") < url.count("]"))):
-                url, end = url[:-1], end - 1
+            url = App._trim_url(m.group())
             if len(url) > len("https://") + 1:
-                out.append((m.start(), end))
+                out.append((m.start(), m.start() + len(url)))
         return out
 
     def _linkify(self, w, start):
-        """Tag every link in what was just added to a text widget (from index `start`)."""
+        """Tag every link in what was just added to a text widget (from index `start`). The widget's
+        own search is used so positions stay right even when emoji (two units wide) precede a link."""
         try:
-            chunk = w.get(start, "end-1c")
-            for a, b in self.find_urls(chunk):
-                w.tag_add("link", "%s+%dc" % (start, a), "%s+%dc" % (start, b))
+            n, idx = tk.IntVar(), start
+            for _ in range(200):
+                pos = w.search(r"https?://[^[:space:]<>\"'`]+", idx, stopindex="end-1c", regexp=True, count=n)
+                if not pos or n.get() <= 0:
+                    break
+                end = "%s+%dc" % (pos, n.get())
+                url = self._trim_url(w.get(pos, end))
+                if len(url) > len("https://") + 1:
+                    w.tag_add("link", pos, "%s+%dc" % (pos, len(url)))
+                idx = end
         except tk.TclError:
             pass
 
@@ -2093,6 +2114,8 @@ class App:
         if d is None:
             return
         pieces = [(t, k) for t, k in pieces if t]
+        if self.cfg.get("connect_boxes") and boxes is not None:
+            pieces = boxes.connect_pieces(pieces)
         if d["timestamps"]:
             pieces = [(time.strftime("[%H:%M] "), (self.theme["dim"], None, False, False, False, False))] + pieces
         text = pane["text"]
@@ -4117,6 +4140,8 @@ class App:
         unfinished server line (a prompt) appear, so the order on screen is always the true order."""
         if not _internal and (self._pending or self._flush_job is not None):
             self._flush_partial()
+        if self.cfg.get("connect_boxes") and boxes is not None:
+            pieces = boxes.connect_pieces(pieces, skip_tags=("echo", "system"))
         at_bottom = self.out.yview()[1] >= 0.999
         self.out.configure(state="normal")
         first = self.out.index("end-1c")
@@ -4371,6 +4396,8 @@ class App:
     # ---- whole lines: triggers can act on a line before it is shown ----------------------
     def _feed_text(self, text, key):
         """Collect text into the current line; a complete line goes through the trigger engine."""
+        if self.cfg.get("emoji") and emojis is not None:
+            text = emojis.expand(text)
         while True:
             i = text.find("\n")
             if i < 0:
@@ -4918,6 +4945,8 @@ class App:
             self.system("Not connected.")
             return
         parts = [line] if secret else self._expand(line)
+        if self.cfg.get("emoji") and emojis is not None and not secret:
+            parts = [emojis.shorten(p) for p in parts]
         for part in parts:
             if not secret and part.split(None, 1)[:1] == ["quit"]:
                 self._quit_sent_at = time.time()   # the close that follows is intentional
