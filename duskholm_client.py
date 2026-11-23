@@ -35,6 +35,8 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import colorchooser, messagebox, simpledialog
 
+import dosui
+
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
 TLS_PORT = 3001
@@ -99,6 +101,11 @@ def mxp_color(value):
 
 COLOR_KEYS = ("bg", "fg", "panel", "panel_edge", "input_bg", "input_fg", "echo", "system",
               "alert", "dim", "select", "button_bg", "button_fg")
+# Extra colours used only by the DOS terminal look (see dosui.dos_colors). A skin may omit them;
+# the DOS widgets then fall back to classic DOS blue/cyan.
+DOS_KEYS = ("dos_bar_bg", "dos_bar_fg", "dos_bar2_bg", "dos_bar2_fg", "dos_key_fg", "dos_menu_bg",
+            "dos_menu_fg", "dos_menu_border", "dos_menu_sel_bg", "dos_menu_sel_fg", "dos_menu_dim",
+            "dos_shadow", "dos_screen_border")
 RELIEFS = ("flat", "raised", "ridge", "groove", "sunken")
 ANSI_NAMES = ("Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White",
               "Bright black", "Bright red", "Bright green", "Bright yellow", "Bright blue",
@@ -219,6 +226,30 @@ BUILTIN_SKINS = {s["name"]: s for s in (
           blurb="Classic 16-colour VGA, blue panels, chunky buttons."),
 )}
 DEFAULT_SKIN = "Plain"
+DEFAULT_DOS_SKIN = "Retro DOS"
+
+
+def _dos(bar, bar_fg, bar2, bar2_fg, key, menu, menu_fg, border, sel, sel_fg, dim, shadow, screen):
+    return dict(dos_bar_bg=bar, dos_bar_fg=bar_fg, dos_bar2_bg=bar2, dos_bar2_fg=bar2_fg,
+                dos_key_fg=key, dos_menu_bg=menu, dos_menu_fg=menu_fg, dos_menu_border=border,
+                dos_menu_sel_bg=sel, dos_menu_sel_fg=sel_fg, dos_menu_dim=dim, dos_shadow=shadow,
+                dos_screen_border=screen)
+
+
+_DOS_STYLE = {
+    "Plain": _dos("#c8c8c8", "#101114", "#1a1c21", "#c8c8c8", "#e5c07b", "#1a1c21", "#e8e8e8",
+                  "#8a93a3", "#c8c8c8", "#101114", "#6f7a8a", "#05060a", "#0b0c0e"),
+    "Plain Light": _dos("#1f2328", "#fafaf7", "#ecece6", "#1f2328", "#9a5b00", "#ffffff", "#111111",
+                        "#1f2328", "#1f2328", "#fafaf7", "#7b8088", "#b8b8b0", "#d0d0c8"),
+    "Moody": _dos("#2a2438", "#d8d2e6", "#14121d", "#b9b4c8", "#d4a84e", "#14121d", "#d8d2e6",
+                  "#c9a24b", "#c9a24b", "#0b0a10", "#6e6784", "#050408", "#07060b"),
+    "Retro Phosphor": _dos("#33ff66", "#020a02", "#061406", "#33ff66", "#e0ff6a", "#061406",
+                           "#33ff66", "#33ff66", "#33ff66", "#020a02", "#1f7a35", "#010501", "#010601"),
+    "Retro DOS": _dos("#00aaaa", "#000000", "#0000aa", "#ffffff", "#ffff55", "#0000aa", "#ffffff",
+                      "#ffffff", "#00aaaa", "#000000", "#9999dd", "#000044", "#0000aa"),
+}
+for _n, _d in _DOS_STYLE.items():
+    BUILTIN_SKINS[_n].update(_d)
 
 
 def validate_theme(d, base=None):
@@ -231,7 +262,7 @@ def validate_theme(d, base=None):
     out = dict(base)
     out["ansi"] = list(base["ansi"])
     out["fonts"] = list(base.get("fonts", []))
-    for k in COLOR_KEYS:
+    for k in COLOR_KEYS + DOS_KEYS:
         v = d.get(k)
         if _hex_ok(v):
             out[k] = v.lower()
@@ -313,8 +344,8 @@ def save_user_skin(theme, path=None):
     if safe.split(".")[0].strip().upper() in _WIN_RESERVED:
         safe = "skin_" + safe                       # CON, NUL, COM1... are devices, not files
     fp = os.path.join(path, safe + ".json")
-    data = {k: theme[k] for k in ("name", "blurb", "relief", "min_contrast", "fonts", "ansi") + COLOR_KEYS
-            if k in theme}
+    data = {k: theme[k] for k in ("name", "blurb", "relief", "min_contrast", "fonts", "ansi")
+            + COLOR_KEYS + DOS_KEYS if k in theme}
     with open(fp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     return fp
@@ -806,12 +837,17 @@ def clean_settings(cfg):
     cfg["font_family"] = fam.strip() if isinstance(fam, str) and fam.strip() and len(fam) < 100 else None
     sk = cfg.get("skin")
     cfg["skin"] = sk.strip()[:60] if isinstance(sk, str) and sk.strip() else DEFAULT_SKIN
+    ds = cfg.get("dos_skin")
+    cfg["dos_skin"] = ds.strip()[:60] if isinstance(ds, str) and ds.strip() else DEFAULT_DOS_SKIN
+    cfg["ui_mode"] = "dos" if cfg.get("ui_mode") == "dos" else "normal"
+    cfg["dos_cols"] = to_int(cfg.get("dos_cols"), 80, 40, 200)
     so = cfg.get("skin_overrides")
     cfg["skin_overrides"] = ({k: v for k, v in list(so.items())[:50]
                               if isinstance(k, str) and len(k) < 60 and isinstance(v, dict)}
                              if isinstance(so, dict) else {})
     for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True),
-                       ("auto_reconnect", False), ("statbar", True)):
+                       ("auto_reconnect", False), ("statbar", True), ("fullscreen", False),
+                       ("dos_autofit", True), ("dos_flourish", True)):
         if not isinstance(cfg.get(k), bool):
             cfg[k] = default
     al = cfg.get("aliases")
@@ -1047,6 +1083,13 @@ class App:
         self._colors_win = None
         self.skins = dict(BUILTIN_SKINS)
         self.skins.update(load_user_skins())
+        self.dos = self.cfg["ui_mode"] == "dos"      # the DOS terminal look is active
+        self.dosbar = None                            # DOS status bar (built with the widgets)
+        self._overlay = None                          # the open DOS menu/dialog, if any
+        self._dos_job = None                          # 1-second status refresh while in the DOS look
+        self._online_since = 0.0
+        self._fit_job = None
+        self._measure_font = None
         self.theme = self._effective_theme()
 
         root.title("Duskholm")
@@ -1055,7 +1098,14 @@ class App:
         self._build_fonts()
         self._build_widgets()
         self._build_menu()
+        self.apply_layout()
         self.apply_theme()
+        self._bind_dos_keys()
+        if self.dos:
+            self._start_dos_tick()
+            self.update_dosbar()
+        if self.cfg["fullscreen"]:
+            self.set_fullscreen(True, save=False)
         root.protocol("WM_DELETE_WINDOW", self.on_quit)
         self.input.focus_set()
         self._pump_job = root.after(25, self._pump)
@@ -1067,7 +1117,9 @@ class App:
         cfg = {"host": DEFAULT_HOST, "port": TLS_PORT, "tls": True, "verify": True,
                "font_size": 11, "aliases": {}, "bell": True, "keepalive": True,
                "auto_reconnect": False, "statbar": True, "font_family": None,
-               "skin": DEFAULT_SKIN, "skin_overrides": {}}
+               "skin": DEFAULT_SKIN, "skin_overrides": {},
+               "ui_mode": "normal", "dos_skin": DEFAULT_DOS_SKIN, "fullscreen": False,
+               "dos_autofit": True, "dos_cols": 80, "dos_flourish": True}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -1137,6 +1189,8 @@ class App:
         flat = th["relief"] == "flat"
         if role == "frame":
             return dict(bg=th["bg"])
+        if role == "holder":
+            return dict(bg=th.get("dos_screen_border", th["bg"]) if self.dos else th["bg"])
         if role == "panel":
             return dict(bg=th["panel"])
         if role == "label":
@@ -1167,8 +1221,7 @@ class App:
         return {}
 
     def _build_widgets(self):
-        top = self._reg(tk.Frame(self.root), "panel")
-        top.pack(fill="x")
+        top = self._top = self._reg(tk.Frame(self.root), "panel")
         self._reg(tk.Label(top, text="Host"), "label").pack(side="left", padx=(8, 2), pady=4)
         self.v_host = tk.StringVar(value=self.cfg["host"])
         self._reg(tk.Entry(top, textvariable=self.v_host, width=22), "entry").pack(side="left")
@@ -1184,22 +1237,21 @@ class App:
         self.status = self._reg(tk.Label(top, text="Disconnected", anchor="e"), "label")
         self.status.pack(side="right", padx=8)
 
-        mid = self._reg(tk.Frame(self.root), "frame")
-        mid.pack(fill="both", expand=True)
+        # holder = the coloured "overscan" border; in the DOS look the 80-column screen is
+        # centred inside it, in the normal look the screen simply fills it
+        self._holder = self._reg(tk.Frame(self.root), "holder")
+        mid = self._mid = self._reg(tk.Frame(self._holder), "frame")
         # height=4: the pane must REQUEST little and expand into what is left, otherwise at large
         # font sizes its default 24-row request squeezes the stat bar and input line off-screen.
         self.out = self._reg(tk.Text(mid, font=self.f_norm, wrap="word", state="disabled",
                                      height=4, width=40, borderwidth=0, highlightthickness=0,
                                      padx=8, pady=4, cursor="arrow"), "text")
-        sb = self._reg(tk.Scrollbar(mid, command=self.out.yview), "scroll")
+        sb = self._sb = self._reg(tk.Scrollbar(mid, command=self.out.yview), "scroll")
         self.out.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self.out.pack(side="left", fill="both", expand=True)
         self.out.bind("<KeyPress>", self._out_key)
         self.out.bind("<Control-MouseWheel>", self._zoom_wheel)
 
         self.input = self._reg(tk.Entry(self.root, font=self.f_norm, highlightthickness=1), "input")
-        self.input.pack(fill="x", padx=0, pady=0, ipady=5)
         self.input.bind("<Return>", self._on_enter)
         self.input.bind("<KP_Enter>", self._on_enter)
         self.input.bind("<Up>", lambda e: self._hist(-1))
@@ -1210,7 +1262,13 @@ class App:
         self.input.bind("<<Paste>>", self._on_paste)
         self.input.bind("<Control-v>", self._on_paste)
         self.statbar = StatBar(self.root, self.f_norm, self.f_bold, self.theme)  # shown after 1st prompt
+        self.dosbar = dosui.DosStatusBar(self.root, dosui.dos_colors(self.theme), self.f_norm, self.f_bold)
         for w in (self.root,):
+            w.bind("<F11>", self.toggle_fullscreen)
+            w.bind("<Alt-Return>", self.toggle_fullscreen)
+            w.bind("<Alt-d>", self.toggle_dos_mode)
+            w.bind("<Alt-D>", self.toggle_dos_mode)
+            w.bind("<Configure>", self._on_configure, add="+")
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
             w.bind("<Control-minus>", lambda e: self._zoom(-1))
@@ -1227,10 +1285,17 @@ class App:
         m.add_cascade(label="File", menu=f)
         v = tk.Menu(m, tearoff=0)
         self._view_menu = v
-        self.v_skin = tk.StringVar(value=self.cfg["skin"])
+        self.v_skin = tk.StringVar(value=self._skin_name())
         self._skin_menu = tk.Menu(v, tearoff=0)
         v.add_cascade(label="Skin", menu=self._skin_menu)
         self._rebuild_skin_menu()
+        self.v_dos = tk.BooleanVar(value=self.dos)
+        self.v_full = tk.BooleanVar(value=bool(self.cfg["fullscreen"]))
+        v.add_checkbutton(label="DOS terminal look   Alt+D", variable=self.v_dos,
+                          command=lambda: self.set_dos_mode(self.v_dos.get()))
+        v.add_checkbutton(label="Full screen   F11", variable=self.v_full,
+                          command=lambda: self.set_fullscreen(self.v_full.get()))
+        v.add_separator()
         v.add_command(label="Colours…", command=self.edit_colors)
         v.add_command(label="Font…", command=self.choose_font)
         self.v_statbar = tk.BooleanVar(value=self.cfg["statbar"])
@@ -1254,15 +1319,26 @@ class App:
                           command=self._auto_toggled)
         m.add_cascade(label="Options", menu=o)
         self._menus = [m, f, v, o, self._skin_menu]
+        self._menubar = m
         self.root.config(menu=m)
 
     # ---- output ------------------------------------------------------
     # ---- theme ----------------------------------------------------------
+    def _skin_cfg_key(self):
+        """The DOS look keeps its own skin choice, so toggling the look never disturbs the
+        skin you picked for the normal look (and vice versa)."""
+        return "dos_skin" if self.dos else "skin"
+
+    def _skin_name(self):
+        return self.cfg[self._skin_cfg_key()]
+
     def _effective_theme(self):
         """The selected skin with the user's saved edits applied (validated)."""
-        name = self.cfg.get("skin")
+        key = self._skin_cfg_key()
+        name = self.cfg.get(key)
         if name not in self.skins:
-            name = self.cfg["skin"] = DEFAULT_SKIN
+            name = self.cfg[key] = DEFAULT_DOS_SKIN if self.dos and DEFAULT_DOS_SKIN in self.skins \
+                else DEFAULT_SKIN
         base = self.skins[name]
         return validate_theme(self.cfg["skin_overrides"].get(name) or {}, base)
 
@@ -1330,6 +1406,385 @@ class App:
             for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
                 f.configure(family=fam)
         self.statbar.set_theme(th)
+        self._restyle_dosbar()
+
+    # ---- look: layout, DOS mode, full screen, font fit ------------------------
+    def apply_layout(self):
+        """Arrange the window for the current look. Normal: toolbar, text, stat bar, input.
+        DOS: no toolbar/menu bar/scrollbar; a centred N-column screen on a coloured border,
+        the input line and the DOS status bar underneath."""
+        for w in (self._top, self._holder, self.statbar, self.input, self.dosbar):
+            if w is not None:
+                w.pack_forget()
+        self._mid.pack_forget()
+        self._mid.place_forget()
+        self._sb.pack_forget()
+        self.out.pack_forget()
+        if self.dos:
+            self.root.config(menu="")                              # no menu bar
+            self._holder.pack(fill="both", expand=True)
+            self._mid.place(relx=0.5, rely=0.0, anchor="n", relheight=1.0)
+            self.out.configure(width=int(self.cfg["dos_cols"]))
+            self.out.pack(fill="both", expand=True)
+            self.input.pack(fill="x", ipady=2)
+            if self.dosbar is not None:
+                self.dosbar.pack(fill="x")
+        else:
+            self.root.config(menu=self._menubar)
+            self._top.pack(fill="x")
+            self._holder.pack(fill="both", expand=True)
+            self._mid.pack(fill="both", expand=True)
+            self._sb.pack(side="right", fill="y")
+            self.out.configure(width=40)
+            self.out.pack(side="left", fill="both", expand=True)
+            self.input.pack(fill="x", ipady=5)
+            self._statbar_show()
+
+    # ---- DOS look: status bar, menus, dialogs, keys --------------------------------
+    def _dc(self):
+        """Colours for the DOS widgets. Text fields inside a dialog must stand out from the
+        dialog itself, even when the skin's input colour equals the dialog colour."""
+        c = dosui.dos_colors(self.theme)
+        menu = c["dos_menu_bg"]
+        if contrast_ratio(c["input_bg"], menu) < 1.6:
+            c["input_bg"] = "#000000" if rel_luminance(menu) < 0.5 else "#ffffff"
+            c["input_fg"] = ensure_contrast(c["input_fg"], c["input_bg"], 7.0)
+        return c
+
+    def _restyle_dosbar(self):
+        if self.dosbar is not None:
+            try:
+                self.dosbar.restyle(self._dc(), self.f_norm, self.f_bold)
+            except tk.TclError:
+                pass
+
+    def _start_dos_tick(self):
+        if self._dos_job is None:
+            self._dos_tick()
+
+    def _dos_tick(self):
+        self._dos_job = None
+        if not self.dos:
+            return
+        self.update_dosbar()
+        try:
+            self._dos_job = self.root.after(1000, self._dos_tick)
+        except tk.TclError:
+            pass
+
+    def _dos_segments(self, avail):
+        """Status-row content that fits in `avail` character cells. Items are ranked by
+        importance (connection, HP, clock, cooldowns, counters, flags, extras, skin name) and
+        added while they fit; they are then shown in a stable, readable order."""
+        port = self.v_port.get().strip()
+        host = self.v_host.get().strip()
+        shown = host if port in ("3000", "3001") else "%s:%s" % (host, port)
+        if self.connected:
+            cands = [(1, 0, "ONLINE " + shown, "good")]
+        elif self.connecting:
+            cands = [(1, 0, "CONNECTING " + shown, "warn")]
+        elif self._retrying:
+            cands = [(1, 0, "REDIAL in %ds" % max(0, int(self._reconnect_at - time.time() + 0.999)), "warn")]
+        else:
+            cands = [(1, 0, "OFFLINE", "dim")]
+        pr = self._last_prompt if self.connected else None
+        if self.connected:
+            cands.append((3, 2, dosui.format_duration(time.time() - self._online_since), "key"))
+        if pr:
+            cur, mx, label = pr["hp"]
+            gauge, role = dosui.gauge_text(cur, mx, 8)
+            cands.append((2, 1, "%s %s %d/%d" % (label, gauge, cur, mx), role))
+            if pr["cooldowns"]:
+                cands.append((4, 4, " ".join("%s:%d" % (lb, n) for lb, n in pr["cooldowns"]),
+                              "warn" if any(n > 0 for _, n in pr["cooldowns"]) else "dim"))
+            if pr["counters"]:
+                cands.append((5, 3, " ".join("%s%d" % (lb, n) for lb, n in pr["counters"]),
+                              "warn" if any(n for _, n in pr["counters"]) else "dim"))
+            extra = ([pr["facing"]] if pr["facing"] else []) + pr["tags"]
+            if extra:
+                cands.append((7, 5, " ".join(extra), "normal"))
+        cands.append((6, 6, ("TLS " if self.v_tls.get() else "") + ("ANSI-MXP" if (self.connected and self.term.mxp) else "ANSI"),
+                      "dim"))
+        chosen, used = [], 0
+        for prio, order, text, role in sorted(cands):
+            cost = len(text) + (3 if chosen else 0)            # 3 = the " | " separator
+            if used + cost <= avail:
+                chosen.append((order, text, role))
+                used += cost
+        chosen.sort()
+        tail = self.theme["name"]
+        if used + len(tail) + 3 > avail:
+            tail = ""
+        return [(t, r) for _o, t, r in chosen], tail
+
+    def update_dosbar(self):
+        """Fill the two status rows from the live connection / prompt state."""
+        bar = self.dosbar
+        if bar is None or not self.dos:
+            return
+        try:
+            up = self.connected or self.connecting
+            bar.set_hints([("F1", "Help"), ("F2", "Disconnect" if up else "Connect"), ("F3", "Log"),
+                           ("F5", "Skin"), ("F6", "Colours"), ("F7", "Font"), ("F10", "Menu"),
+                           ("F11", "Full")], right="Alt-D Normal  Alt-X Exit")
+            cw = max(1, self.f_norm.measure("0"))
+            cols = int(bar.winfo_width() / cw) if bar.winfo_width() > 100 else int(self.cfg["dos_cols"])
+            segs, tail = self._dos_segments(max(20, cols - 2))
+            bar.set_segments(segs, right=tail)
+        except tk.TclError:
+            pass
+
+    def _overlay_open(self):
+        o = self._overlay
+        try:
+            return o is not None and bool(o.is_open())
+        except tk.TclError:
+            return False
+
+    def dos_close_overlay(self):
+        if self._overlay_open():
+            try:
+                self._overlay.close()
+            except tk.TclError:
+                pass
+        self._overlay = None
+
+    def _cell(self):
+        return self.f_norm.measure("0"), self.f_norm.metrics("linespace")
+
+    def _dos_menu(self, title, items, corner=False):
+        m = dosui.DosMenu(self.root, title, items, self._dc(), self.f_norm)
+        self._overlay = m
+        if corner:
+            cw, ch = self._cell()
+            m.open(x=2 * cw, y=ch)
+        else:
+            m.open()
+        return m
+
+    def _dos_dialog(self, title, fields, buttons, on_result, **kw):
+        d = dosui.DosDialog(self.root, title, fields, buttons, self._dc(), self.f_norm, on_result, **kw)
+        self._overlay = d
+        d.open()
+        return d
+
+    def dos_main_menu(self):
+        up = self.connected or self.connecting or self._retrying
+        items = [
+            {"label": "Disconnect" if up else "Connect", "hotkey": "C", "shortcut": "F2",
+             "action": self.toggle_connection},
+            {"label": "Connection settings...", "hotkey": "S", "action": self.dos_connect_dialog},
+            None,
+            {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
+             "action": self.toggle_log},
+            {"label": "Clear screen", "hotkey": "E", "shortcut": "Ctrl-L", "action": self.clear},
+            None,
+            {"label": "Skin...", "hotkey": "K", "shortcut": "F5", "action": self.dos_skin_menu},
+            {"label": "Colours...", "hotkey": "O", "shortcut": "F6", "action": self.edit_colors},
+            {"label": "Font...", "hotkey": "F", "shortcut": "F7", "action": self.choose_font},
+            None,
+            {"label": "Options...", "hotkey": "P", "action": self.dos_options_menu},
+            {"label": "Full screen", "hotkey": "U", "shortcut": "F11",
+             "checked": bool(self.cfg["fullscreen"]), "action": self.toggle_fullscreen},
+            {"label": "Normal look", "hotkey": "N", "shortcut": "Alt-D",
+             "action": lambda: self.set_dos_mode(False)},
+            None,
+            {"label": "Help", "hotkey": "H", "shortcut": "F1", "action": self.dos_help},
+            {"label": "Exit", "hotkey": "X", "shortcut": "Alt-X", "action": self.dos_confirm_quit},
+        ]
+        return self._dos_menu("Duskholm", items, corner=True)
+
+    def dos_skin_menu(self):
+        cur = self._skin_name()
+        items = [{"label": name, "hotkey": str(i + 1) if i < 9 else None, "checked": name == cur,
+                  "action": (lambda n=name: self.set_skin(n))} for i, name in enumerate(self.skins)]
+        return self._dos_menu("Skin", items)
+
+    def _toggle_option(self, key):
+        new = not self.cfg[key]
+        self.cfg[key] = new
+        var = {"verify": "v_verify", "bell": "v_bell", "keepalive": "v_keep",
+               "auto_reconnect": "v_auto"}.get(key)
+        if var:
+            getattr(self, var).set(new)
+        if key == "auto_reconnect":
+            self._auto_toggled()
+        elif key == "dos_autofit" and new:
+            self._fit_font()
+        self._save_settings()
+        self.root.after_idle(self.dos_options_menu)     # stay in the menu to flip several
+
+    def dos_options_menu(self):
+        if not self.dos or self._overlay_open():
+            return None
+        rows = [("Verify TLS certificate", "V", "verify"), ("Beep on server bell", "B", "bell"),
+                ("Send keep-alive", "K", "keepalive"), ("Auto-reconnect", "R", "auto_reconnect"),
+                ("Auto-fit font to screen", "A", "dos_autofit"), ("Dial / connect messages", "D", "dos_flourish")]
+        items = [{"label": lbl, "hotkey": hk, "checked": bool(self.cfg[k]),
+                  "action": (lambda k=k: self._toggle_option(k))} for lbl, hk, k in rows]
+        return self._dos_menu("Options", items)
+
+    def dos_connect_dialog(self):
+        fields = [{"key": "host", "label": "Host", "type": "text", "value": self.v_host.get(), "width": 30},
+                  {"key": "port", "label": "Port", "type": "text", "value": self.v_port.get(), "width": 6},
+                  {"key": "tls", "label": "Use TLS", "type": "check", "value": bool(self.v_tls.get())}]
+        buttons = [("Connect", "connect"), ("Save", "save"), ("Cancel", "cancel")]
+        return self._dos_dialog("Connection", fields, buttons, self._dos_connect_result, width=52,
+                                message="Where do you want to go?")
+
+    def _dos_connect_result(self, result, values):
+        if result not in ("connect", "save"):
+            return
+        host = str(values.get("host", "")).strip() or self.v_host.get().strip()
+        try:
+            port = int(str(values.get("port", "")).strip())
+            if not 1 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            self.system("Port must be a number from 1 to 65535.")
+            return
+        tls = bool(values.get("tls"))
+        self.v_host.set(host)
+        self.v_port.set(str(port))
+        self.v_tls.set(tls)
+        self.cfg.update(host=host, port=port, tls=tls)
+        self._save_settings()
+        if result == "connect":
+            if self.connected or self.connecting:
+                self._local("/reconnect")
+            else:
+                self._cancel_reconnect()
+                self.toggle_connection()
+        self.update_dosbar()
+
+    def dos_help(self):
+        text = ("F1   This help              F2   Connect / Disconnect\n"
+                "F3   Log to file            F5   Skins\n"
+                "F6   Colours                F7   Font\n"
+                "F10  Menu (also Alt-M)      F11  Full screen (also Alt-Enter)\n"
+                "Alt-D  Normal look          Alt-X  Exit\n"
+                "PgUp/PgDn  Scroll back      Up/Down  Command history\n"
+                "Ctrl-L  Clear screen        Ctrl +/-  Font size\n"
+                "\n/help lists the client's own commands.")
+        self._overlay = dosui.show_message(self.root, "Help", text, self._dc(), self.f_norm)
+        return self._overlay
+
+    def dos_confirm_quit(self):
+        self._overlay = dosui.confirm(self.root, "Exit", "Disconnect and exit Duskholm?",
+                                      self._dc(), self.f_norm,
+                                      lambda r, v: self.on_quit() if r == "yes" else None)
+        return self._overlay
+
+    def _dos_only(self, fn):
+        """Key handler that acts only in the DOS look and when no menu/dialog is already open."""
+        def handler(_e=None):
+            if not self.dos or self._overlay_open():
+                return None
+            fn()
+            return "break"
+        return handler
+
+    def _bind_dos_keys(self):
+        table = {"<F1>": self.dos_help, "<F2>": self.toggle_connection, "<F3>": self.toggle_log,
+                 "<F5>": self.dos_skin_menu, "<F6>": self.edit_colors, "<F7>": self.choose_font,
+                 "<F10>": self.dos_main_menu, "<Alt-m>": self.dos_main_menu, "<Alt-M>": self.dos_main_menu,
+                 "<Alt-x>": self.dos_confirm_quit, "<Alt-X>": self.dos_confirm_quit}
+        for seq, fn in table.items():
+            self.root.bind(seq, self._dos_only(fn))
+
+    def set_fullscreen(self, on, save=True):
+        on = bool(on)
+        self.cfg["fullscreen"] = on
+        self.v_full.set(on)
+        try:
+            self.root.attributes("-fullscreen", on)
+        except tk.TclError:
+            pass
+        if save:
+            self._save_settings()
+        self.root.after(150, self._fit_font)
+
+    def toggle_fullscreen(self, _e=None):
+        self.set_fullscreen(not bool(self.cfg["fullscreen"]))
+        return "break"
+
+    def set_dos_mode(self, on):
+        on = bool(on)
+        if on == self.dos:
+            self.v_dos.set(self.dos)
+            return
+        self.dos_close_overlay()
+        self.dos = on
+        self.cfg["ui_mode"] = "dos" if on else "normal"
+        self.v_dos.set(on)
+        self.theme = self._effective_theme()
+        self.v_skin.set(self._skin_name())
+        self.apply_layout()
+        self.apply_theme()
+        if on:
+            self.root.update_idletasks()
+            self._fit_font()
+            if self.cfg["dos_flourish"]:
+                self._dos_banner()
+            self._start_dos_tick()
+        else:
+            self._set_font_size(int(self.cfg["font_size"]))
+            if self._dos_job is not None:
+                try:
+                    self.root.after_cancel(self._dos_job)
+                except tk.TclError:
+                    pass
+                self._dos_job = None
+        self.update_dosbar()
+        self._save_settings()
+
+    def toggle_dos_mode(self, _e=None):
+        self.set_dos_mode(not self.dos)
+        return "break"
+
+    def _dos_banner(self):
+        self.system("DUSKHOLM TERMINAL   F1 help   F10 menu   F11 full screen   Alt+D normal look")
+
+    def _set_font_size(self, size):
+        """Apply a size to the display fonts without changing the saved preference."""
+        for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
+            f.configure(size=size)
+        self._restyle_dosbar()
+
+    def _fit_size(self, cols, avail_w, avail_h):
+        """Largest font size at which `cols` columns fit the width and 25 rows (as in 80x25 DOS) fit the height."""
+        if self._measure_font is None:
+            self._measure_font = tkfont.Font(family=self.font_family, size=10)
+        f = self._measure_font
+        for size in range(MAX_FONT, MIN_FONT - 1, -1):
+            f.configure(family=self.font_family, size=size)
+            if f.measure("0") * cols + 20 <= avail_w and f.metrics("linespace") * 25 <= avail_h:
+                return size
+        return MIN_FONT
+
+    def _fit_font(self):
+        """DOS look: size the font so the whole N-column screen fills the window."""
+        self._fit_job = None
+        if not (self.dos and self.cfg["dos_autofit"]):
+            return
+        w, h = self._holder.winfo_width(), self._holder.winfo_height()
+        if w < 100 or h < 60:
+            return
+        size = self._fit_size(int(self.cfg["dos_cols"]), w, h)
+        if size != self.f_norm.cget("size"):
+            self._set_font_size(size)
+
+    def _on_configure(self, e):
+        if e.widget is self.root and self.dos and self.cfg["dos_autofit"]:
+            if self._fit_job is not None:
+                try:
+                    self.root.after_cancel(self._fit_job)
+                except tk.TclError:
+                    pass
+            try:
+                self._fit_job = self.root.after(120, self._fit_font)
+            except tk.TclError:
+                self._fit_job = None
 
     def _rebuild_skin_menu(self):
         m = self._skin_menu
@@ -1341,7 +1796,7 @@ class App:
     def set_skin(self, name):
         if name not in self.skins:
             return False
-        self.cfg["skin"] = name
+        self.cfg[self._skin_cfg_key()] = name
         self.v_skin.set(name)
         self.theme = self._effective_theme()
         self.apply_theme()
@@ -1350,7 +1805,7 @@ class App:
 
     def _set_override(self, path, value):
         """Record a user edit of the current skin (stored as a difference from the skin)."""
-        name = self.cfg["skin"]
+        name = self._skin_name()
         base = self.skins[name]
         ov = copy.deepcopy(self.cfg["skin_overrides"].get(name) or {})
         if path[0] == "ansi":
@@ -1376,7 +1831,7 @@ class App:
         self.apply_theme()
 
     def reset_skin_edits(self):
-        self.cfg["skin_overrides"].pop(self.cfg["skin"], None)
+        self.cfg["skin_overrides"].pop(self._skin_name(), None)
         self.theme = self._effective_theme()
         self.apply_theme()
 
@@ -1465,7 +1920,7 @@ class App:
 
     def _on_root_destroy(self, e):
         if e.widget is self.root:
-            for job in (self._pump_job, self._reconnect_job):
+            for job in (self._pump_job, self._reconnect_job, self._fit_job, self._dos_job):
                 if job is not None:
                     try:
                         self.root.after_cancel(job)
@@ -1477,6 +1932,7 @@ class App:
         self.connecting = self.connected = False
         self._line, self._last_prompt = "", None     # stale stats must not outlive the session
         self._statbar_hide()
+        self.update_dosbar()
         self.input.configure(show="")
         self.btn.configure(text="Connect")
         self.status.configure(text="Disconnected")
@@ -1492,8 +1948,13 @@ class App:
             self.input.configure(show="")
             self.btn.configure(text="Disconnect")
             self.status.configure(text="Connected")
-            self.system("Connected to %s:%s%s." % (self.v_host.get(), self.v_port.get(),
-                                                    " (TLS)" if self.v_tls.get() else ""))
+            self._online_since = time.time()
+            if self.dos and self.cfg["dos_flourish"]:
+                self.system("CONNECT%s" % (" (TLS)" if self.v_tls.get() else ""))
+            else:
+                self.system("Connected to %s:%s%s." % (self.v_host.get(), self.v_port.get(),
+                                                        " (TLS)" if self.v_tls.get() else ""))
+            self.update_dosbar()
         elif kind == "failed":
             self._set_disconnected()
             self.system("Could not connect: %s" % payload)
@@ -1537,9 +1998,11 @@ class App:
         self._last_prompt = p
         self.statbar.set_data(p)
         self._statbar_show()
+        self.update_dosbar()
 
     def _statbar_show(self):
-        if self.cfg.get("statbar") and self._last_prompt and not self.statbar.winfo_ismapped():
+        if (self.cfg.get("statbar") and self._last_prompt and not self.dos
+                and not self.statbar.winfo_ismapped()):
             self.statbar.pack(fill="x", before=self.input)
 
     def _statbar_hide(self):
@@ -1747,7 +2210,11 @@ class App:
         self.connecting = True
         self.btn.configure(text="Cancel")
         self.status.configure(text="Connecting…")
-        self.system("%s %s:%d…" % ("Reconnecting to" if auto else "Connecting to", host, port))
+        if self.dos and self.cfg["dos_flourish"]:
+            self.system("%s%s:%d" % ("ATDT " if not auto else "ATDT (redial) ", host, port))
+        else:
+            self.system("%s %s:%d…" % ("Reconnecting to" if auto else "Connecting to", host, port))
+        self.update_dosbar()
         self.gen += 1
         self.conn = Connection(self.q, self.gen)
         self.conn.open(host, port, self.v_tls.get(), self.v_verify.get())
@@ -1822,10 +2289,14 @@ class App:
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
             f.configure(family=self.font_family, size=self.cfg["font_size"])
         self.statbar.refresh()
+        self._restyle_dosbar()
         self._save_settings()
         return True
 
     def _zoom(self, d):
+        if self.dos and self.cfg["dos_autofit"]:
+            self.cfg["dos_autofit"] = False      # the user is choosing a size now
+            self.system("Font auto-fit is off (zoom keys set the size). Re-enable it from the DOS menu.")
         self.apply_font(size=int(self.cfg["font_size"]) + d)
         return "break"
 
@@ -1942,7 +2413,7 @@ class App:
                     return self._colors_win
             except tk.TclError:
                 pass
-        snapshot = (self.cfg["skin"], copy.deepcopy(self.cfg["skin_overrides"]))
+        snapshot = (self._skin_name(), copy.deepcopy(self.cfg["skin_overrides"]), self._skin_cfg_key())
         top = tk.Toplevel(self.root)
         self._colors_win = top
         top.title("Skin and colours")
@@ -1956,7 +2427,7 @@ class App:
         head = tk.Frame(top)
         head.pack(fill="x", padx=10, pady=(10, 4))
         tk.Label(head, text="Skin").pack(side="left")
-        var = tk.StringVar(value=self.cfg["skin"])
+        var = tk.StringVar(value=self._skin_name())
         opt = tk.OptionMenu(head, var, *self.skins.keys(), command=lambda n: choose_skin(n))
         opt.pack(side="left", padx=8)
         blurb = tk.Label(head, anchor="w", justify="left")
@@ -2042,7 +2513,7 @@ class App:
             if abs(float(scale.get()) - th["min_contrast"]) > 0.001:
                 scale.set(th["min_contrast"])
             state["busy"] = False
-            var.set(self.cfg["skin"])
+            var.set(self._skin_name())
             menu = opt["menu"]
             menu.delete(0, "end")
             for nm in self.skins:
@@ -2090,7 +2561,7 @@ class App:
             top.destroy()
 
         def cancel():
-            self.cfg["skin"], self.cfg["skin_overrides"] = snapshot[0], snapshot[1]
+            self.cfg[snapshot[2]], self.cfg["skin_overrides"] = snapshot[0], snapshot[1]
             self.v_skin.set(snapshot[0])
             self.theme = self._effective_theme()
             self.apply_theme()

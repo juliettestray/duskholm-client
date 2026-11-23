@@ -1,7 +1,8 @@
 # Duskholm client
 
-A small, dependency-free telnet client for the Haven-Duskholm MUD. One Python
-file, tkinter only (ships with the standard Windows Python installer).
+A small, dependency-free telnet client for the Haven-Duskholm MUD. Two Python files
+(`duskholm_client.py` plus `dosui.py`, the widgets for the DOS look), tkinter only (ships with
+the standard Windows Python installer). Keep the two files together.
 
 ```
 python duskholm_client.py [host [port]]
@@ -59,6 +60,29 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
     `~/.duskholm_skins/`; drop in files from others (or hand-write one) and they appear in the
     Skin menu. Bad or oversized files are ignored.
   - Windows draws the menu bar and scrollbar itself, so those keep the system look.
+- **DOS terminal look** (`Alt+D`, or View > DOS terminal look; off by default), modelled on
+  early-90s terminal software such as Telix and Terminate. The menu bar, toolbar and scrollbar
+  go away; the game appears as a centred 80-column screen on a coloured border, with the font
+  auto-sized to fill the window. Underneath: an input line and a two-row status bar, with
+  function-key hints on top and live status below (connection, online clock, HP as a block
+  gauge, counters and cooldowns), budgeted to the screen width. Menus and dialogs are boxed
+  with double lines and drop shadows, and work from the keyboard (arrows, Enter, Esc, hotkey
+  letters). It keeps its own skin choice (default *Retro DOS*), so your normal skin is
+  untouched.
+
+  | Key | Action | Key | Action |
+  | --- | --- | --- | --- |
+  | `F1` | Help | `F2` | Connect / disconnect |
+  | `F3` | Log to file | `F5` | Skins |
+  | `F6` | Colours | `F7` | Font |
+  | `F10` / `Alt+M` | Main menu | `Alt+X` | Exit (asks first) |
+  | `F11` / `Alt+Enter` | Full screen | `Alt+D` | Back to the normal look |
+
+  The DOS font works best with a bitmap-style monospace font such as *Perfect DOS VGA 437* or
+  *Px437* if you have one installed; otherwise it uses Lucida Console or Consolas. The Colours
+  and Font dialogs still open as ordinary windows.
+- **Full screen** (`F11` or `Alt+Enter`, both looks): real full screen, hiding the title bar,
+  borders and taskbar. Saved between runs.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -90,6 +114,8 @@ python tests/test_reconnect.py    # auto-reconnect against a fake server that go
 python tests/test_statbar_fonts.py # prompt parsing, stat bar, font choice, layout at big sizes
 python tests/test_skins.py        # skins, palette edits, contrast, persistence, the colour dialog
 python tests/test_theme_pure.py   # adversarial checks on the colour maths and skin-file loading
+python tests/test_dosui.py        # the DOS-style menus, dialogs and status bar widgets
+python tests/test_dos_mode.py     # the DOS look wired into the client: keys, menus, status, full screen
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 
