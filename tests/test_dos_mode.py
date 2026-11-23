@@ -51,7 +51,10 @@ assert app.dos and app.cfg["ui_mode"] == "dos"
 assert not app._top.winfo_ismapped(), "toolbar hidden"
 assert root.cget("menu") in ("", None) or str(root.cget("menu")) == "", "menu bar hidden"
 assert not app._sb.winfo_ismapped(), "scrollbar hidden"
-assert int(app.out.cget("width")) == 80 and app.dosbar.winfo_ismapped()
+assert int(app.out.cget("width")) >= 80 and app.dosbar.winfo_ismapped()
+_cw = app.f_norm.measure("0")
+_border = (app._holder.winfo_width() - app._mid.winfo_width()) / 2.0 / _cw
+assert 0.5 <= _border <= 2.0, ("border should be about one character cell", _border)
 assert app.theme["name"] == "Retro DOS" and app.cfg["skin"] == "Moody", "DOS look has its own skin; normal one untouched"
 assert not app.statbar.winfo_ismapped(), "the in-game stat bar is replaced by the DOS bar"
 hint, stat = rows()

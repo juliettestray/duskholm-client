@@ -62,8 +62,11 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   - Windows draws the menu bar and scrollbar itself, so those keep the system look.
 - **DOS terminal look** (`Alt+D`, or View > DOS terminal look; off by default), modelled on
   early-90s terminal software such as Telix and Terminate. The menu bar, toolbar and scrollbar
-  go away; the game appears as a centred 80-column screen on a coloured border, with the font
-  auto-sized to fill the window. Underneath: an input line and a two-row status bar, with
+  go away; the game fills the window with a one-character coloured border on each side (the
+  screen is as many columns wide as fit), and a text-mode scrollbar runs down the right edge
+  (arrows scroll a line, clicking the track pages up or down, both repeat while held). The font
+  is auto-sized so at least 80 columns and about 25 rows fit; turn that off with F7 > Auto-fit
+  size to pick your own size, and the border stays one character either way. Underneath: an input line and a two-row status bar, with
   function-key hints on top and live status below (connection, online clock, HP as a block
   gauge, counters and cooldowns), budgeted to the screen width. Menus and dialogs are boxed
   with double lines and drop shadows, and work from the keyboard (arrows, Enter, Esc, hotkey
@@ -91,6 +94,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   from the normal look.
 - **Full screen** (`F11` or `Alt+Enter`, both looks): real full screen, hiding the title bar,
   borders and taskbar. Saved between runs.
+- **Tabs line up like MUSHclient.** The game lays out tables (such as the unread-notes screen)
+  with TAB characters, so the client expands each tab to the next multiple of 8 columns itself
+  instead of relying on the text widget's own tab stops. Bold and italic text also keep the same
+  character width as normal text, so bitmap-style fonts stay on the grid.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -125,6 +132,7 @@ python tests/test_theme_pure.py   # adversarial checks on the colour maths and s
 python tests/test_dosui.py        # the DOS-style menus, dialogs and status bar widgets
 python tests/test_dos_mode.py     # the DOS look wired into the client: keys, menus, status, full screen
 python tests/test_dos_dialogs.py  # the DOS-style Colours and Font screens, end to end
+python tests/test_layout.py       # tab alignment, bold width, one-cell DOS border, DOS scrollbar
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

@@ -570,6 +570,23 @@ def chk_iac_iac_is_u00ff():
         return "IAC IAC emits %s, expected a single U+FFFD" % rep(got)
 
 
+def expand_tabs(s):
+    """Independent model of the client's rule: a TAB pads to the next multiple of 8 columns."""
+    out, col = [], 0
+    for ch in s:
+        if ch == "\n":
+            col = 0
+            out.append(ch)
+        elif ch == "\t":
+            n = 8 - col % 8
+            out.append(" " * n)
+            col += n
+        else:
+            out.append(ch)
+            col += 1
+    return "".join(out)
+
+
 def chk_mxp_off_transparent():
     rng = random.Random(10)
     alpha = list("<>&;#amp lgt0123456789xyz\n\t")
@@ -581,7 +598,7 @@ def chk_mxp_off_transparent():
             n = rng.randint(1, 20)
             out += "".join(e[1] for e in t.feed(s[p:p + n].encode()) if e[0] == "text")
             p += n
-        if out != s:
+        if out != expand_tabs(s):
             return "MXP off but text altered: repro=%s got=%s" % (rep(s), rep(out))
 
 

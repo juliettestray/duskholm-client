@@ -18,7 +18,8 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 __all__ = ['BOX_DOUBLE', 'BOX_SINGLE', 'dos_colors', 'gauge_text', 'format_duration',
-           'parse_hex_color', 'DosMenu', 'DosDialog', 'DosColorPicker', 'DosStatusBar', 'DosMessage', 'show_message', 'confirm']
+           'parse_hex_color', 'DosMenu', 'DosDialog', 'DosColorPicker', 'DosStatusBar', 'DosMessage', 'show_message', 'confirm',
+           'DosScrollbar']
 
 BOX_DOUBLE = '╔═╗║╚╝'     # tl, horizontal, tr, vertical, bl, br
 BOX_SINGLE = '┌─┐│└┘'
@@ -1686,3 +1687,185 @@ class DosStatusBar(tk.Frame):
         self._measure()
         self._apply_style()
         self._rebuild()
+
+
+# --------------------------------------------------------------------------
+# text-mode scrollbar
+# --------------------------------------------------------------------------
+class DosScrollbar(tk.Canvas):
+    """A vertical scrollbar in the style of old text-mode software: an up-arrow cell, a dotted
+    track with a solid thumb, and a down-arrow cell, one character cell wide.
+
+    Clicking an arrow scrolls one line; clicking the track above or below the thumb pages up
+    or down; both repeat while the button is held. Dragging the thumb scrolls continuously.
+    Use it like tk.Scrollbar: ``text.configure(yscrollcommand=sb.set)`` and ``command=text.yview``.
+    """
+    REPEAT_FIRST_MS = 350
+    REPEAT_MS = 60
+
+    def __init__(self, parent, command, colors, font=None):
+        self._font = font or _default_font()
+        self._cw = max(6, self._font.measure('0'))
+        self._lh = max(8, self._font.metrics('linespace'))
+        tk.Canvas.__init__(self, parent, width=self._cw, height=1, highlightthickness=0, bd=0,
+                           cursor='arrow')
+        self._cmd = command
+        self._c = dict(colors) if isinstance(colors, dict) else {}
+        self._first, self._last = 0.0, 1.0
+        self._job = None
+        self._zone = None        # what the held button is doing: 'up' 'down' 'pgup' 'pgdn' 'drag'
+        self._grab = 0
+        self._press_y = 0
+        self.bind('<Configure>', lambda e: self._draw())
+        self.bind('<ButtonPress-1>', self._press)
+        self.bind('<B1-Motion>', self._motion)
+        self.bind('<ButtonRelease-1>', self._release)
+        self.bind('<Destroy>', self._on_destroy, add='+')
+        self._draw()
+
+    # ---- colours ----------------------------------------------------------------------
+    def _col(self, key, default):
+        return _hex(self._c.get(key), default)
+
+    def restyle(self, colors, font=None):
+        if isinstance(colors, dict):
+            self._c = dict(colors)
+        if font is not None:
+            self._font = font
+        self._cw = max(6, self._font.measure('0'))
+        self._lh = max(8, self._font.metrics('linespace'))
+        try:
+            self.configure(width=self._cw)
+            self._draw()
+        except tk.TclError:
+            pass
+
+    # ---- geometry -----------------------------------------------------------------------
+    def _geom(self):
+        h = max(1, self.winfo_height())
+        ah = min(self._lh, h // 2)
+        top, bot = ah, max(ah, h - ah)
+        track = max(0, bot - top)
+        span = min(1.0, max(0.0, self._last - self._first))
+        thumb = int(track * span)
+        thumb = max(min(self._lh, track), thumb) if track else 0
+        avail = max(0, track - thumb)
+        room = 1.0 - span
+        off = int(round(avail * (self._first / room))) if room > 1e-9 else 0
+        off = max(0, min(avail, off))
+        return h, ah, top, bot, track, thumb, avail, room, top + off
+
+    def _draw(self):
+        try:
+            w = max(1, self.winfo_width())
+            h, ah, top, bot, track, thumb, avail, room, ttop = self._geom()
+        except tk.TclError:
+            return
+        bg = self._col('dos_menu_bg', '#0000aa')
+        dim = self._col('dos_menu_dim', '#9999dd')
+        hi = self._col('dos_bar_bg', '#00aaaa')
+        self.delete('all')
+        self.configure(bg=bg)
+        if track:
+            self.create_rectangle(0, top, w, bot, fill=dim, outline='', stipple='gray50')
+            self.create_rectangle(0, ttop, w, ttop + thumb, fill=hi, outline='')
+        if ah > 2:
+            for y0, up in ((0, True), (h - ah, False)):
+                self.create_rectangle(0, y0, w, y0 + ah, fill=hi, outline='')
+                cx, m = w / 2.0, max(2, int(min(w, ah) * 0.28))
+                if up:
+                    pts = (cx, y0 + m, cx - (w / 2.0 - 2), y0 + ah - m, cx + (w / 2.0 - 2), y0 + ah - m)
+                else:
+                    pts = (cx, y0 + ah - m, cx - (w / 2.0 - 2), y0 + m, cx + (w / 2.0 - 2), y0 + m)
+                self.create_polygon(*pts, fill=bg, outline='')
+
+    # ---- tk.Scrollbar protocol -----------------------------------------------------------------
+    def set(self, first, last):
+        try:
+            f, l = float(first), float(last)
+        except (TypeError, ValueError):
+            return
+        if f != f or l != l:
+            return
+        f = min(1.0, max(0.0, f))
+        l = min(1.0, max(f, l))
+        if (f, l) != (self._first, self._last):
+            self._first, self._last = f, l
+            self._draw()
+
+    # ---- mouse ---------------------------------------------------------------------------------
+    def _zone_at(self, y):
+        h, ah, top, bot, track, thumb, avail, room, ttop = self._geom()
+        if y < ah:
+            return 'up'
+        if y >= h - ah:
+            return 'down'
+        if y < ttop:
+            return 'pgup'
+        if y >= ttop + thumb:
+            return 'pgdn'
+        return 'drag'
+
+    def _fire(self, zone):
+        try:
+            if zone == 'up':
+                self._cmd('scroll', -1, 'units')
+            elif zone == 'down':
+                self._cmd('scroll', 1, 'units')
+            elif zone == 'pgup':
+                self._cmd('scroll', -1, 'pages')
+            elif zone == 'pgdn':
+                self._cmd('scroll', 1, 'pages')
+        except tk.TclError:
+            pass
+
+    def _cancel_job(self):
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+
+    def _press(self, e):
+        self._cancel_job()
+        self._press_y = e.y
+        self._zone = self._zone_at(e.y)
+        if self._zone == 'drag':
+            self._grab = e.y - self._geom()[8]
+            return
+        self._fire(self._zone)
+        self._job = self.after(self.REPEAT_FIRST_MS, self._repeat)
+
+    def _repeat(self):
+        self._job = None
+        if self._zone in (None, 'drag'):
+            return
+        if self._zone in ('pgup', 'pgdn') and self._zone_at(self._press_y) != self._zone:
+            return                         # the thumb has reached the pointer: stop paging
+        self._fire(self._zone)
+        try:
+            self._job = self.after(self.REPEAT_MS, self._repeat)
+        except tk.TclError:
+            self._job = None
+
+    def _motion(self, e):
+        if self._zone != 'drag':
+            return
+        h, ah, top, bot, track, thumb, avail, room, ttop = self._geom()
+        if avail <= 0:
+            return
+        frac = min(1.0, max(0.0, (e.y - self._grab - top) / float(avail)))
+        try:
+            self._cmd('moveto', frac * room)
+        except tk.TclError:
+            pass
+
+    def _release(self, _e):
+        self._cancel_job()
+        self._zone = None
+
+    def _on_destroy(self, e):
+        if e.widget is self:
+            self._cancel_job()
+

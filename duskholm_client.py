@@ -73,6 +73,8 @@ def xterm_color(n):
     return "#%02x%02x%02x" % (g, g, g)
 
 
+TAB_WIDTH = 8     # a TAB advances to the next multiple of this many columns, as in MUSHclient
+
 MXP_NAMED = {
     "black": 0, "red": 1, "green": 2, "yellow": 3, "blue": 4, "magenta": 5, "cyan": 6,
     "white": 7, "gray": 8, "grey": 8,
@@ -522,6 +524,7 @@ class Terminal:
         self._refused_do = set()   # DOs we have already answered WONT
         self._mxp_replies = 0
         self._csi_skip = False     # discarding the tail of an over-long CSI sequence
+        self._col = 0              # column within the current output line (for tab expansion)
         self._events = []
 
     # ---- public ------------------------------------------------------
@@ -647,8 +650,30 @@ class Terminal:
             self._pending += chunk
             self._process()
 
+    def _expand_tabs(self, s):
+        """Replace TABs with spaces up to the next multiple of TAB_WIDTH columns. Done here, not
+        by the text widget: Tk's default tab stops only advance one column once the text is past
+        the first stop, which wrecks any table the game lays out with tabs."""
+        if "\t" not in s and "\n" not in s:
+            self._col += len(s)
+            return s
+        out = []
+        for ch in s:
+            if ch == "\n":
+                self._col = 0
+                out.append(ch)
+            elif ch == "\t":
+                n = TAB_WIDTH - self._col % TAB_WIDTH
+                out.append(" " * n)
+                self._col += n
+            else:
+                out.append(ch)
+                self._col += 1
+        return "".join(out)
+
     def _emit(self, s):
         if s:
+            s = self._expand_tabs(s)
             ev = self._events
             key = self.style.key()
             if ev and ev[-1][0] == "text" and ev[-1][2] == key:
@@ -858,7 +883,7 @@ def clean_settings(cfg):
                              if isinstance(so, dict) else {})
     for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True),
                        ("auto_reconnect", False), ("statbar", True), ("fullscreen", False),
-                       ("dos_autofit", True), ("dos_flourish", True)):
+                       ("dos_autofit", True), ("dos_flourish", True), ("dos_fit", True)):
         if not isinstance(cfg.get(k), bool):
             cfg[k] = default
     al = cfg.get("aliases")
@@ -1096,6 +1121,7 @@ class App:
         self.skins.update(load_user_skins())
         self.dos = self.cfg["ui_mode"] == "dos"      # the DOS terminal look is active
         self.dosbar = None                            # DOS status bar (built with the widgets)
+        self._dosscroll = None                        # the DOS-style scrollbar (built with the widgets)
         self._overlay = None                          # the open DOS menu/dialog, if any
         self._colors_snapshot = None                  # skin state when the DOS colour screens opened
         self._dos_job = None                          # 1-second status refresh while in the DOS look
@@ -1131,7 +1157,8 @@ class App:
                "auto_reconnect": False, "statbar": True, "font_family": None,
                "skin": DEFAULT_SKIN, "skin_overrides": {},
                "ui_mode": "normal", "dos_skin": DEFAULT_DOS_SKIN, "fullscreen": False,
-               "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0}
+               "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0,
+               "dos_fit": True}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -1190,6 +1217,19 @@ class App:
         self.f_bold = tkfont.Font(family=fam, size=size, weight="bold")
         self.f_ital = tkfont.Font(family=fam, size=size, slant="italic")
         self.f_bi = tkfont.Font(family=fam, size=size, weight="bold", slant="italic")
+        self._sync_variants()
+
+    def _sync_variants(self):
+        """Keep bold/italic on the same character grid as normal text. If a styled variant has a
+        different advance width, drop the offending attribute (colour still shows the emphasis)."""
+        base = self.f_norm.measure("0")
+        for f, want in ((self.f_bold, ("bold", "roman")), (self.f_ital, ("normal", "italic")),
+                        (self.f_bi, ("bold", "italic"))):
+            f.configure(weight=want[0], slant=want[1])
+            if f.measure("0") != base:
+                f.configure(weight="normal")
+                if f.measure("0") != base:
+                    f.configure(slant="roman")
 
     def _reg(self, widget, role):
         """Register a widget so apply_theme() can restyle it."""
@@ -1260,6 +1300,7 @@ class App:
                                      padx=8, pady=4, cursor="arrow"), "text")
         sb = self._sb = self._reg(tk.Scrollbar(mid, command=self.out.yview), "scroll")
         self.out.configure(yscrollcommand=sb.set)
+        self._dosscroll = dosui.DosScrollbar(mid, self.out.yview, dosui.dos_colors(self.theme), self.f_norm)
         self.out.bind("<KeyPress>", self._out_key)
         self.out.bind("<Control-MouseWheel>", self._zoom_wheel)
 
@@ -1417,6 +1458,7 @@ class App:
             self.font_family = fam
             for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
                 f.configure(family=fam)
+            self._sync_variants()
         self.statbar.set_theme(th)
         self._restyle_dosbar()
 
@@ -1431,13 +1473,16 @@ class App:
         self._mid.pack_forget()
         self._mid.place_forget()
         self._sb.pack_forget()
+        self._dosscroll.pack_forget()
         self.out.pack_forget()
         if self.dos:
             self.root.config(menu="")                              # no menu bar
             self._holder.pack(fill="both", expand=True)
             self._mid.place(relx=0.5, rely=0.0, anchor="n", relheight=1.0)
-            self.out.configure(width=int(self.cfg["dos_cols"]))
-            self.out.pack(fill="both", expand=True)
+            self.out.configure(yscrollcommand=self._dosscroll.set)
+            self._dosscroll.pack(side="right", fill="y")           # one-cell text-mode scrollbar
+            self.out.configure(width=self._dos_cols_now())
+            self.out.pack(side="left", fill="both", expand=True)
             self.input.pack(fill="x", ipady=2)
             if self.dosbar is not None:
                 self.dosbar.pack(fill="x")
@@ -1446,6 +1491,7 @@ class App:
             self._top.pack(fill="x")
             self._holder.pack(fill="both", expand=True)
             self._mid.pack(fill="both", expand=True)
+            self.out.configure(yscrollcommand=self._sb.set)
             self._sb.pack(side="right", fill="y")
             self.out.configure(width=40)
             self.out.pack(side="left", fill="both", expand=True)
@@ -1469,6 +1515,8 @@ class App:
                 self.dosbar.restyle(self._dc(), self.f_norm, self.f_bold)
             except tk.TclError:
                 pass
+        if self._dosscroll is not None:
+            self._dosscroll.restyle(self._dc(), self.f_norm)
 
     def _start_dos_tick(self):
         if self._dos_job is None:
@@ -1630,7 +1678,7 @@ class App:
             getattr(self, var).set(new)
         if key == "auto_reconnect":
             self._auto_toggled()
-        elif key == "dos_autofit" and new:
+        elif key in ("dos_autofit", "dos_fit"):
             self._fit_font()
         self._save_settings()
         self.root.after_idle(self.dos_options_menu)     # stay in the menu to flip several
@@ -1640,7 +1688,9 @@ class App:
             return None
         rows = [("Verify TLS certificate", "V", "verify"), ("Beep on server bell", "B", "bell"),
                 ("Send keep-alive", "K", "keepalive"), ("Auto-reconnect", "R", "auto_reconnect"),
-                ("Auto-fit font to screen", "A", "dos_autofit"), ("Dial / connect messages", "D", "dos_flourish")]
+                ("Auto-fit font to screen", "A", "dos_autofit"),
+                ("Screen width follows window", "W", "dos_fit"),
+                ("Dial / connect messages", "D", "dos_flourish")]
         items = [{"label": lbl, "hotkey": hk, "checked": bool(self.cfg[k]),
                   "action": (lambda k=k: self._toggle_option(k))} for lbl, hk, k in rows]
         return self._dos_menu("Options", items)
@@ -1828,12 +1878,20 @@ class App:
         cur = self.font_family
         head = [{"label": "Size: %d..." % int(self.f_norm.cget("size")), "hotkey": "Z",
                  "action": self.dos_font_size_dialog},
+                {"label": "Auto-fit size", "hotkey": "A", "checked": bool(self.cfg["dos_autofit"]),
+                 "action": self.dos_toggle_autofit},
                 {"label": "Use the skin's font", "hotkey": "K", "action": self.dos_font_skin},
                 None]
         items = head + [{"label": f, "checked": f == cur, "action": (lambda f=f: self.apply_font(f))}
                         for f in fams]
         start = len(head) + (fams.index(cur) if cur in fams else 0)
         return self._dos_menu("Font", items, initial=start)
+
+    def dos_toggle_autofit(self):
+        self.cfg["dos_autofit"] = not self.cfg["dos_autofit"]
+        self._save_settings()
+        self._fit_font()
+        self._reopen(self.dos_font_menu)
 
     def dos_font_skin(self):
         self.apply_font(use_skin_font=True)
@@ -1853,7 +1911,7 @@ class App:
             n = max(MIN_FONT, min(MAX_FONT, n))
             if self.cfg["dos_autofit"]:
                 self.cfg["dos_autofit"] = False
-                self.system("Font auto-fit is off (you set a size). Re-enable it under Options.")
+                self.system("Font auto-fit is off (you set a size). Turn it back on with F7 > Auto-fit size.")
             self.cfg["dos_font_size"] = n
             self._set_font_size(n)
             self._save_settings()
@@ -1943,33 +2001,58 @@ class App:
         """Apply a size to the display fonts without changing the saved preference."""
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
             f.configure(size=size)
+        self._sync_variants()
         self._restyle_dosbar()
+        self._update_dos_cols()
 
-    def _fit_size(self, cols, avail_w, avail_h):
-        """Largest font size at which `cols` columns fit the width and 25 rows (as in 80x25 DOS) fit the height."""
+    def _dos_cols_now(self):
+        """Columns for the DOS screen: the window width in character cells, less a one-cell
+        border on each side and the one-cell scrollbar (or the fixed width if fitting is off)."""
+        fixed = int(self.cfg["dos_cols"])
+        if not self.cfg["dos_fit"]:
+            return fixed
+        w = self._holder.winfo_width()
+        if w < 100:
+            return fixed
+        cw = max(1, self.f_norm.measure("0"))
+        return max(40, int((w - 3 * cw - 16) / cw))        # 3 cells = 2 borders + scrollbar; 16px = text padding
+
+    def _update_dos_cols(self):
+        if not self.dos:
+            return
+        n = self._dos_cols_now()
+        if int(self.out.cget("width")) != n:
+            self.out.configure(width=n)
+
+    def _fit_size(self, min_cols, avail_w, avail_h):
+        """Largest font size at which at least `min_cols` columns (plus borders and scrollbar)
+        fit the width and 25 rows (as in 80x25 DOS) fit the height."""
         if self._measure_font is None:
             self._measure_font = tkfont.Font(family=self.font_family, size=10)
         f = self._measure_font
         for size in range(MAX_FONT, MIN_FONT - 1, -1):
             f.configure(family=self.font_family, size=size)
-            if f.measure("0") * cols + 20 <= avail_w and f.metrics("linespace") * 25 <= avail_h:
+            if f.measure("0") * (min_cols + 3) + 16 <= avail_w and f.metrics("linespace") * 25 <= avail_h:
                 return size
         return MIN_FONT
 
     def _fit_font(self):
-        """DOS look: size the font so the whole N-column screen fills the window."""
+        """DOS look: pick the font size (if auto-fit is on), then set the column count so the
+        screen fills the window width with a one-cell border."""
         self._fit_job = None
-        if not (self.dos and self.cfg["dos_autofit"]):
+        if not self.dos:
             return
-        w, h = self._holder.winfo_width(), self._holder.winfo_height()
-        if w < 100 or h < 60:
-            return
-        size = self._fit_size(int(self.cfg["dos_cols"]), w, h)
-        if size != self.f_norm.cget("size"):
-            self._set_font_size(size)
+        if self.cfg["dos_autofit"]:
+            w, h = self._holder.winfo_width(), self._holder.winfo_height()
+            if w >= 100 and h >= 60:
+                min_cols = 80 if self.cfg["dos_fit"] else int(self.cfg["dos_cols"])
+                size = self._fit_size(min_cols, w, h)
+                if size != self.f_norm.cget("size"):
+                    self._set_font_size(size)
+        self._update_dos_cols()
 
     def _on_configure(self, e):
-        if e.widget is self.root and self.dos and self.cfg["dos_autofit"]:
+        if e.widget is self.root and self.dos:
             if self._fit_job is not None:
                 try:
                     self.root.after_cancel(self._fit_job)
@@ -2482,6 +2565,7 @@ class App:
         self.font_family = self._pick_family()
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
             f.configure(family=self.font_family, size=self.cfg["font_size"])
+        self._sync_variants()
         self.statbar.refresh()
         self._restyle_dosbar()
         self._save_settings()
@@ -2491,7 +2575,7 @@ class App:
         if self.dos:
             if self.cfg["dos_autofit"]:
                 self.cfg["dos_autofit"] = False  # the user is choosing a size now
-                self.system("Font auto-fit is off (zoom keys set the size). Re-enable it from the DOS menu.")
+                self.system("Font auto-fit is off (zoom keys set the size). Turn it back on with F7 > Auto-fit size.")
             n = max(MIN_FONT, min(MAX_FONT, int(self.f_norm.cget("size")) + d))
             self.cfg["dos_font_size"] = n        # the DOS look remembers its own size
             self._set_font_size(n)
