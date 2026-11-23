@@ -122,6 +122,22 @@ assert v["pane"] == "OOC" and v["pane_gag"] is True
 t, _ = sc.trigger_from_values(v)
 assert t["actions"] == [{"type": "route", "pane": "OOC", "gag": True}]
 
+# the DOS frame: neighbouring areas share a line, with proper joins
+import dosui
+g = dosui.box_cells(10, 5, [(0, 0, 10, 5), (5, 0, 10, 5)])
+assert g[0] == "╔" + "═" * 4 + "╦" + "═" * 3 + "╗", g[0]
+assert g[4] == "╚" + "═" * 4 + "╩" + "═" * 3 + "╝" and g[2][5] == "║"
+assert dosui.box_cells(5, 5, [(0, 0, 1, 1), "junk", (3, 3, 99, 99)])[0] == " " * 5
+assert dosui.box_cells(-3, "x", None) == []
+app.set_dos_mode(True); pump(0.5)
+app._panes_save(["top 4 OOC", "right 36 Tells"]); pump(0.5)
+assert app._framecv is not None and app._framecv.winfo_ismapped()
+mx, my, mw, mh = app._pane_geom["main"]
+cwid = app.f_norm.measure("0")
+assert mw // cwid >= 80, (mw, cwid)
+assert app.dosbar.top.winfo_ismapped() and app.dosbar.top.winfo_y() < app._holder.winfo_y()
+app.set_dos_mode(False); pump(0.4)
+
 # removing every pane restores the plain arrangement
 for d in list(app.cfg["panes"]):
     app.pane_delete(d["name"])

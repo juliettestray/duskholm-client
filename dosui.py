@@ -2127,8 +2127,9 @@ class DosStatusBar(tk.Frame):
         self._rows = []
         self._spec = [None, None]       # (left_runs, right_runs) per row
         self.plain = ['', '']           # last rendered plain text per row
-        for _ in range(2):
-            cv = tk.Canvas(self, bd=0, highlightthickness=0)
+        self.top = tk.Frame(parent, bd=0, highlightthickness=0, padx=0, pady=0)   # row 0: the hint row
+        for n in range(2):
+            cv = tk.Canvas(self.top if n == 0 else self, bd=0, highlightthickness=0)
             cv.pack(side='top', fill='x')
             cv.bind('<Configure>', lambda e: self._render())
             cv.bind('<Map>', lambda e: self._render())
@@ -2150,7 +2151,8 @@ class DosStatusBar(tk.Frame):
         c = self.colors
         for cv, bg in zip(self._rows, (c['dos_bar_bg'], c['dos_bar2_bg'])):
             cv.configure(bg=bg, height=self.lh)
-        self.configure(bg=c['dos_bar_bg'])
+        self.configure(bg=c['dos_bar2_bg'])
+        self.top.configure(bg=c['dos_bar_bg'])
 
     # -- content ------------------------------------------------------
     def _rebuild(self):
@@ -2214,6 +2216,20 @@ class DosStatusBar(tk.Frame):
                         cells[-1] = (ELLIPSIS, cells[-1][1], False)
             self.plain[n] = ''.join(ch for ch, _, _ in cells)
             cv.delete('all')
+            # shade/block characters (gauges) are drawn as filled cells: whatever font is in use,
+            # they then fill the whole cell and join up instead of leaving gaps
+            bg = str(cv.cget('bg'))
+            for k, (ch, col, bold) in enumerate(cells):
+                if ch == '│':                                   # the separator: a full-height line
+                    mid = k * self.cw + self.cw // 2
+                    cv.create_line(mid, 0, mid, self.lh, fill=col)
+                    cells[k] = (' ', col, bold)
+                    continue
+                part = _BLOCK_SHADES.get(ch)
+                if part is not None:
+                    cv.create_rectangle(k * self.cw, 0, (k + 1) * self.cw, self.lh,
+                                        fill=_blend(bg, col, part), outline='')
+                    cells[k] = (' ', col, bold)
             i = 0
             while i < len(cells):
                 j = i
@@ -2440,3 +2456,61 @@ class DosScrollbar(tk.Canvas):
         if e.widget is self:
             self._cancel_job()
 
+
+
+# --------------------------------------------------------------------------
+# box-drawing frame
+# --------------------------------------------------------------------------
+_BOX_UP, _BOX_DOWN, _BOX_LEFT, _BOX_RIGHT = 1, 2, 4, 8
+_BOX_CHARS = {
+    _BOX_UP | _BOX_DOWN: '\u2551', _BOX_LEFT | _BOX_RIGHT: '\u2550',
+    _BOX_DOWN | _BOX_RIGHT: '\u2554', _BOX_DOWN | _BOX_LEFT: '\u2557',
+    _BOX_UP | _BOX_RIGHT: '\u255a', _BOX_UP | _BOX_LEFT: '\u255d',
+    _BOX_UP | _BOX_DOWN | _BOX_RIGHT: '\u2560', _BOX_UP | _BOX_DOWN | _BOX_LEFT: '\u2563',
+    _BOX_DOWN | _BOX_LEFT | _BOX_RIGHT: '\u2566', _BOX_UP | _BOX_LEFT | _BOX_RIGHT: '\u2569',
+    _BOX_UP | _BOX_DOWN | _BOX_LEFT | _BOX_RIGHT: '\u256c',
+    _BOX_UP: '\u2551', _BOX_DOWN: '\u2551', _BOX_LEFT: '\u2550', _BOX_RIGHT: '\u2550',
+}
+
+
+def box_cells(cols, rows, rects):
+    """Double-line frame for a set of rectangles on a cell grid, as a list of `rows` strings of
+    `cols` characters. Each rectangle is (x0, y0, x1, y1) in cells, x1/y1 exclusive, and its
+    border is the outermost ring of cells inside it. Rectangles that share an edge share the
+    line, and the joins come out as proper T and cross pieces."""
+    try:
+        cols, rows = max(0, min(int(cols), 1000)), max(0, min(int(rows), 1000))
+    except Exception:
+        return []
+    bits = [[0] * cols for _ in range(rows)]
+    for r in list(rects or [])[:64]:
+        try:
+            x0, y0, x1, y1 = [int(v) for v in r]
+        except Exception:
+            continue
+        x0, y0, x1, y1 = max(0, x0), max(0, y0), min(cols, x1), min(rows, y1)
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            continue
+        for x in range(x0, x1):
+            m = (_BOX_LEFT if x > x0 else 0) | (_BOX_RIGHT if x < x1 - 1 else 0)
+            bits[y0][x] |= m
+            bits[y1 - 1][x] |= m
+        for y in range(y0, y1):
+            m = (_BOX_UP if y > y0 else 0) | (_BOX_DOWN if y < y1 - 1 else 0)
+            bits[y][x0] |= m
+            bits[y][x1 - 1] |= m
+    return [''.join(_BOX_CHARS.get(b, ' ') for b in row) for row in bits]
+
+
+# block/shade characters and how much of the foreground they show (used for gauge bars)
+_BLOCK_SHADES = {'\u2588': 1.0, '\u2593': 0.75, '\u2592': 0.5, '\u2591': 0.25}
+
+
+def _blend(bg, fg, part):
+    """Colour `part` of the way from bg to fg (both '#rrggbb'; anything else gives fg)."""
+    try:
+        a = [int(bg[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(fg[i:i + 2], 16) for i in (1, 3, 5)]
+        return '#%02x%02x%02x' % tuple(int(round(x + (y - x) * part)) for x, y in zip(a, b))
+    except Exception:
+        return fg

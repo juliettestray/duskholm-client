@@ -1435,6 +1435,7 @@ class App:
         self._region_active = {}                      # region id -> active pane key
         self._panes_active = False                    # a pane layout is in force
         self._pane_geom = None                        # last compute_layout() result
+        self._framecv = None                          # DOS look: the box-drawn frame behind the panes
         self._layout_job = None
         self._dos_job = None                          # 1-second status refresh while in the DOS look
         self._online_since = 0.0
@@ -1813,6 +1814,8 @@ class App:
             self._font_changed()
         self.statbar.set_theme(th)
         self._restyle_dosbar()
+        if self.dos and self._panes_active:
+            self.schedule_layout(5)
 
     # ---- capture panes ---------------------------------------------------------------------
     def _find_pane_def(self, key):
@@ -1985,7 +1988,7 @@ class App:
             show = info is not None and self._active_pane_key(reg) == key and (first > 0.0 or last < 1.0)
             if show:
                 bx, by, bw, bh = info["body"]
-                pane["dsb"].place(x=bx + bw - self.f_norm.measure("0"), y=by, height=bh)
+                pane["dsb"].place(x=bx + bw, y=by, height=bh)
                 pane["dsb"].lift()
             else:
                 pane["dsb"].place_forget()
@@ -2019,9 +2022,9 @@ class App:
         rows = {"top": 0, "bottom": 0}
         for r in self.cfg["layout"]["regions"]:
             if r["side"] in cols:
-                cols[r["side"]] = max(cols[r["side"]], r["size"] + 1)
+                cols[r["side"]] = max(cols[r["side"]], r["size"] + (3 if self.dos else 1))
             else:
-                rows[r["side"]] = max(rows[r["side"]], r["size"] + 2)
+                rows[r["side"]] = max(rows[r["side"]], r["size"] + (4 if self.dos else 2))
         return sum(cols.values()), sum(rows.values())
 
     def layout_panes(self):
@@ -2041,18 +2044,16 @@ class App:
         if W < 100 or H < 60:
             return
         cw, lh = self._pane_cell()
-        gap = (cw // 2) if self.dos else 4
-        pad = 16 + (2 * cw if self.dos else 0)
-        res = layout.compute_layout(self.cfg["layout"], W, H, cw, lh, header_h=lh + 4, gap=gap, pad_x=pad)
+        if self.dos:
+            res = self._dos_geometry(W, H, cw, lh)
+        else:
+            res = layout.compute_layout(self.cfg["layout"], W, H, cw, lh, header_h=lh + 4, gap=4, pad_x=16)
         first_time = not self._panes_active
         self._panes_active, self._pane_geom = True, res
         mx, my, mw, mh = res["main"]
         self._mid.pack_forget()
         self._mid.place_forget()
-        if self.dos:
-            self._mid.place(x=mx + cw, y=my, width=max(1, mw - 2 * cw), height=mh)
-        else:
-            self._mid.place(x=mx, y=my, width=mw, height=mh)
+        self._mid.place(x=mx, y=my, width=mw, height=mh)
         if first_time:
             self.out.pack_forget()
             self._sb.pack_forget()
@@ -2068,6 +2069,8 @@ class App:
         shown = res["regions"]
         keep_frames = set()
         sbw = max(14, int(self._sb.winfo_reqwidth() or 17))
+        if not self.dos and self._framecv is not None:
+            self._framecv.place_forget()
         for reg in regions:
             info = shown.get(reg["id"])
             ui = self._region_ui.get(reg["id"])
@@ -2097,7 +2100,7 @@ class App:
                 continue
             bx, by, bw, bh = info["body"]
             if self.dos:
-                pane["text"].place(x=bx, y=by, width=bw, height=bh)
+                pane["text"].place(x=bx, y=by, width=max(1, bw), height=bh)
                 pane["sb"].place_forget()
             else:
                 pane["text"].place(x=bx, y=by, width=max(1, bw - sbw), height=bh)
@@ -2113,7 +2116,52 @@ class App:
             self._pane_scroll_visibility(key)
         self._style_region_ui()
 
+    def _dos_geometry(self, W, H, cw, lh):
+        """DOS look: whole-cell geometry with a double-line frame drawn behind it. Neighbouring
+        areas share one line, so the screen reads as a single boxed page. Returns a compute_layout
+        style result whose rectangles are the inside (text) areas."""
+        C, R = max(1, W // cw), max(1, H // lh)
+        res = layout.compute_layout(self.cfg["layout"], C * cw, R * lh, cw, lh, header_h=3 * lh, gap=0, pad_x=2 * cw)
+
+        def cells(rect):
+            x, y, w, h = rect
+            return [int(round(x / cw)), int(round(y / lh)), int(round((x + w) / cw)), int(round((y + h) / lh))]
+
+        def grow(c):                                       # overlap the neighbour's edge by one cell
+            return [c[0] - 1 if c[0] > 0 else 0, c[1] - 1 if c[1] > 0 else 0, min(c[2], C), min(c[3], R)]
+
+        main = grow(cells(res["main"]))
+        regs = {rid: grow(cells(info["rect"])) for rid, info in res["regions"].items()}
+
+        def inner(c, header=False):
+            x0, y0, x1, y1 = c[0] + 1, c[1] + 1, c[2] - 1, c[3] - 1
+            if header:
+                return ((x0 * cw, y0 * lh, max(0, x1 - x0) * cw, lh),
+                        (x0 * cw, (y0 + 1) * lh, max(0, x1 - x0) * cw, max(0, y1 - y0 - 1) * lh))
+            return (x0 * cw, y0 * lh, max(0, x1 - x0) * cw, max(0, y1 - y0) * lh)
+
+        out = {"main": inner(main), "regions": {}, "hidden": res["hidden"], "notes": res["notes"]}
+        for rid, c in regs.items():
+            hd, bd = inner(c, True)
+            out["regions"][rid] = {"rect": (c[0] * cw, c[1] * lh, (c[2] - c[0]) * cw, (c[3] - c[1]) * lh),
+                                   "header": hd, "body": bd}
+        if self._framecv is None:
+            self._framecv = tk.Canvas(self._holder, bd=0, highlightthickness=0)
+        fc = self._framecv
+        th = self.theme
+        fc.configure(bg=th["bg"])
+        fc.place(x=0, y=0, width=W, height=H)
+        tk.Misc.lower(fc)
+        fc.delete("all")
+        colour = ensure_contrast(self._dc()["dos_menu_fg"], th["bg"], 4.5)
+        for r, row in enumerate(dosui.box_cells(C, R, [main] + list(regs.values()))):
+            for m in re.finditer(r"[^ ]+", row):
+                fc.create_text(m.start() * cw, r * lh, text=m.group(), anchor="nw", fill=colour, font=self.f_norm)
+        return out
+
     def _hide_pane_widgets(self):
+        if self._framecv is not None:
+            self._framecv.place_forget()
         for pane in self._panes.values():
             for w in (pane["text"], pane["sb"], pane["dsb"]):
                 w.place_forget()
@@ -2181,7 +2229,8 @@ class App:
         """Arrange the window for the current look. Normal: toolbar, text, stat bar, input.
         DOS: no toolbar/menu bar/scrollbar; a centred N-column screen on a coloured border,
         the input line and the DOS status bar underneath."""
-        for w in (self._top, self._holder, self.statbar, self.input, self.dosbar):
+        for w in (self._top, self._holder, self.statbar, self.input, self.dosbar,
+                  getattr(self.dosbar, "top", None)):
             if w is not None:
                 w.pack_forget()
         self._mid.pack_forget()
@@ -2191,6 +2240,8 @@ class App:
         self.out.pack_forget()
         if self.dos:
             self.root.config(menu="")                              # no menu bar
+            if self.dosbar is not None:
+                self.dosbar.top.pack(fill="x")                     # the hotkey row sits on top, like a menu bar
             self._holder.pack(fill="both", expand=True)
             self._mid.place(relx=0.5, rely=0.0, anchor="n", relheight=1.0)
             self.out.configure(yscrollcommand=self._on_dos_yscroll)
@@ -3671,7 +3722,7 @@ class App:
             if scrollable and not self._dosscroll.winfo_ismapped():
                 if self._panes_active and self._pane_geom is not None:
                     mx, my, mw, mh = self._pane_geom["main"]
-                    self._dosscroll.place(x=mx + mw - self.f_norm.measure("0"), y=my, height=mh)
+                    self._dosscroll.place(x=mx + mw, y=my, height=mh)
                 else:
                     self._dosscroll.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
                 self._dosscroll.lift()
@@ -3702,7 +3753,7 @@ class App:
             return fixed
         w = self._holder.winfo_width()
         if self._panes_active and self._pane_geom is not None:
-            w = self._pane_geom["main"][2]                 # beside docked panes the main area is narrower
+            return max(40, int(self._pane_geom["main"][2] / max(1, self.f_norm.measure("0"))))
         if w < 100:
             return fixed
         cw = max(1, self.f_norm.measure("0"))

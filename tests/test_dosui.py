@@ -498,12 +498,12 @@ def _():
     host = tk.Frame(top, width=700, height=100)
     host.pack(side='bottom', fill='x')
     sb = dosui.DosStatusBar(host, C, FONT)
-    sb.pack(fill='x')
+    sb.top.pack(fill='x'); sb.pack(fill='x')
     sb.set_hints([('F1', 'Help'), ('F2', 'Connect'), ('F10', 'Menu')], right='ANSI')
     sb.set_segments([('Connected', 'good'), ('weird', 'nonsense'), ('x', 'dim'), ('k', 'key'),
                      ('w', 'warn'), ('b', 'bad')], right='TLS')
     upd()
-    assert sb.winfo_height() == 2 * sb.lh, (sb.winfo_height(), sb.lh)
+    assert (sb.top.winfo_height() + sb.winfo_height()) == 2 * sb.lh, ((sb.top.winfo_height() + sb.winfo_height()), sb.lh)
     assert sb.winfo_width() == host.winfo_width() or sb.winfo_width() >= 600
     assert sb.plain[0].startswith(' F1 Help  F2 Connect  F10 Menu') and sb.plain[0].rstrip().endswith('ANSI')
     assert sb.plain[1].startswith(' Connected │ weird │ x │ k │ w │ b') and sb.plain[1].rstrip().endswith('TLS')
@@ -516,14 +516,14 @@ def _():
         host.pack_propagate(False)
         host.pack(side='bottom', anchor='w')
         upd()
-        sb.pack_forget(); sb.pack(fill='x')
+        sb.top.pack_forget(); sb.pack_forget(); sb.top.pack(fill='x'); sb.pack(fill='x')
         sb.set_hints([('F1', 'Help')] * 8, right='RIGHT TAIL')
         sb.set_segments([('Connected to a very long host name', 'good')] * 5, right='tail')
         upd()
         for n in (0, 1):
             cols = max(0, sb._rows[n].winfo_width() // sb.cw)
             assert len(sb.plain[n]) <= max(cols, 0), (wpx, n, len(sb.plain[n]), cols)
-        assert sb.winfo_height() == 2 * sb.lh
+        assert (sb.top.winfo_height() + sb.winfo_height()) == 2 * sb.lh
     # garbage
     sb.set_hints(None); sb.set_hints([None, 5, ('x',), ('a', 'b', 'c')]); sb.set_hints([])
     sb.set_segments(None); sb.set_segments([None, 5, ('x',), ('a', 'b', 'c'), ('t', None)])
@@ -531,14 +531,14 @@ def _():
     # restyle changes size
     host.pack_forget(); host.configure(width=700); host.pack(side='bottom', fill='x'); upd()
     sb.set_hints([('F1', 'Help')])
-    h1 = sb.winfo_height()
+    h1 = (sb.top.winfo_height() + sb.winfo_height())
     sb.restyle(dosui.dos_colors({'dos_bar_bg': '#303030'}), FONT_BIG)
     upd()
-    assert sb.winfo_height() == 2 * sb.lh and sb.winfo_height() > h1
+    assert (sb.top.winfo_height() + sb.winfo_height()) == 2 * sb.lh and (sb.top.winfo_height() + sb.winfo_height()) > h1
     assert str(sb._rows[0].cget('bg')) == '#303030'
     sb.restyle(C, FONT_SMALL, FONT_SMALL)
     upd()
-    assert sb.winfo_height() == 2 * sb.lh
+    assert (sb.top.winfo_height() + sb.winfo_height()) == 2 * sb.lh
     sb.destroy(); host.destroy(); top.destroy()
 
 
