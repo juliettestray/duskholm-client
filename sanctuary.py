@@ -3096,10 +3096,10 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             for i in range(half):
                 a = "%-11s %-24s" % left[i] if i < len(left) else ""
                 b = "%-11s %s" % right[i] if i < len(right) else ""
-                rows.append((a + " " + b).rstrip())
+                rows.append(dosui.PRE + (a + " " + b).rstrip())
             text, buttons = "\n".join(rows), [("Commands", "more"), ("Close", "close")]
         else:
-            text = "\n".join("%-22s %s" % kv for kv in self.HELP_COMMANDS)
+            text = "\n".join(dosui.PRE + "%-22s %s" % kv for kv in self.HELP_COMMANDS)
             buttons = [("Keys", "more"), ("Close", "close")]
 
         def result(res, _v):

@@ -111,6 +111,10 @@ def run_one(path, desktop):
 
 
 def main(argv):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")      # failure text can hold box characters
+    except (AttributeError, ValueError):
+        pass
     here = "--here" in argv
     names = [a for a in argv if not a.startswith("--")]
     files = sorted(glob.glob(os.path.join(TESTS, "test_*.py")))

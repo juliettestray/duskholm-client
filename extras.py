@@ -439,13 +439,13 @@ class ExtrasMixin:
         self.root.after_idle(self.input.focus_set)
 
     # ---- moon --------------------------------------------------------------------------
-    def moon_lines(self, ts=None):
+    def moon_lines(self, ts=None, pre=False):
         if moon is None:
             return ["The moon module is missing."]
         ts = time.time() if ts is None else ts
         d = moon.describe(ts)
         lines = ["The moon is %s." % d["name"], ""]
-        lines += moon.art(d["age"], radius=5, solid=bool(self.dos))
+        lines += [(dosui.PRE + r) if pre else r for r in moon.art(d["age"], radius=5, solid=bool(self.dos))]
         lines += ["", "%d%% lit, %.1f days old" % (round(d["lit"] * 100), d["age"])]
         if d["full_night"]:
             lines.append("Tonight is the full-moon night.")
@@ -454,7 +454,7 @@ class ExtrasMixin:
         return lines
 
     def open_moon(self):
-        text = "\n".join(self.moon_lines())
+        text = "\n".join(self.moon_lines(pre=self.dos))
         if self.dos:
             if self._overlay_open():
                 return None

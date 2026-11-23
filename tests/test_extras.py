@@ -142,7 +142,7 @@ t = app.open_about(); pump(0.2); assert t.winfo_exists(); t.destroy()
 app.set_dos_mode(True); pump(0.4)
 a = app.open_about(); pump(0.3); assert isinstance(a, dosui.DosDialog) and app._overlay_open()
 app.dos_close_overlay(); pump(0.2)
-assert ("F12", "About") in app.dosbar._hints[0], "the hint bar lists F12"
+assert any(tuple(h[:2]) == ("F12", "About") for h in app.dosbar._hints[0]), "the hint bar lists F12"
 app.set_dos_mode(False); pump(0.3)
 app.root.focus_force(); pump(0.2)
 shown = []

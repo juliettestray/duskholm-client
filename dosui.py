@@ -820,7 +820,7 @@ class DosDialog(_DosBox):
         msg_lines_nat = max([len(l) for l in paras if not _is_columns(l)] or [0])
         need.append(min(msg_lines_nat + 4, 60))
         # lines laid out in columns (two or more spaces inside) are never wrapped: the box grows to hold them
-        need.append(max([len(l.rstrip()) for l in paras if _is_columns(l)] or [0]) + 4
+        need.append(max([len(l[1:].rstrip()) for l in paras if _is_columns(l)] or [0]) + 4
                     if any(map(_is_columns, paras)) else 0)
         if self._width:
             try:
@@ -836,7 +836,7 @@ class DosDialog(_DosBox):
         if self._message:
             for para in self._message.split('\n'):
                 if _is_columns(para):                      # columns: never wrapped; cut cleanly if still too long
-                    lines.append(_trunc(para.rstrip(), wrap_w))
+                    lines.append(_trunc(para[1:].rstrip(), wrap_w))
                 else:
                     lines.extend(textwrap.wrap(para, wrap_w, break_long_words=True) or [''])
         self._msg_lines = lines
@@ -2568,6 +2568,9 @@ def _blend(bg, fg, part):
         return fg
 
 
+PRE = '\x01'          # a message line starting with this is laid out by hand (columns, pictures)
+
+
 def _is_columns(line):
-    """A line laid out in columns (two or more spaces inside some text): it must stay as written."""
-    return '  ' in line.strip()
+    """A hand-laid-out line: it is never re-wrapped, and is cut cleanly if it cannot fit."""
+    return line.startswith(PRE)
