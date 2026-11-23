@@ -49,11 +49,15 @@ GPL-3.0, see [LICENSE](LICENSE).
 ## Tests
 
 ```
-python tests/test_client.py
+python tests/test_client.py       # parser assertions, then the GUI against a fake server
+python tests/test_hardening.py    # outgoing cleanup, passwords, cancel, stale events, settings
+python tests/test_fuzz.py         # 41 adversarial parser checks (~10 s)
+python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 
-Runs protocol assertions on the telnet/ANSI/MXP parser, then drives the GUI
-against a local fake server (it opens a Tk window briefly).
+The Tk-based tests open a window briefly. `test_fuzz.py` checks that any chunking of a
+stream parses identically, that malformed input never raises, that buffers stay bounded
+and parsing stays linear, and that negotiation can never produce a reply storm.
 
 ## Local test server
 

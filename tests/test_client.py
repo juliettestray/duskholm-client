@@ -56,9 +56,14 @@ e = t.feed(b"[10hp] " + bytes([IAC, GA]))
 assert ("prompt",) in e
 assert ("bell",) in t.feed(b"ding\x07")
 
-# --- repeated WILL MXP does not loop
-t = Terminal(); t.feed(bytes([IAC, WILL, 91]))
-assert sends(t.feed(bytes([IAC, WILL, 91]))) == []
+# --- repeated WILL MXP is re-answered while MXP is still off (server may re-offer after a
+# restart), but only a few times, so it can never become a reply loop
+t = Terminal(); n = 0
+for _ in range(50):
+    n += len(sends(t.feed(bytes([IAC, WILL, 91]))))
+assert n == 3, n
+t.feed(bytes([IAC, SB, 91, IAC, SE]))
+assert t.mxp and sends(t.feed(bytes([IAC, WILL, 91]))) == []     # once on, repeats are ignored
 print("protocol tests OK")
 
 # ======================= GUI end-to-end ============================

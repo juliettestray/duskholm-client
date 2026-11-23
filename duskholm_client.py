@@ -122,6 +122,38 @@ def sanitize_outgoing(line):
 
 
 ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "quot": '"', "apos": "'", "nbsp": " "}
+ENTITY_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#")
+CSI_PARAM = frozenset("0123456789;:?")
+CSI_MAX = 64       # longest CSI parameter list we parse; longer ones are discarded
+MAX_TAG = 512      # longest MXP tag body; a '<' with no '>' inside this window is literal
+MAX_SB = 4096      # longest telnet subnegotiation we buffer
+
+
+def entity_text(name):
+    """Text for an MXP entity name (without & and ;), or None if it isn't one we know.
+    Numeric forms are ASCII-only, bounded, and never yield control characters or surrogates."""
+    if name in ENTITIES:
+        return ENTITIES[name]
+    if name[:1] != "#":
+        return None
+    body = name[1:]
+    try:
+        if body[:1] in ("x", "X") and len(body) > 1 and len(body) <= 7 and all(
+                ch in "0123456789abcdefABCDEF" for ch in body[1:]):
+            cp = int(body[1:], 16)
+        elif body and len(body) <= 7 and all(ch in "0123456789" for ch in body):
+            cp = int(body)
+        else:
+            return None
+    except ValueError:
+        return None
+    if cp in (9, 10):
+        return chr(cp)
+    if cp < 0x20 or 0x7F <= cp <= 0x9F:
+        return ""                                  # control characters are never shown
+    if cp > 0x10FFFF or 0xD800 <= cp <= 0xDFFF:
+        return "�"
+    return chr(cp)
 ATTR_RE = re.compile(r'([A-Za-z]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
 
 
@@ -156,7 +188,11 @@ class Terminal:
         self._sb = bytearray()
         self._text = bytearray()
         self._pending = ""
-        self._us = {}      # options we have agreed to, to avoid negotiation loops
+        self._us = {}              # options we have agreed to (SGA)
+        self._refused = set()      # unknown WILLs we have already answered DONT
+        self._refused_do = set()   # DOs we have already answered WONT
+        self._mxp_replies = 0
+        self._csi_skip = False     # discarding the tail of an over-long CSI sequence
         self._events = []
 
     # ---- public ------------------------------------------------------
@@ -189,11 +225,13 @@ class Terminal:
                 self._cmd = b
                 self._tstate = "opt"
             elif b == SB:
+                self._flush_text()      # text before the SB must be parsed in the old mode
                 self._sb = bytearray()
                 self._tstate = "sb"
             else:
                 if b == GA:
                     self._flush_text()
+                    self._drop_pending()   # a prompt is complete: nothing may stay withheld
                     self._events.append(("prompt",))
                 self._tstate = "data"
         elif st == "opt":
@@ -202,46 +240,73 @@ class Terminal:
         elif st == "sb":
             if b == IAC:
                 self._tstate = "sb_iac"
-            else:
+            elif len(self._sb) < MAX_SB:
                 self._sb.append(b)
+            else:
+                self._tstate = "data"   # runaway subnegotiation: give up, resume text
         elif st == "sb_iac":
             if b == SE:
                 if self._sb[:1] == bytes([OPT_MXP]) and self.want_mxp:
                     self.mxp = True
+                    self._mxp_replies = 0
                 self._tstate = "data"
             elif b == IAC:
-                self._sb.append(255)
-                self._tstate = "sb"
+                if len(self._sb) < MAX_SB:
+                    self._sb.append(255)
+                    self._tstate = "sb"
+                else:
+                    self._tstate = "data"
             else:
                 self._tstate = "data"
 
     def _negotiate(self, verb, opt):
+        """Answer only on a state change (RFC 1143 style), so a server repeating or
+        flooding negotiation can never make us reply in a loop."""
         self._flush_text()
         if verb == WILL:
             if opt == OPT_ECHO:
-                self.echo_off = True
-                self._events.append(("echo", False))
-                self._reply(DO, opt)
+                if not self.echo_off:
+                    self.echo_off = True
+                    self._events.append(("echo", False))
+                    self._reply(DO, opt)
             elif opt == OPT_MXP and self.want_mxp:
-                if not self._us.get(opt):
-                    self._us[opt] = True
+                # Re-answer if MXP is still off (e.g. the server re-offers after a restart),
+                # but never more than a few times without it being switched on.
+                if not self.mxp and self._mxp_replies < 3:
+                    self._mxp_replies += 1
                     self._reply(DO, opt)
             elif opt == OPT_SGA:
                 if not self._us.get(opt):
                     self._us[opt] = True
                     self._reply(DO, opt)
-            else:
+            elif opt not in self._refused:
+                self._refused.add(opt)
                 self._reply(DONT, opt)
         elif verb == WONT:
             if opt == OPT_ECHO:
-                self.echo_off = False
-                self._events.append(("echo", True))
-                self._reply(DONT, opt)
+                if self.echo_off:
+                    self.echo_off = False
+                    self._events.append(("echo", True))
+                    self._reply(DONT, opt)
             elif opt == OPT_MXP:
                 self.mxp = False
+                self._mxp_replies = 0
+            elif opt == OPT_SGA:
+                self._us.pop(opt, None)
+            self._refused.discard(opt)
         elif verb == DO:
-            self._reply(WONT, opt)
-        # DONT: nothing to undo, we never offer anything
+            if opt not in self._refused_do:
+                self._refused_do.add(opt)
+                self._reply(WONT, opt)
+        elif verb == DONT:
+            self._refused_do.discard(opt)
+
+    def _drop_pending(self):
+        """Release whatever text is being withheld waiting for more bytes. A held escape
+        sequence is discarded; a held '<' or '&' is shown as the literal text it was."""
+        p, self._pending = self._pending, ""
+        if p and p[0] != "\x1b":
+            self._emit("".join(ch for ch in p if ch >= " " or ch in "\n\t"))
 
     # ---- text layer --------------------------------------------------
     def _flush_text(self):
@@ -263,55 +328,84 @@ class Terminal:
                 ev.append(("text", s, key))
 
     def _process(self):
+        # Every decision below depends only on the bytes at and after the construct, never
+        # on how the stream was chunked, so any split of the input gives identical output.
+        # A construct that is still incomplete is left in self._pending; each one has a hard
+        # size limit, after which it is treated as plain text (or discarded) instead.
         s = self._pending
         i, n = 0, len(s)
         buf = []
         while i < n:
             c = s[i]
+            if self._csi_skip:                  # tail of an over-long CSI: drop up to the final byte
+                i += 1
+                if c not in CSI_PARAM:
+                    self._csi_skip = False
+                continue
             if c == "\x1b":
                 self._emit("".join(buf)); buf = []
                 if i + 1 >= n:
                     break
-                if s[i + 1] != "[":
-                    i += 2
-                    continue
-                j = i + 2
-                while j < n and (s[j].isdigit() or s[j] in ";:?"):
-                    j += 1
-                if j >= n:
-                    break  # incomplete CSI, wait for more
-                final = s[j]
-                if final == "m":
-                    self._sgr(s[i + 2:j])
-                # every other CSI (incl. MXP line modes ESC[6z) is dropped
-                i = j + 1
-            elif c == "<" and self.mxp:
-                end = s.find(">", i + 1)
-                if end < 0:
-                    if n - i < 600:
-                        self._emit("".join(buf)); buf = []
-                        break  # tag split across packets
-                    buf.append(c); i += 1
-                    continue
-                self._emit("".join(buf)); buf = []
-                self._mxp_tag(s[i + 1:end])
-                i = end + 1
-            elif c == "&" and self.mxp:
-                end = s.find(";", i + 1, i + 12)
-                if end < 0:
-                    if n - i < 12:
-                        self._emit("".join(buf)); buf = []
-                        break
-                    buf.append(c); i += 1
-                    continue
-                name = s[i + 1:end]
-                if name in ENTITIES:
-                    buf.append(ENTITIES[name])
-                elif name.startswith("#") and name[1:].isdigit():
-                    buf.append(chr(int(name[1:])) if int(name[1:]) < 0x110000 else "?")
+                nx = s[i + 1]
+                if nx == "[":
+                    j = i + 2
+                    lim = min(n, i + 2 + CSI_MAX)
+                    while j < lim and s[j] in CSI_PARAM:
+                        j += 1
+                    if j - (i + 2) >= CSI_MAX:   # absurdly long parameter list
+                        self._csi_skip = True
+                        i = j
+                        continue
+                    if j >= n:
+                        break                    # incomplete CSI, wait for more
+                    if s[j] == "m":
+                        self._sgr(s[i + 2:j])
+                    # every other CSI (incl. MXP line modes ESC[6z) is dropped
+                    i = j + 1
+                elif nx == "\x1b":
+                    i += 1                       # first ESC is stray; re-examine the second
+                elif "@" <= nx <= "_" or nx == "c":
+                    i += 2                       # two-byte escape, ignored
                 else:
-                    buf.append(s[i:end + 1])
-                i = end + 1
+                    i += 1                       # lone ESC: drop it, keep the next char
+            elif c == "<" and self.mxp:
+                if i + 1 >= n:
+                    self._emit("".join(buf)); buf = []
+                    break
+                nx = s[i + 1]
+                if not (("a" <= nx <= "z") or ("A" <= nx <= "Z") or nx in "/!?"):
+                    buf.append(c); i += 1        # '<' not starting a tag ("a < b")
+                    continue
+                wend = min(n, i + 1 + MAX_TAG)
+                end = s.find(">", i + 1, wend)
+                nl = s.find("\n", i + 1, wend if end < 0 else end)
+                if nl >= 0:
+                    buf.append(c); i += 1        # tags never span lines
+                elif end >= 0:
+                    self._emit("".join(buf)); buf = []
+                    self._mxp_tag(s[i + 1:end])
+                    i = end + 1
+                elif wend - (i + 1) >= MAX_TAG:
+                    buf.append(c); i += 1        # over-long: not a tag
+                else:
+                    self._emit("".join(buf)); buf = []
+                    break                        # tag split across packets
+            elif c == "&" and self.mxp:
+                j = i + 1
+                while j < n and j - (i + 1) < 11 and (s[j] in ENTITY_CHARS):
+                    j += 1
+                nlen = j - (i + 1)
+                if j >= n and nlen <= 10:
+                    self._emit("".join(buf)); buf = []
+                    break                        # entity split across packets
+                rep = None
+                if j < n and s[j] == ";" and 0 < nlen <= 10:
+                    rep = entity_text(s[i + 1:j])
+                if rep is None:
+                    buf.append(c); i += 1        # not an entity: literal '&'
+                else:
+                    buf.append(rep)
+                    i = j + 1
             elif c == "\a":
                 self._emit("".join(buf)); buf = []
                 self._events.append(("bell",))
@@ -328,8 +422,11 @@ class Terminal:
 
     def _sgr(self, params):
         st = self.style
-        parts = [p for p in re.split(r"[;:]", params)] if params else ["0"]
-        vals = [int(p) if p.isdigit() else 0 for p in parts]
+        parts = re.split(r"[;:]", params) if params else ["0"]
+        # ASCII digits only (str.isdigit() accepts things like '²' that int() rejects);
+        # empty means 0, anything else unusable becomes -1 and matches no attribute.
+        vals = [0 if not p else int(p) if len(p) <= 6 and p.isascii() and p.isdigit() else -1
+                for p in parts]
         k = 0
         while k < len(vals):
             v = vals[k]
