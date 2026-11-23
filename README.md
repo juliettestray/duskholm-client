@@ -199,6 +199,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   asks you to say Done. Where the answers are known you pick them: Enter on a line opens the list
   (item kind, size, layer, the body parts a garment covers or zips) and Enter on a description,
   taste or playlist opens a text page like the game's own editor (`Ctrl-S` keeps it, `Esc` cancels).
+  On that page `Ctrl-G` colours the selected text (or all of it) with a gradient, picked from the
+  same list, and `Ctrl-K` takes the colours off; the codes are dimmed and the text shows in
+  its colour as you write. The form is one page when the screen has room for every line, two
+  (Next / Back) only when it must.
   Save what you made in the **design book**, sorted by type, and load it later. (`customize <item>
   ...` with arguments typed in the game still goes straight to the game.)
 - **Screen reader mode** (Options > Screen reader mode, `/sr on`, or start with `--screen-reader`).
@@ -231,6 +235,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   gradients and designs. Importing is careful: triggers that send commands and all aliases arrive
   switched off for you to check; nothing is overwritten.
 - **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed; F-keys are fixed.
+  In the DOS look `Alt+Left` goes back (out of a menu, or to the previous page of a form) and
+  `Alt+Right` goes forward (into an entry that opens a list, or to the next page).
 - **Other options:** bell on new output (always / window not in front / scrolled up), jump to the
   bottom when you send, show or hide your own commands. Your typed-command colour is also under
   *DOS screen colours*.

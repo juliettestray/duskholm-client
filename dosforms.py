@@ -68,10 +68,22 @@ class DosFormsMixin:
                               back=self._unless_chosen(chosen, lambda: on_done(list(sel))))
 
     def dos_edit_text(self, title, text, on_done):
-        """A page for paragraphs. on_done(text) when kept (Ctrl-S), on_done(None) when cancelled (Esc)."""
+        """A page for paragraphs. on_done(text) when kept (Ctrl-S), on_done(None) when cancelled (Esc).
+        Ctrl-G colours the selected text (or all of it) with a gradient; Ctrl-K takes the colours off."""
         if self._overlay_open():
             return None
-        ed = dosui.DosTextEditor(self._holder, title, text, self._dc(), self.f_norm, on_done)
+
+        def asked(res):
+            if not isinstance(res, tuple):
+                on_done(res)
+                return
+            what, cur, rng = res
+            if what == "strip":
+                self._reopen(self.dos_edit_text, title, ct.strip_colour(cur, rng), on_done)
+            else:
+                st = {k: self._grad_state[k] for k in ("pattern", "mode", "smooth")}
+                self._reopen(self._dos_text_gradient, st, title, cur, rng, on_done)
+        ed = dosui.DosTextEditor(self._holder, title, text, self._dc(), self.f_norm, asked)
         self._overlay = ed
         ed.open()
         return ed
@@ -135,7 +147,43 @@ class DosFormsMixin:
                                 result, width=76,
                                 message="Enter on Pattern or Apply opens the list. Use \\n for new lines in the text.")
 
-    def _dos_pick_pattern(self, st):
+    def _dos_text_gradient(self, st, title, cur, rng, on_done, note=None):
+        """Pick a gradient and how to apply it, then go back to the editor with the text coloured."""
+        st = dict(st)
+        self._grad_state = dict(self._grad_state, **{k: st[k] for k in ("pattern", "mode", "smooth")})
+        saved = self.cfg.get("gradients", [])
+        shown = st["pattern"] if ct.find_pattern(st["pattern"], saved) else "(choose)"
+        fields = [{"key": "pattern", "label": "Pattern", "type": "pick", "value": shown, "width": 34},
+                  {"key": "mode", "label": "Apply", "type": "pick", "value": st["mode"], "width": 12},
+                  {"key": "smooth", "label": "Blend between colours", "type": "check", "value": st["smooth"]}]
+        again = lambda s: self._dos_text_gradient(s, title, cur, rng, on_done)
+        what = "the selected text" if rng else "all of the text"
+
+        def result(res, vals):
+            new = dict(st, smooth=bool(vals.get("smooth")))
+            if isinstance(res, tuple):
+                if res[1] == "pattern":
+                    self._reopen(self._dos_pick_pattern, new, again)
+                else:
+                    self._reopen(lambda: self.dos_choose(
+                        "Apply", [("%-8s %s" % (m, ct.MODE_HELP[m]), m) for m in ct.MODES], new["mode"],
+                        lambda m: self._reopen(again, dict(new, mode=m)), back=lambda: again(new)))
+                return
+            if res == "apply":
+                try:
+                    out = ct.colour_text(cur, self._pattern_colours(new["pattern"]), new["mode"], new["smooth"], rng)
+                except ValueError as e:
+                    self._reopen(self._dos_text_gradient, new, title, cur, rng, on_done, str(e))
+                    return
+                self._grad_state = dict(self._grad_state, **{k: new[k] for k in ("pattern", "mode", "smooth")})
+                self._reopen(self.dos_edit_text, title, out, on_done)
+            else:
+                self._reopen(self.dos_edit_text, title, cur, on_done)
+        return self._dos_dialog("Colour the text", fields, [("Apply", "apply"), ("Cancel", "cancel")], result, width=70,
+                                message=note or "This colours %s. Colours already in it are replaced." % what)
+
+    def _dos_pick_pattern(self, st, cont=None):
+        cont = cont or self.open_gradient
         saved = self.cfg.get("gradients", [])
         options = []
         for name in ct.all_pattern_names(saved):
@@ -145,66 +193,84 @@ class DosFormsMixin:
         options.append(("Import a shared one...", "\x00import"))
         if saved:
             options.append(("Delete one of mine...", "\x00del"))
-        again = lambda: self.open_gradient(st)
+        again = lambda: cont(st)
 
         def picked(v):
             if v == "\x00new":
-                self._reopen(self._dos_new_pattern, st)
+                self._reopen(self._dos_new_pattern, st, None, "", "", cont)
             elif v == "\x00import":
-                self._reopen(self._dos_import_pattern, st)
+                self._reopen(self._dos_import_pattern, st, None, cont)
             elif v == "\x00del":
                 self._reopen(lambda: self.dos_choose(
                     "Delete which?", [(s["name"], s["name"]) for s in saved], "",
-                    lambda n: (self.delete_pattern(n), self.system("Deleted '%s'." % n), self._reopen(self.open_gradient, st)),
+                    lambda n: (self.delete_pattern(n), self.system("Deleted '%s'." % n), self._reopen(cont, st)),
                     back=again))
             else:
-                self._reopen(self.open_gradient, dict(st, pattern=v))
+                self._reopen(cont, dict(st, pattern=v))
         self.dos_choose("Pattern", options, st["pattern"], picked, back=again)
 
-    def _dos_new_pattern(self, st, note=None, name="", cols=""):
+    def _dos_new_pattern(self, st, note=None, name="", cols="", cont=None):
+        cont = cont or self.open_gradient
         fields = [{"key": "name", "label": "Name", "type": "text", "value": name, "width": 28},
                   {"key": "cols", "label": "Colours", "type": "text", "value": cols, "width": 46}]
 
         def result(res, v):
             if res != "ok":
-                self._reopen(self.open_gradient, st)
+                self._reopen(cont, st)
                 return
             ok, msg = self.save_pattern(v.get("name", ""), v.get("cols", ""))
             self.system(msg)
             if ok:
-                self._reopen(self.open_gradient, dict(st, pattern=" ".join(v["name"].split())[:30]))
+                self._reopen(cont, dict(st, pattern=" ".join(v["name"].split())[:30]))
             else:
-                self._reopen(self._dos_new_pattern, st, msg, v.get("name", ""), v.get("cols", ""))
+                self._reopen(self._dos_new_pattern, st, msg, v.get("name", ""), v.get("cols", ""), cont)
         return self._dos_dialog("New pattern", fields, [("Save", "ok"), ("Cancel", "cancel")], result, width=70,
                                 message=note or "Colours: xterm numbers (0-255) or hex, separated by spaces: 196 202 208 #ffcc00")
 
-    def _dos_import_pattern(self, st, note=None):
+    def _dos_import_pattern(self, st, note=None, cont=None):
+        cont = cont or self.open_gradient
         fields = [{"key": "line", "label": "Shared line", "type": "text", "value": "", "width": 56}]
 
         def result(res, v):
             if res != "ok":
-                self._reopen(self.open_gradient, st)
+                self._reopen(cont, st)
                 return
             try:
                 name, cols = ct.parse_share(v.get("line", ""))
             except ValueError as e:
-                self._reopen(self._dos_import_pattern, st, str(e))
+                self._reopen(self._dos_import_pattern, st, str(e), cont)
                 return
             ok, msg = self.save_pattern(name, ",".join(str(c) for c in cols))
             self.system(msg)
-            self._reopen(self.open_gradient, dict(st, pattern=name) if ok else st)
+            self._reopen(cont, dict(st, pattern=name) if ok else st)
         return self._dos_dialog("Import a pattern", fields, [("Import", "ok"), ("Cancel", "cancel")], result, width=76,
                                 message=note or "Paste a line like sgrad1:Fire:196,202,208,214,220,226")
 
     # ---- customize: the form -------------------------------------------------------------
+    def _customize_pages(self, mode):
+        """[keys of page 1, keys of page 2]: one page when the DOS screen has room for every line,
+        two only when it must."""
+        def shown(k):
+            return not (mode == "interface" and k in ("item", "extra", "extra_text")) and \
+                not (mode == "cli" and k in ("itype", "count"))
+        p1 = [k for k in custom.PAGE1 if shown(k)]
+        p2 = [k for k in custom.PAGE2 if shown(k)]
+        try:
+            lh = max(1, self.f_norm.metrics("linespace") + int(self.cfg.get("line_spacing", 0)))
+            avail = self.root.winfo_height() // lh - 4              # the bars above and below take a few rows
+        except Exception:
+            avail = 0
+        need = 2 + len(p1) + len(p2) + 9                            # mode + type, the fields, frame/message/buttons
+        return [p1 + p2] if need <= avail else [p1, p2]
+
     def _dos_customize(self, vals, page=1):
         vals = custom.clean_values(vals)
         vals["mode"] = self._cust_mode if self._cust_mode in custom.MODES else "cli"
         self._cust_values = vals                       # what is on the form now
         mode = vals["mode"]
-        keys = [k for k in (custom.PAGE1 if page == 1 else custom.PAGE2)
-                if not (mode == "interface" and k in ("item", "extra", "extra_text"))
-                and not (mode == "cli" and k in ("itype", "count"))]
+        pages = self._customize_pages(mode)
+        page = 1 if len(pages) == 1 else max(1, min(2, page))
+        keys = pages[page - 1]
         fields = []
         if page == 1:
             fields.append({"key": "_mode", "label": "Mode", "type": "pick", "value": MODE_SHORT[mode], "width": 20})
@@ -251,11 +317,14 @@ class DosFormsMixin:
                                       again)
             elif res == "clear":
                 self._reopen(self._dos_customize, custom.blank(), 1)
-        buttons = [("Send", "send"), ("Save", "save"), ("Book", "book"), ("Clear", "clear"),
-                   ("Next >" if page == 1 else "< Back", "next" if page == 1 else "back"), ("Cancel", "cancel")]
-        msg = ("Enter on a line opens its list or its text page." if mode == "cli" else
+        buttons = [("Send", "send"), ("Save", "save"), ("Book", "book"), ("Clear", "clear")]
+        if len(pages) == 2:
+            buttons.append(("Next >" if page == 1 else "< Back", "next" if page == 1 else "back"))
+        buttons.append(("Cancel", "cancel"))
+        msg = ("Enter on a line opens its list or its text page (Ctrl-G colours text there)." if mode == "cli" else
                "Game item editor: you must already be in it. Nothing finishes until you say Done.")
-        return self._dos_dialog("Customize (page %d of 2)" % page, fields, buttons, result, width=76, message=msg)
+        title = "Customize" if len(pages) == 1 else "Customize (page %d of 2)" % page
+        return self._dos_dialog(title, fields, buttons, result, width=76, message=msg)
 
     def _dos_customize_pick(self, key, new, page):
         again = lambda: self._dos_customize(new, page)

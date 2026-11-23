@@ -351,6 +351,15 @@ class ToolsMixin:
             widgets[key] = w
             order.append(key)
             r += 1
+        def tint(w):
+            try:
+                dosui.apply_code_tags(w, self.theme["dim"], self.theme["bg"])
+            except tk.TclError:
+                pass
+        for k, w in widgets.items():
+            if isinstance(w, tk.Text):
+                w.bind("<KeyRelease>", lambda e, w=w: tint(w), add="+")
+                tint(w)
         msg = tk.Label(top, text="Ctrl+S sends. Up/Down move between boxes. Leave a box empty to leave it alone.",
                        anchor="w", justify="left", wraplength=520)
         msg.grid(row=r, column=0, columnspan=2, sticky="we", padx=10, pady=4)
@@ -405,12 +414,33 @@ class ToolsMixin:
             except ValueError as e:
                 msg.configure(text=str(e))
 
+        def colour_text():
+            w = top.focus_get()
+            if not isinstance(w, tk.Text):
+                msg.configure(text="Click in a paragraph box (description, taste ...) first.")
+                return
+            self._text_gradient_window(top, w, lambda: tint(w))
+
+        def strip_text():
+            w = top.focus_get()
+            if not isinstance(w, tk.Text):
+                msg.configure(text="Click in a paragraph box first.")
+                return
+            try:
+                a, b = w.index("sel.first"), w.index("sel.last")
+            except tk.TclError:
+                a, b = "1.0", "end-1c"
+            seg = w.get(a, b)
+            w.delete(a, b)
+            w.insert(a, ct.strip_codes(seg))
+            tint(w)
+
         def book():
             self._design_book_window(top, lambda d: (put(d["values"]), typ.set(d["type"])))
         bf = tk.Frame(top)
         bf.grid(row=r + 1, column=0, columnspan=2, pady=8)
         for label, fn in (("Send  (Ctrl+S)", send), ("Save design...", save_design), ("Design book...", book),
-                          ("Clear", lambda: put(custom.blank())), ("Close", close)):
+                          ("Colour text...", colour_text), ("Strip colours", strip_text), ("Clear", lambda: put(custom.blank())), ("Close", close)):
             tk.Button(bf, text=label, command=fn).pack(side="left", padx=3)
         top.bind("<Control-s>", send)
         top.bind("<Control-S>", send)
@@ -418,6 +448,50 @@ class ToolsMixin:
         top.protocol("WM_DELETE_WINDOW", close)
         self._theme_tree(top)
         widgets["item"].focus_set()
+        return top
+
+    def _text_gradient_window(self, parent, widget, done=None):
+        """Colour the selected text (or all of it) in a paragraph box with a gradient."""
+        top = tk.Toplevel(parent)
+        top.title("Colour the text")
+        top.transient(parent)
+        saved = self.cfg.get("gradients", [])
+        pat = tk.StringVar(value=self._grad_state["pattern"] if ct.find_pattern(self._grad_state["pattern"], saved) else "Fire")
+        mode = tk.StringVar(value=self._grad_state["mode"])
+        blend = tk.BooleanVar(value=self._grad_state["smooth"])
+        tk.Label(top, text="Pattern").grid(row=0, column=0, sticky="w", padx=10, pady=4)
+        tk.OptionMenu(top, pat, *ct.all_pattern_names(saved)).grid(row=0, column=1, sticky="w")
+        tk.Label(top, text="Apply").grid(row=1, column=0, sticky="w", padx=10, pady=4)
+        tk.OptionMenu(top, mode, *ct.MODES).grid(row=1, column=1, sticky="w")
+        tk.Checkbutton(top, text="Blend between colours", variable=blend).grid(row=2, column=1, sticky="w")
+        note = tk.Label(top, text="", fg="#c04040", anchor="w", wraplength=320, justify="left")
+        note.grid(row=3, column=0, columnspan=2, sticky="we", padx=10)
+
+        def apply():
+            text = widget.get("1.0", "end-1c")
+            try:
+                a = widget.count("1.0", widget.index("sel.first"), "chars")[0]
+                b = widget.count("1.0", widget.index("sel.last"), "chars")[0]
+                rng = (a, b) if b > a else None
+            except (tk.TclError, TypeError, IndexError):
+                rng = None
+            try:
+                out = ct.colour_text(text, self._pattern_colours(pat.get()), mode.get(), blend.get(), rng)
+            except ValueError as e:
+                note.configure(text=str(e))
+                return
+            widget.delete("1.0", "end")
+            widget.insert("1.0", out)
+            self._grad_state = dict(self._grad_state, pattern=pat.get(), mode=mode.get(), smooth=blend.get())
+            if done:
+                done()
+            top.destroy()
+        bf = tk.Frame(top)
+        bf.grid(row=4, column=0, columnspan=2, pady=8)
+        tk.Button(bf, text="Apply", width=9, command=apply).pack(side="left", padx=4)
+        tk.Button(bf, text="Cancel", width=9, command=top.destroy).pack(side="left", padx=4)
+        top.bind("<Escape>", lambda e: top.destroy())
+        self._theme_tree(top)
         return top
 
     def _design_book_window(self, parent, on_load):

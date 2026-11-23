@@ -2880,7 +2880,15 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
     def _dos_menu(self, title, items, corner=False, initial=None, back=None):
         kw = {} if initial is None else {"initial": initial}
         if back is not None:
-            kw["on_close"] = lambda: self._reopen(back)
+            # a menu closes (and so goes `back`) before it runs the chosen entry; only go back if nothing was chosen
+            chosen = [False]
+            for it in items:
+                if it is not None and it.get("action") is not None:
+                    def mark(orig=it["action"]):
+                        chosen[0] = True
+                        return orig()
+                    it["action"] = mark
+            kw["on_close"] = lambda: self.root.after_idle(lambda: None if chosen[0] else self._reopen(back))
         m = dosui.DosMenu(self.root, title, items, self._dc(), self.f_norm, **kw)
         self._overlay = m
         if corner:
@@ -3063,7 +3071,9 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
                  ("F12", "About"), ("Alt-X", "Exit"), ("PgUp / PgDn", "Scroll back"),
                  ("Up / Down", "Command history"), ("Ctrl-L", "Clear the screen"), ("Ctrl +/-", "Font size"),
                  ("Ctrl-1..9", "Show a pane's tab"), ("Alt-1..9", "Fold a pane area"), ("Alt-0", "Fold all areas"),
-                 ("Ctrl-*", "More text contrast"), ("Ctrl-/", "Less text contrast")]
+                 ("Ctrl-*", "More text contrast"), ("Ctrl-/", "Less text contrast"),
+                 ("Alt-Left", "Back (menus, forms)"), ("Alt-Right", "Next / into a list"),
+                 ("Ctrl-G", "Gradient in a text page"), ("Ctrl-K", "Strip colours there")]
         titles = {"worlds": "Worlds", "triggers": "Triggers", "aliases": "Aliases", "panes": "Panes",
                   "moon": "The moon", "notepad": "Notepad", "timers": "Timer", "dos_toggle": "DOS look",
                   "gradient": "Gradient maker", "hex": "Hex to xterm", "customize": "Customize form"}

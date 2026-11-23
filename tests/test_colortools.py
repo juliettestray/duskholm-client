@@ -94,4 +94,28 @@ for _ in range(3000):
     except ValueError:
         continue
     assert ct.strip_codes(o).replace("``", "`") == t, (t, o)
+
+# ---- colour codes in a long text: where they are, colouring part of it, taking them off
+text = "ab`196cd`xef"
+assert ct.spans(text) == [(0, 2, None, False), (2, 6, None, True), (6, 8, 196, False), (8, 10, None, True), (10, 12, None, False)], ct.spans(text)
+assert ct.spans("") == [] and ct.spans("plain") == [(0, 5, None, False)]
+assert ct.spans("a``b") == [(0, 4, None, False)], "a doubled backtick is just text"
+assert ct.spans("`999 `4 `") == [(0, 9, None, False)], "not a code: stays text"
+assert [x for x in ct.spans("`045hi`123there`x!") if not x[3]] == [(4, 6, 45, False), (10, 15, 123, False), (17, 18, None, False)]
+out = ct.colour_text("Hello world", [196, 226], "stretch", smooth=False)
+assert out == ct.apply("Hello world", [196, 226], "stretch", smooth=False)
+part = ct.colour_text("Hello big world", [196, 226], "cycle", rng=(6, 9))
+assert part.startswith("Hello ") and part.endswith("`x world") and ct.strip_codes(part) == "Hello big world" and "`196b" in part
+again = ct.colour_text(part, [21, 46], "cycle", rng=(0, len(part)))
+assert ct.strip_codes(again) == "Hello big world" and "`196" not in again, "colours already there are replaced"
+assert ct.colour_text("a``b", [5]) == "`005a``b`x" and ct.colour_text("`005a``b`x", [7]) == "`007a``b`x", "backticks survive a round trip"
+assert ct.colour_text("a`bc", [5]) == "`005ac`x", "a lone backtick before a letter IS a game colour code (`b), so it is replaced"
+assert ct.colour_text("abc", [1], rng=(2, 1)) == ct.apply("abc", [1]) and ct.colour_text("abc", [1], rng=(0, 99)) == ct.apply("abc", [1])
+assert ct.colour_text("one\ntwo", [1, 2], "stretch", smooth=False) == "`001o`002ne\n`001t`002wo`x"[:0] + ct.apply("one\ntwo", [1, 2], "stretch", smooth=False)
+assert ct.strip_colour("a`196b`xc", (0, 5)) == "ab`xc" and ct.strip_colour("a`196b`xc") == "abc" and ct.strip_colour(None) == ""
+for bad in ([], [300]):
+    try:
+        ct.colour_text("x", bad); assert False
+    except ValueError:
+        pass
 print("colortools tests OK")

@@ -216,5 +216,100 @@ app.connected = False
 assert app.send_customize(dict(custom.blank(), mode="interface", names="x"))[1] == "Not connected."
 app.connected = True; app._cust_mode = "cli"
 
+
+# ---- one page when the screen is big enough, two when it must be
+real_height = app.root.winfo_height
+app.root.winfo_height = lambda: 3000
+assert len(app._customize_pages("cli")) == 1 and len(app._customize_pages("interface")) == 1
+d = app._dos_customize(custom.blank(), 1); pump(0.4)
+keys = [f["key"] for f in d._fields]
+assert d._title == "Customize" and "item" in keys and "cover" in keys and "description" in keys and "_mode" in keys
+assert [b["result"] for b in d._buttons] == ["send", "save", "book", "clear", "cancel"], "no Next / Back on one page"
+d2 = app._dos_customize(custom.blank(), 2); pump(0.3)
+assert overlay() is d or overlay()._title == "Customize", "asking for page 2 of a one-page form shows the form"
+app.dos_close_overlay(); pump(0.2)
+app.root.winfo_height = lambda: 300
+pages = app._customize_pages("cli"); assert len(pages) == 2 and pages[0][0] == "item" and pages[1][0] == "cover"
+d = app._dos_customize(custom.blank(), 1); pump(0.4)
+assert "page 1 of 2" in d._title and "next" in [b["result"] for b in d._buttons]
+# Alt+Right is Next, Alt+Left is Back
+d.event_generate("<Alt-Right>") if False else None
+d._cv.event_generate("<Alt-Key>", keysym="Right"); pump(0.5)
+d = overlay(); assert "page 2 of 2" in d._title, d._title
+d._cv.event_generate("<Alt-Key>", keysym="Left"); pump(0.5)
+d = overlay(); assert "page 1 of 2" in d._title
+d._cv.event_generate("<Alt-Key>", keysym="Left"); pump(0.4)
+assert not app._overlay_open(), "with no Back button, Alt+Left is Esc"
+app.root.winfo_height = real_height
+
+# ---- Alt+Left / Alt+Right in menus
+app.dos_colors_menu(); pump(0.4)
+m = overlay(); assert isinstance(m, dosui.DosMenu)
+labels = [it["label"] if it else None for it in m._items]
+m.select(labels.index(next(l for l in labels if l and l.startswith("Skin")))); pump(0.1)
+m._cv.event_generate("<Alt-Key>", keysym="Right"); pump(0.5)
+sk = overlay(); assert isinstance(sk, dosui.DosMenu) and sk is not m and any(it and it["label"] == "Plain" for it in sk._items), "Alt+Right goes into an entry that leads somewhere"
+sk._cv.event_generate("<Alt-Key>", keysym="Left"); pump(0.5)
+m2 = overlay(); assert isinstance(m2, dosui.DosMenu) and any(it and it["label"].startswith("Skin") for it in m2._items), "Alt+Left goes back to the menu it came from"
+m2._cv.event_generate("<Alt-Key>", keysym="Left"); pump(0.4)
+assert not app._overlay_open()
+app.dos_options_menu(); pump(0.4)
+m = overlay(); n_checked = sum(1 for it in m._items if it and it.get("checked"))
+m._cv.event_generate("<Alt-Key>", keysym="Right"); pump(0.3)
+assert overlay() is m and sum(1 for it in m._items if it and it.get("checked")) == n_checked, "Alt+Right does nothing on an entry that just flips a setting"
+app.dos_close_overlay(); pump(0.2)
+
+# ---- choosing a skin must not leave menus stacked behind each other (Esc used to step through them)
+def open_menus():
+    return [w for w in app.root.winfo_children() if isinstance(w, dosui.DosMenu) and w.is_open()]
+app.dos_colors_menu(); pump(0.4)
+for name in ("Plain", "Moody", "Retro Amber"):
+    menu_pick("Skin"); pump(0.4)
+    menu_pick(name); pump(0.6)
+    assert app._skin_name() == name and len(open_menus()) == 1, (name, len(open_menus()))
+key(overlay(), "Escape"); pump(0.4)
+assert not open_menus() and not app._overlay_open(), "one Esc closes it all"
+app.set_skin("Retro DOS"); pump(0.3)
+app.dos_skin_menu(); pump(0.4)
+menu_pick("Plain"); pump(0.5)
+assert not open_menus(), "picking from the skin menu (F5) closes it"
+
+# ---- gradients in the paragraph editor
+app._grad_state = {"pattern": "Fire", "mode": "stretch", "text": "", "prefix": "", "smooth": False}
+kept = []
+ed = app.dos_edit_text("Description", "Soft silk.\nIt smells of rain.", lambda t: kept.append(t)); pump(0.4)
+ed._cv.event_generate("<Control-g>"); pump(0.6)
+dlg = overlay(); assert isinstance(dlg, dosui.DosDialog) and dlg._title == "Colour the text" and "all of the text" in dlg._message
+focus_field(dlg, "pattern"); key(dlg, "Return"); menu_pick("Ocean"); pump(0.5)
+dlg = overlay(); assert dlg._fields[0]["shown"] == "Ocean" and "all of the text" in dlg._message, "the choice comes back to this dialog, not the gradient maker"
+focus_field(dlg, "mode"); key(dlg, "Return"); menu_pick("cycle"); pump(0.5)
+dlg = overlay(); dlg._press(0); pump(0.6)
+ed = overlay(); assert isinstance(ed, dosui.DosTextEditor), "back in the editor"
+txt = ed.text()
+assert ct.strip_codes(txt) == "Soft silk.\nIt smells of rain." and txt.count("`") > 10 and txt.endswith("`x")
+assert app._grad_state["pattern"] == "Ocean" and app._grad_state["mode"] == "cycle", "and it remembers what you chose"
+pump(0.4)
+assert ed._cv.tag_ranges("xcode") and any(t.startswith("xc") and t != "xcode" for t in ed._cv.tag_names()), "the codes are dimmed and the text is in colour"
+colour = [t for t in ed._cv.tag_names() if t.startswith("xc") and t != "xcode"][0]
+assert ed._cv.tag_cget(colour, "foreground").lower() in [c.lower() for c in ct.XTERM]
+# a selection only
+ed._cv.delete("1.0", "end"); ed._cv.insert("1.0", "plain COLOURED plain"); ed._cv.tag_add("sel", "1.6", "1.14")
+ed._cv.event_generate("<Control-g>"); pump(0.6)
+dlg = overlay(); assert "selected text" in dlg._message
+dlg._press(0); pump(0.6); ed = overlay()
+t2 = ed.text(); assert t2.startswith("plain `") and t2.endswith("`x plain") and ct.strip_codes(t2) == "plain COLOURED plain", t2
+# take them off again
+ed._cv.event_generate("<Control-k>"); pump(0.6)
+ed = overlay(); assert isinstance(ed, dosui.DosTextEditor) and ed.text() == "plain COLOURED plain"
+# cancel in the gradient dialog goes back to the editor unchanged
+ed._cv.event_generate("<Control-g>"); pump(0.6); dlg = overlay(); dlg._press(1); pump(0.5)
+ed = overlay(); assert isinstance(ed, dosui.DosTextEditor) and ed.text() == "plain COLOURED plain"
+ed._cv.event_generate("<Control-s>"); pump(0.4)
+assert kept == ["plain COLOURED plain"] and not app._overlay_open()
+# the whole path through the customize form
+d = app._dos_customize_pick("description", dict(custom.blank(), description="Soft silk."), 1); pump(0.5)
+ed = overlay(); ed._cv.event_generate("<Control-g>"); pump(0.6); overlay()._press(0); pump(0.6)
+overlay()._cv.event_generate("<Control-s>"); pump(0.6)
+assert "`" in app._cust_values["description"] and ct.strip_codes(app._cust_values["description"]) == "Soft silk."
 root.update(); root.destroy()
 print("dos forms tests OK")

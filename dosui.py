@@ -646,6 +646,14 @@ class DosMenu(_DosBox):
     # -- events -------------------------------------------------------
     def _on_key(self, e):
         ks, ch = e.keysym, e.char
+        if ks in ('Left', 'Right') and (e.state & 0x20000 or e.state & 0x8):
+            if ks == 'Left':
+                self.close()                                       # back (the same as Esc)
+            else:                                                  # next: go into the entry if it leads somewhere
+                it = self._items[self._sel] if 0 <= self._sel < len(self._items) else None
+                if it is not None and it['enabled'] and str(it['label']).rstrip().endswith(('...', '>')):
+                    self._activate(self._sel)
+            return 'break'
         if ks == 'Up':
             self._move(-1)
         elif ks == 'Down':
@@ -1040,9 +1048,23 @@ class DosDialog(_DosBox):
         return False
 
     # -- events -------------------------------------------------------
+    def _nav(self, direction):
+        """Alt+Left / Alt+Right: press the dialog's Back / Next button if it has one (Left falls back to Esc)."""
+        names = {-1: ('back', 'prev', 'previous'), 1: ('next', 'more')}[direction]
+        for i, b in enumerate(self._buttons):
+            if str(b['result']).lower() in names:
+                self._press(i)
+                return True
+        if direction < 0:
+            self._escape()
+            return True
+        return False
+
     def _common(self, e):
         ks = e.keysym
-        if ks in ('Tab', 'ISO_Left_Tab'):
+        if ks in ('Left', 'Right') and (e.state & 0x20000 or e.state & 0x8):
+            self._nav(-1 if ks == 'Left' else 1)
+        elif ks in ('Tab', 'ISO_Left_Tab'):
             back = ks == 'ISO_Left_Tab' or bool(e.state & 0x1)
             self._step(-1 if back else 1)
         elif ks == 'Down':
@@ -1066,7 +1088,9 @@ class DosDialog(_DosBox):
         return 'break'
 
     def _on_alt(self, e):
-        if len(e.keysym) == 1:
+        if e.keysym in ('Left', 'Right'):
+            self._nav(-1 if e.keysym == 'Left' else 1)
+        elif len(e.keysym) == 1:
             self._hotkey(e.keysym)
         return 'break'
 
@@ -2611,7 +2635,7 @@ class DosTextEditor(tk.Frame):
         self._on_done = on_done
         self._open = False
         self._title = str(title)
-        self._hint = hint or 'Ctrl-S  done        Esc  cancel        Enter  new line'
+        self._hint = hint or 'Ctrl-S done   Esc cancel   Ctrl-G gradient   Ctrl-K strip colours'
         self._head = tk.Label(self, anchor='w', padx=8, bd=0)
         self._head.pack(fill='x', side='top')
         self._foot = tk.Label(self, anchor='w', padx=8, bd=0)
@@ -2623,7 +2647,14 @@ class DosTextEditor(tk.Frame):
         for seq in ('<Control-s>', '<Control-S>', '<F10>'):
             self._cv.bind(seq, lambda e: (self._finish(True), 'break')[1])
         self._cv.bind('<Escape>', lambda e: (self._finish(False), 'break')[1])
+        self._asked = None
+        for seq, what in (('<Control-g>', 'gradient'), ('<Control-G>', 'gradient'),
+                          ('<Control-k>', 'strip'), ('<Control-K>', 'strip')):
+            self._cv.bind(seq, lambda e, w=what: (self._ask(w), 'break')[1])
+        self._tint_job = None
+        self._cv.bind('<<Modified>>', self._modified)
         self.restyle(colors, font)
+        self._tint()
 
     def restyle(self, colors=None, font=None):
         if colors is not None:
@@ -2636,6 +2667,45 @@ class DosTextEditor(tk.Frame):
         self._cv.configure(bg=c['input_bg'], fg=c['input_fg'], font=self._font, insertwidth=self._font.measure('0'),
                            insertbackground=c['dos_key_fg'], selectbackground=c['dos_menu_fg'],
                            selectforeground=c['dos_menu_bg'])
+
+    def _modified(self, _e=None):
+        if not self._cv.edit_modified():
+            return
+        self._cv.edit_modified(False)
+        if self._tint_job is not None:
+            try:
+                self.after_cancel(self._tint_job)
+            except tk.TclError:
+                pass
+        try:
+            self._tint_job = self.after(120, self._tint)
+        except tk.TclError:
+            self._tint_job = None
+
+    def _tint(self):
+        self._tint_job = None
+        try:
+            apply_code_tags(self._cv, self.colors['dos_menu_dim'], self.colors['input_bg'])
+        except tk.TclError:
+            pass
+
+    def selection(self):
+        """(start, end) of the selected text as offsets into text(), or None."""
+        try:
+            a = self._cv.count('1.0', self._cv.index('sel.first'), 'chars')
+            b = self._cv.count('1.0', self._cv.index('sel.last'), 'chars')
+            return (int(a[0]), int(b[0])) if a and b and b[0] > a[0] else None
+        except (tk.TclError, TypeError, IndexError):
+            return None
+
+    def _ask(self, what):
+        """Ctrl-G / Ctrl-K: close with a request (the caller shows its own list, then comes back)."""
+        if not self._open:
+            return
+        result = (what, self.text(), self.selection())
+        self.close()
+        if callable(self._on_done):
+            self._on_done(result)
 
     def open(self, x=None, y=None):
         self._open = True
@@ -2666,3 +2736,27 @@ class DosTextEditor(tk.Frame):
         self.close()
         if callable(self._on_done):
             self._on_done(result)
+
+
+def apply_code_tags(text_widget, dim_colour, bg=None):
+    """Show the game's colour codes in a Text widget: each `NNN code is dimmed and the text it
+    colours is drawn in that xterm colour (so a gradient can be seen as it is written)."""
+    try:
+        import colortools as ct
+    except ImportError:
+        return
+    w = text_widget
+    for tag in list(w.tag_names()):
+        if tag.startswith('xc') or tag == 'xcode':
+            w.tag_delete(tag)
+    text = w.get('1.0', 'end-1c')
+    if '`' not in text:
+        return
+    w.tag_configure('xcode', foreground=dim_colour)
+    for start, end, idx, is_code in ct.spans(text):
+        if is_code:
+            w.tag_add('xcode', '1.0+%dc' % start, '1.0+%dc' % end)
+        elif idx is not None:
+            tag = 'xc%d' % idx
+            w.tag_configure(tag, foreground=ct.XTERM[idx])
+            w.tag_add(tag, '1.0+%dc' % start, '1.0+%dc' % end)

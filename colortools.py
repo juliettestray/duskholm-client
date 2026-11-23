@@ -379,3 +379,38 @@ def parse_share(text):
     if not name:
         raise ValueError("That gradient has no name.")
     return name, cols
+
+
+def spans(text):
+    """[(start, end, xterm index or None, is_code)] covering `text`: the colour codes (`045, `x) and the
+    runs of text each one colours. Offsets are characters."""
+    text = str(text if text is not None else "")
+    out, cur, pos = [], None, 0
+    for m in _RUN_TOKEN.finditer(text):
+        tok = m.group()
+        if tok == "``" or (tok == "`" or (m.group(1) is not None and int(m.group(1)) > 255)):
+            continue                                   # a literal backtick, or not a code: stays text
+        if m.start() > pos:
+            out.append((pos, m.start(), cur, False))
+        out.append((m.start(), m.end(), None, True))
+        cur = None if tok == "`x" else int(m.group(1))
+        pos = m.end()
+    if pos < len(text):
+        out.append((pos, len(text), cur, False))
+    return out
+
+
+def colour_text(text, stops, mode="stretch", smooth=True, rng=None, seed=None):
+    """Colour part (or all) of `text` with a gradient: the selected range (start, end) when given,
+    otherwise everything. Colour codes already inside the range are removed first. Raises ValueError."""
+    text = str(text if text is not None else "")
+    a, b = (rng if rng and 0 <= rng[0] < rng[1] <= len(text) else (0, len(text)))
+    seg = strip_codes(text[a:b]).replace("``", "`")
+    return text[:a] + apply(seg, stops, mode, smooth, seed=seed, reset=True) + text[b:]
+
+
+def strip_colour(text, rng=None):
+    """The same text with the colour codes removed from the range (or from everything)."""
+    text = str(text if text is not None else "")
+    a, b = (rng if rng and 0 <= rng[0] < rng[1] <= len(text) else (0, len(text)))
+    return text[:a] + strip_codes(text[a:b]) + text[b:]
