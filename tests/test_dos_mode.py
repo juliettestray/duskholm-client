@@ -58,7 +58,7 @@ assert 0.5 <= _border <= 2.0, ("border should be about one character cell", _bor
 assert app.theme["name"] == "Retro DOS" and app.cfg["skin"] == "Moody", "DOS look has its own skin; normal one untouched"
 assert not app.statbar.winfo_ismapped(), "the in-game stat bar is replaced by the DOS bar"
 hint, stat = rows()
-assert "F1 Help" in hint and "F10 Menu" in hint and "F2 Dial" in hint and "^W Worlds" in hint, hint
+assert "F1 Help" in hint and "F10 Menu" in hint and "F2 Dial" in hint and "F11 Full" in hint, hint
 assert "OFFLINE" in stat and "ANSI" in stat and "TLS" not in stat, stat
 assert app._dos_job is not None
 assert app.f_norm.cget("size") > 11, "font auto-fitted to the 80-column screen"
@@ -78,16 +78,16 @@ assert any(c in stat for c in "█░▓"), "HP gauge drawn in block characters"
 # the row is budgeted to the screen width: everything when wide, the essentials when narrow
 wide, wtail = app._dos_segments(200)
 joined = " ".join(t for t, _ in wide)
-assert "ST1 WN2 LG0" in joined and "North 1/5:1/5" in joined and "ANSI" in joined and wtail == "Retro DOS", joined
+assert "ST1 WN2 LG0" in joined and "North 1/5:1/5" in joined and "ANSI" in joined and wtail.count(":") >= 1, joined
 narrow, ntail = app._dos_segments(30)
-assert narrow and narrow[0][0].startswith("ONLINE") and ntail == ""
+assert narrow and narrow[0][0].startswith("ONLINE")
 assert sum(len(t) for t, _ in narrow) + 3 * (len(narrow) - 1) <= 30
-mid, _ = app._dos_segments(60)
+mid, _ = app._dos_segments(44)
 assert any("204/350" in t for t, _ in mid) and not any("M:3" in t for t, _ in mid), "HP outranks cooldowns"
 tight, _ = app._dos_segments(5)
 assert len(tight) <= 1
 time.sleep(1.2); pump(0.3)
-assert "00:00:0" in rows()[1] or "00:00:1" in rows()[1], rows()[1]       # online clock is ticking
+assert app.dosbar._segs[1].startswith("00:00:"), app.dosbar._segs      # online clock, bottom right       # online clock is ticking
 conns[0].close(); pump(1.0)
 assert not app.connected and "OFFLINE" in rows()[1] and "204/350" not in rows()[1], rows()[1]
 

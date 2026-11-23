@@ -48,7 +48,7 @@ for bad_v, why in ((dict(v, name=""), "name"), (dict(v, pattern=""), "pattern"),
     t, m = sc.trigger_from_values(bad_v)
     assert t is None and m, why
 
-assert len(sc.trigger_presets()) == 10 and all(not p["enabled"] for p in sc.trigger_presets())
+assert len(sc.trigger_presets()) == 11 and all(not p["enabled"] for p in sc.trigger_presets())
 
 c = sc.clean_settings({"triggers": [trig, {"name": "bad"}, 5, None, dict(trig, pattern="(a+)+$", mode="regex")] * 300,
                        "alias_rules": "nope", "aliases": {"gg": "look;say hi $*", "x y": "no", 5: "z"}, "hide_prompt": "yes"})

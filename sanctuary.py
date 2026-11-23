@@ -1019,6 +1019,8 @@ _PRESET_DEFS = [
      "actions": [{"type": "route", "pane": "OOC"}]},
     {"name": "Capture tells to a pane", "mode": "plain", "pattern": "* tells you *", "priority": 0,
      "actions": [{"type": "route", "pane": "Tells"}]},
+    {"name": "Capture your own tells to a pane", "mode": "plain", "pattern": "^You tell * '*", "priority": 0,
+     "actions": [{"type": "route", "pane": "Tells"}]},
     {"name": "Capture Guide / Newbie to a pane", "mode": "plain", "pattern": "^[Guide]*", "priority": 0,
      "actions": [{"type": "route", "pane": "Guide"}]},
     {"name": "Capture Newbie to a pane", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
@@ -2280,8 +2282,6 @@ class App:
         else:
             cands = [(1, 0, "OFFLINE", "dim")]
         pr = self._last_prompt if self.connected else None
-        if self.connected:
-            cands.append((3, 2, dosui.format_duration(time.time() - self._online_since), "key"))
         if pr and pr.get("hp"):
             cur, mx, label = pr["hp"]
             gauge, role = dosui.gauge_text(cur, mx, 8)
@@ -2307,9 +2307,7 @@ class App:
                 chosen.append((order, text, role))
                 used += cost
         chosen.sort()
-        tail = self.theme["name"]
-        if used + len(tail) + 3 > avail:
-            tail = ""
+        tail = dosui.format_duration(time.time() - self._online_since) if self.connected else ""
         return [(t, r) for _o, t, r in chosen], tail
 
     def update_dosbar(self):
@@ -2319,9 +2317,9 @@ class App:
             return
         try:
             up = self.connected or self.connecting
-            bar.set_hints([("F1", "Help"), ("F2", "Hangup" if up else "Dial"), ("^W", "Worlds"),
-                           ("F10", "Menu"), ("F11", "Full"), ("F5", "Skin"), ("F6", "Colours"),
-                           ("F7", "Font"), ("F3", "Log")], right="Alt-D Normal  Alt-X Exit")
+            bar.set_hints([("F1", "Help"), ("F2", "Hangup" if up else "Dial"), ("F3", "Log"),
+                           ("F5", "Skin"), ("F6", "Colours"), ("F7", "Font"), ("F10", "Menu"),
+                           ("F11", "Full"), ("^W", "Worlds")], right="Alt-D Normal  Alt-X Exit")
             cw = max(1, self.f_norm.measure("0"))
             cols = int(bar.winfo_width() / cw) if bar.winfo_width() > 100 else int(self.cfg["dos_cols"])
             segs, tail = self._dos_segments(max(20, cols - 2))
@@ -3210,7 +3208,8 @@ class App:
                                 width=62, message="Use ; between commands. %1-%9 / %* are your arguments.")
 
     # ---- panes manager ---------------------------------------------------------------------
-    PANE_SYNTAX = ("One line per area: side size panes. Side: top, bottom, left or right. Size is "
+    PANE_SYNTAX = ("Lines reach a pane through a trigger (Ctrl+T) whose 'Send to pane' names it. "
+                   "One line per area: side size panes. Side: top, bottom, left or right. Size is "
                    "rows (top/bottom) or columns (left/right). Panes are separated by commas, e.g. "
                    "'right 40 OOC, Tells'.")
 
@@ -3295,7 +3294,8 @@ class App:
         win.transient(self.root)
         vars_ = [tk.StringVar(value=l) for l in self._pane_lines()]
         tk.Label(win, justify="left", wraplength=520, text=self.PANE_SYNTAX + " The main text always keeps at "
-                 "least 80 columns; areas that would squeeze it are narrowed, then hidden.").grid(
+                 "least 80 columns; areas that would squeeze it are narrowed, then hidden. "
+                 "To send lines to a pane, add a trigger (Ctrl+T) with 'Send to pane' set to its name.").grid(
             row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 4))
         pr = tk.Frame(win)
         pr.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
@@ -3648,7 +3648,7 @@ class App:
         return "break"
 
     def _dos_banner(self):
-        self.system("%s TERMINAL   F1 help   F10 menu   F11 full screen   Alt+D normal look" % APP_NAME.upper())
+        return                                  # the hint bar already says all this
 
     def _set_font_size(self, size):
         """Apply a size to the display fonts without changing the saved preference."""
