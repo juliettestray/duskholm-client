@@ -986,6 +986,8 @@ def trigger_from_values(v):
         actions.append({"type": "beep"})
     if str(v.get("note", "")).strip():
         actions.append({"type": "note", "text": str(v["note"]).strip()})
+    if str(v.get("status", "")).strip():
+        actions.append({"type": "status", "text": str(v["status"]).strip()})
     actions += [a for a in (v.get("keep") or []) if isinstance(a, dict)]     # actions the editor has no controls for
     if not actions:
         return None, "Choose at least one action (highlight, hide, send, beep or note)."
@@ -1021,6 +1023,9 @@ _PRESET_DEFS = [
      "actions": [{"type": "route", "pane": "Tells"}]},
     {"name": "Capture your own tells to a pane", "mode": "plain", "pattern": "^You tell * '*", "priority": 0,
      "actions": [{"type": "route", "pane": "Tells"}]},
+    {"name": "Preview your credit walk", "mode": "regex", "ignore_case": True,
+     "pattern": "^Your (?:credit|ego form) walk string is now: (.*)$", "priority": 0,
+     "actions": [{"type": "status", "text": "Preview: Someone %1 in from the north"}]},
     {"name": "Capture Guide / Newbie to a pane", "mode": "plain", "pattern": "^[Guide]*", "priority": 0,
      "actions": [{"type": "route", "pane": "Guide"}]},
     {"name": "Capture Newbie to a pane", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
@@ -1039,7 +1044,7 @@ def values_from_trigger(t):
     """The editors' simple values for an existing trigger (None for a new one)."""
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
          "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "hide": False, "send": "",
-         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False}
+         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "status": ""}
     if not t:
         return v
     v.update(name=t["name"], enabled=t["enabled"], regex=t["mode"] == "regex", pattern=t["pattern"],
@@ -1057,6 +1062,8 @@ def values_from_trigger(t):
             v["beep"] = True
         elif k == "note":
             v["note"] = a["text"]
+        elif k == "status":
+            v["status"] = a["text"]
         elif k == "route":
             v.update(pane=a["pane"], pane_gag=bool(a.get("gag")))
         else:
@@ -1627,6 +1634,9 @@ class App:
         self.btn.pack(side="left", padx=4)
         self.status = self._reg(tk.Label(top, text="Disconnected", anchor="e"), "label")
         self.status.pack(side="right", padx=8)
+        self._notice_text, self._notice_job = "", None
+        self.notice = self._reg(tk.Label(top, text="", anchor="e"), "label")
+        self.notice.pack(side="right", padx=8)
 
         # holder = the coloured "overscan" border; in the DOS look the 80-column screen is
         # centred inside it, in the normal look the screen simply fills it
@@ -2348,6 +2358,8 @@ class App:
             cands = [(1, 0, "REDIAL in %ds" % max(0, int(self._reconnect_at - time.time() + 0.999)), "warn")]
         else:
             cands = [(1, 0, "OFFLINE", "dim")]
+        if self._notice_text:
+            cands.append((1, 0.5, self._notice_text[:max(10, avail // 2)], "key"))
         pr = self._prompt_view() if self.connected else None
         if pr and pr.get("hp"):
             cur, mx, label = pr["hp"]
@@ -2974,7 +2986,7 @@ class App:
         win.title("Edit trigger" if existing else "Add trigger")
         win.transient(parent)
         v0 = values_from_trigger(existing)
-        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane")}
+        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "status")}
         bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole",
                                                            "hide", "echo", "beep", "pane_gag")}
         r = 0
@@ -3016,6 +3028,7 @@ class App:
         tk.Checkbutton(cap, text="Also hide from the main window", variable=bv["pane_gag"]).pack(side="left", padx=8)
         row("Send to pane", cap)
         row("Client note", tk.Entry(win, textvariable=sv["note"], width=64))
+        row("Status line", tk.Entry(win, textvariable=sv["status"], width=64))
         tk.Label(win, justify="left", wraplength=560,
                  text="Colours: #rrggbb, 0-15 or a name like 'bright cyan'. In commands and notes: %0 is the match, "
                       "%1-%9 the wildcards/groups; ; separates commands."
@@ -3203,7 +3216,7 @@ class App:
                       c("whole", "Colour the whole line"), c("hide", "Hide line from screen"),
                       t("send", "Send command", 40), c("echo", "Show sent command"), c("beep", "Beep"),
                       t("pane", "Send to pane", 24), c("pane_gag", "...and hide from main window"),
-                      t("note", "Client note", 40)]
+                      t("note", "Client note", 40), t("status", "Status line text", 40)]
             buttons = [("Save", "save"), ("< Back", "back"), ("Cancel", "cancel")]
             title = "Trigger: actions"
             msg = "Colours: #rrggbb, 0-15, or a name like 'bright cyan'."
@@ -4227,6 +4240,8 @@ class App:
                     effects.append(("beep",))
                 elif kind == "note":
                     effects.append(("note", triggers.expand(act["text"], m["captures"])))
+                elif kind == "status":
+                    effects.append(("status", triggers.expand(act["text"], m["captures"])))
         if routes:
             snapshot = list(pieces) if pieces else [(plain, (None, None, False, False, False, False))]
             for pane in routes:
@@ -4234,6 +4249,19 @@ class App:
         if gag and not flushed:
             return None, effects
         return pieces, effects
+
+    def set_notice(self, text, secs=60):
+        """Show a short message on the status line (the toolbar, or the DOS bar) for a while."""
+        text = " ".join(str(text).split())[:120]
+        self._notice_text = text
+        try:
+            self.notice.configure(text=text)
+            if self._notice_job is not None:
+                self.root.after_cancel(self._notice_job)
+            self._notice_job = self.root.after(secs * 1000, lambda: self.set_notice("", 0)) if text else None
+        except tk.TclError:
+            self._notice_job = None
+        self.update_dosbar()
 
     def _do_effect(self, fx):
         if fx[0] == "route":
@@ -4243,6 +4271,8 @@ class App:
                 self.root.bell()
         elif fx[0] == "note":
             self.system(fx[1])
+        elif fx[0] == "status":
+            self.set_notice(fx[1])
         elif fx[0] == "send":
             _kind, name, act, caps = fx
             for cmd in triggers.expand_commands(act["text"], caps):   # split first: game text can never add commands

@@ -482,6 +482,9 @@ def _clean_action(a):
     if t == "note":
         text = _clean_text(a.get("text"), MAX_TEXT)
         return None if text is None else {"type": "note", "text": text}
+    if t == "status":
+        text = _clean_text(a.get("text"), MAX_TEXT)
+        return None if text is None else {"type": "status", "text": text}
     if t == "route":
         pane = _clean_text(a.get("pane"), MAX_PANE)
         gag = a.get("gag", False)
@@ -710,7 +713,7 @@ def migrate_legacy_aliases(d):
 # Editor helpers
 # ======================================================================================
 _ACTION_WORDS = {"highlight": "highlight", "gag": "hide", "send": "send", "beep": "beep",
-                 "note": "note", "route": "route"}
+                 "note": "note", "route": "route", "status": "status line"}
 
 
 def describe_actions(trigger):
@@ -753,7 +756,7 @@ def check_trigger(trigger, sample_line):
         acts = []
         for a in clean["actions"]:
             t = a["type"]
-            if t in ("send", "note"):
+            if t in ("send", "note", "status"):
                 txt = "; ".join(expand_commands(a["text"], caps)) if t == "send" \
                     else expand(a["text"], caps)
                 acts.append("%s '%s'" % (_ACTION_WORDS[t], _short(txt, 80)))
