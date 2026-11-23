@@ -85,7 +85,11 @@ pk.set_value("#202040"); key(pk, "Return"); settle()
 assert app.theme["bg"] == "#202040" and app.out.cget("bg").lower() == "#202040"
 key(overlay(), "Escape"); settle(); m = overlay()                 # back to the colours menu
 assert isinstance(m, dosui.DosMenu)
-key(m, "d"); dm = overlay(); key(dm, "1"); pk = overlay()
+key(m, "d"); dm = overlay(); key(dm, "1"); pk = overlay()               # first entry: the typed-command (echo) colour
+assert isinstance(pk, dosui.DosColorPicker) and pk.value() == app.theme["echo"]
+pk.set_value("#33ff99"); key(pk, "Return"); settle()
+assert app.theme["echo"] == "#33ff99", "the DOS screen colours include your typed commands"
+dm = overlay(); key(dm, "3"); pk = overlay()
 assert isinstance(pk, dosui.DosColorPicker)
 pk.set_value("#ff00ff"); key(pk, "Return"); settle()
 assert app.theme["dos_bar_bg"] == "#ff00ff"

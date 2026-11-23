@@ -138,6 +138,30 @@ assert mw // cwid >= 80, (mw, cwid)
 assert app.dosbar.top.winfo_ismapped() and app.dosbar.top.winfo_y() < app._holder.winfo_y()
 app.set_dos_mode(False); pump(0.4)
 
+# fold areas away: Alt+N, the header button, the unread badge
+app._panes_save(["top 4 OOC", "right 36 Tells, Guide"]); pump(0.5)
+rid = layout.find_region(app.cfg["layout"], "OOC")["id"]
+assert rid in app._pane_geom["regions"]
+app.toggle_pane_area(1); pump(0.4)                       # pane 1 (OOC) lives in the top strip
+assert rid in app.cfg["panes_hidden"] and rid not in app._pane_geom["regions"]
+assert not app._panes["ooc"]["text"].winfo_ismapped(), "a folded pane is not drawn"
+app.pane_append("OOC", [("while hidden", (None, None, False, False, False, False))]); pump(0.2)
+assert app._panes["ooc"]["unread"] == 1 and "OOC*1" in app.unseen_summary()
+assert app.pane_badge.cget("text") == "Unread: OOC*1"
+assert any("Unread: OOC*1" in x[0] for x in app._dos_segments(200)[0])
+app.toggle_pane_area(1); pump(0.4)
+assert rid not in app.cfg["panes_hidden"] and rid in app._pane_geom["regions"]
+assert app._panes["ooc"]["unread"] == 0 and app.unseen_summary() == "", "showing it clears the count"
+app.toggle_pane_area(0); pump(0.4)                       # Alt+0 folds everything: plain window again
+assert not app._panes_active
+app.toggle_pane_area(0); pump(0.4)
+assert app._panes_active and not app.cfg["panes_hidden"]
+app.toggle_pane_area(7)                                  # no such pane: nothing happens
+assert not app.cfg["panes_hidden"]
+app.toggle_region(rid); pump(0.3); assert rid in app.cfg["panes_hidden"]      # the header button
+app.toggle_region(rid); pump(0.3); assert rid not in app.cfg["panes_hidden"]
+c = sc.clean_settings({"host": "x", "panes_hidden": ["r1", 5, "x" * 50, None]}); assert c["panes_hidden"] == ["r1"]
+
 # removing every pane restores the plain arrangement
 for d in list(app.cfg["panes"]):
     app.pane_delete(d["name"])

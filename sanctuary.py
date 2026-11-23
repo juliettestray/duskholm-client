@@ -58,6 +58,7 @@ try:
     import boxes                    # join ASCII boxes into solid lines
 except ImportError:
     boxes = None
+import extras                       # timers, clock, notepad, moon window, hotkeys
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -892,9 +893,11 @@ EXTRA_BOOLS = [
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
     ("bell_new", "off", ("off", "always", "unfocused", "scrolled"), "Beep on new output", "N"),
+    ("clock", "off", ("off", "real", "game"), "Clock", "C"),
 ]
 CHOICE_WORDS = {"off": "off", "always": "always", "unfocused": "when the window is not in front",
-                "scrolled": "when I am scrolled up or away"}
+                "scrolled": "when I am scrolled up or away", "real": "my local time",
+                "game": "game time (US Eastern)"}
 
 
 def clean_settings(cfg):
@@ -932,6 +935,9 @@ def clean_settings(cfg):
             break
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
+    cfg["keys"] = extras.clean_keys(cfg.get("keys"))
+    ph = cfg.get("panes_hidden")
+    cfg["panes_hidden"] = [x for x in ph[:8] if isinstance(x, str) and len(x) < 20] if isinstance(ph, list) else []
     if triggers is not None:
         raw = cfg.get("triggers") if isinstance(cfg.get("triggers"), list) else []
         cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in raw[:1000]) if t is not None][:500]
@@ -1441,7 +1447,7 @@ class Connection:
                 pass
 
 
-class App:
+class App(extras.ExtrasMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
         self.cfg = self._load_settings()
@@ -1468,6 +1474,7 @@ class App:
         self._last_prompt = None
         self._last_new_bell = 0.0
         self._img_q = queue.Queue()
+        self._extras_init()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
         self._cd_job = None
         self._mono = None
@@ -1674,6 +1681,10 @@ class App:
         self._notice_text, self._notice_job = "", None
         self.notice = self._reg(tk.Label(top, text="", anchor="e"), "label")
         self.notice.pack(side="right", padx=8)
+        self.pane_badge = self._reg(tk.Label(top, text="", anchor="e"), "label")
+        self.pane_badge.pack(side="right", padx=8)
+        self.clock_label = self._reg(tk.Label(top, text="", anchor="e"), "label")
+        self.clock_label.pack(side="right", padx=8)
 
         # holder = the coloured "overscan" border; in the DOS look the 80-column screen is
         # centred inside it, in the normal look the screen simply fills it
@@ -1710,23 +1721,19 @@ class App:
         self.dosbar = dosui.DosStatusBar(self.root, dosui.dos_colors(self.theme), self.f_norm, self.f_bold)
         for w in (self.root,):
             w.bind("<F11>", self.toggle_fullscreen)
-            w.bind("<Control-w>", self._on_ctrl_w)
-            w.bind("<Control-W>", self._on_ctrl_w)
             for n in range(1, 10):
                 w.bind("<Control-Key-%d>" % n, lambda e, n=n: (self.select_pane_number(n), "break")[1])
-            for seq, fn in (("<Control-t>", self.open_triggers), ("<Control-T>", self.open_triggers),
-                            ("<Control-p>", self.open_panes), ("<Control-P>", self.open_panes),
-                            ("<Control-a>", self.open_aliases), ("<Control-A>", self.open_aliases)):
-                w.bind(seq, self._ctrl_handler(fn))
-                self.input.bind(seq, self._ctrl_handler(fn))      # beat the entry's own Ctrl+T / Ctrl+A
+            for n in range(0, 10):
+                w.bind("<Alt-Key-%d>" % n, lambda e, n=n: (self.toggle_pane_area(n), "break")[1])
             w.bind("<Alt-Return>", self.toggle_fullscreen)
-            w.bind("<Alt-d>", self.toggle_dos_mode)
-            w.bind("<Alt-D>", self.toggle_dos_mode)
             w.bind("<Configure>", self._on_configure, add="+")
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
             w.bind("<Control-minus>", lambda e: self._zoom(-1))
             w.bind("<Control-l>", lambda e: self.clear())
+        self._bind_hotkeys()                                   # Ctrl-T, Alt-M ... (changeable: /hotkeys)
+        if self.cfg.get("clock", "off") != "off":
+            self._start_xtick()
 
     def _build_menu(self):
         m = tk.Menu(self.root)
@@ -1737,6 +1744,10 @@ class App:
         f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
         f.add_command(label="Aliases...   Ctrl+A", command=self.open_aliases)
         f.add_command(label="Panes / layout...   Ctrl+P", command=self.open_panes)
+        f.add_command(label="Timer...   Alt+T", command=self.open_timers)
+        f.add_command(label="Notepad   Alt+N", command=self.toggle_notepad)
+        f.add_command(label="Moon   Alt+M", command=self.open_moon)
+        f.add_command(label="Hotkeys...", command=self.open_hotkeys)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
         f.add_separator()
@@ -2247,11 +2258,11 @@ class App:
     def _panes_extra(self):
         """(extra columns, extra rows) the docked regions take beside/above the main text, so the
         DOS font fit leaves room for them."""
-        if layout is None or not self.cfg["layout"]["regions"]:
+        if layout is None or not self._visible_layout()["regions"]:
             return 0, 0
         cols = {"left": 0, "right": 0}
         rows = {"top": 0, "bottom": 0}
-        for r in self.cfg["layout"]["regions"]:
+        for r in self._visible_layout()["regions"]:
             if r["side"] in cols:
                 cols[r["side"]] = max(cols[r["side"]], r["size"] + (3 if self.dos else 1))
             else:
@@ -2264,7 +2275,8 @@ class App:
         self._layout_job = None
         if layout is None:
             return
-        regions = self.cfg["layout"]["regions"]
+        lay = self._visible_layout()
+        regions = lay["regions"]
         if not regions:
             if self._panes_active:
                 self._panes_active, self._pane_geom = False, None
@@ -2276,9 +2288,14 @@ class App:
             return
         cw, lh = self._pane_cell()
         if self.dos:
-            res = self._dos_geometry(W, H, cw, lh)
+            res = self._dos_geometry(W, H, cw, lh, lay)
         else:
-            res = layout.compute_layout(self.cfg["layout"], W, H, cw, lh, header_h=lh + 4, gap=4, pad_x=16)
+            res = layout.compute_layout(lay, W, H, cw, lh, header_h=lh + 4, gap=4, pad_x=16)
+        if len(regions) != len(self.cfg["layout"]["regions"]):       # folded areas: keep the real area ids
+            ids = [r["id"] for r in regions]
+            fix = lambda k: ids[int(k[1:]) - 1] if k[:1] == "r" and k[1:].isdigit() and 0 < int(k[1:]) <= len(ids) else k
+            res = dict(res, regions={fix(k): v for k, v in res["regions"].items()},
+                       hidden=[fix(k) for k in res.get("hidden", [])])
         first_time = not self._panes_active
         self._panes_active, self._pane_geom = True, res
         mx, my, mw, mh = res["main"]
@@ -2347,12 +2364,13 @@ class App:
             self._pane_scroll_visibility(key)
         self._style_region_ui()
 
-    def _dos_geometry(self, W, H, cw, lh):
+    def _dos_geometry(self, W, H, cw, lh, lay=None):
         """DOS look: whole-cell geometry with a double-line frame drawn behind it. Neighbouring
         areas share one line, so the screen reads as a single boxed page. Returns a compute_layout
         style result whose rectangles are the inside (text) areas."""
         C, R = max(1, W // cw), max(1, H // lh)
-        res = layout.compute_layout(self.cfg["layout"], C * cw, R * lh, cw, lh, header_h=3 * lh, gap=0, pad_x=2 * cw)
+        res = layout.compute_layout(lay or self.cfg["layout"], C * cw, R * lh, cw, lh, header_h=3 * lh, gap=0,
+                                    pad_x=2 * cw)
 
         def cells(rect):
             x, y, w, h = rect
@@ -2390,6 +2408,68 @@ class App:
                 fc.create_text(m.start() * cw, r * lh, text=m.group(), anchor="nw", fill=colour, font=self.f_norm)
         return out
 
+    # ---- hiding panes ------------------------------------------------------------------------
+    def _visible_layout(self):
+        """The layout without the areas the user has folded away."""
+        lay = self.cfg["layout"]
+        hidden = set(self.cfg.get("panes_hidden", []))
+        if not hidden:
+            return lay
+        return dict(lay, regions=[r for r in lay["regions"] if r["id"] not in hidden])
+
+    def toggle_region(self, rid):
+        hidden = list(self.cfg.get("panes_hidden", []))
+        if rid in hidden:
+            hidden.remove(rid)
+        elif any(r["id"] == rid for r in self.cfg["layout"]["regions"]):
+            hidden.append(rid)
+        self.cfg["panes_hidden"] = hidden
+        self._save_settings()
+        self.layout_panes()
+        self._update_badge()
+
+    def toggle_pane_area(self, n):
+        """Alt+1..9: fold away / bring back the area holding the nth pane. Alt+0: every area."""
+        if layout is None:
+            return
+        if n == 0:
+            ids = [r["id"] for r in self.cfg["layout"]["regions"]]
+            hidden = set(self.cfg.get("panes_hidden", []))
+            self.cfg["panes_hidden"] = [] if hidden >= set(ids) and ids else ids
+            self._save_settings()
+            self.layout_panes()
+            self._update_badge()
+            return
+        names = layout.region_pane_names(self.cfg["layout"])
+        if 1 <= n <= len(names):
+            reg = layout.find_region(self.cfg["layout"], names[n - 1])
+            if reg is not None:
+                self.toggle_region(reg["id"])
+
+    def unseen_summary(self):
+        """'OOC*3 Tells*1': panes with unread lines that are not on screen right now."""
+        out = []
+        for key, pane in self._panes.items():
+            if pane["unread"] > 0 and not self._pane_visible(key):
+                d = self._find_pane_def(key)
+                out.append("%s*%d" % (d["title"] if d else key, pane["unread"]))
+        return " ".join(out)
+
+    def _update_badge(self):
+        text = self.unseen_summary()
+        try:
+            self.pane_badge.configure(text=("Unread: " + text) if text else "")
+        except (tk.TclError, AttributeError):
+            pass
+        self.update_dosbar()
+
+    def _update_badge_quiet(self):
+        try:
+            text = self.unseen_summary()
+            self.pane_badge.configure(text=("Unread: " + text) if text else "")
+        except (tk.TclError, AttributeError):
+            pass
+
     def _hide_pane_widgets(self):
         if self._framecv is not None:
             self._framecv.place_forget()
@@ -2410,6 +2490,12 @@ class App:
                 lbl = tk.Label(ui["frame"], padx=6, cursor="hand2")
                 lbl.bind("<Button-1>", lambda e, k=key: self.select_pane(k))
                 ui["labels"][key] = lbl
+        if "hide" not in ui:
+            hb = tk.Label(ui["frame"], text=" \u25bc " if not self.dos else " - ", padx=2, cursor="hand2")
+            hb.bind("<Button-1>", lambda e, r=reg["id"]: self.toggle_region(r))
+            ui["hide"] = hb
+        ui["hide"].pack_forget()
+        ui["hide"].pack(side="right", fill="y")
         for lbl in ui["labels"].values():
             lbl.pack_forget()
         for key in want:
@@ -2422,6 +2508,7 @@ class App:
 
     def _style_region_ui(self):
         """Tab headers: the active tab is highlighted, tabs with unread lines say how many."""
+        self._update_badge_quiet()
         if not self._region_ui:
             return
         th = self.theme
@@ -2441,6 +2528,8 @@ class App:
             try:
                 ui["frame"].configure(bg=base_bg)
                 active = self._active_pane_key(reg)
+                if "hide" in ui:
+                    ui["hide"].configure(bg=base_bg, fg=base_fg, font=self.f_norm)
                 for key, lbl in ui["labels"].items():
                     d = self._find_pane_def(key) if key else None
                     title = d["title"] if d else ""
@@ -2565,6 +2654,12 @@ class App:
             cands = [(1, 0, "OFFLINE", "dim")]
         if self._notice_text:
             cands.append((1, 0.5, self._notice_text[:max(10, avail // 2)], "key"))
+        unseen = self.unseen_summary()
+        if unseen:
+            cands.append((2, 0.6, "Unread: " + unseen, "warn"))
+        tseg = self.timer_segment()
+        if tseg:
+            cands.append((2, 0.7, "Timer " + tseg, "key"))
         pr = self._prompt_view() if self.connected else None
         if pr and pr.get("hp"):
             cur, mx, label = pr["hp"]
@@ -2594,7 +2689,8 @@ class App:
                 chosen.append((order, text, role, join))
                 used += cost
         chosen.sort(key=lambda c: c[0])
-        tail = dosui.format_duration(time.time() - self._online_since) if self.connected else ""
+        tail = " ".join(x for x in (self.clock_text(),
+                                    dosui.format_duration(time.time() - self._online_since) if self.connected else "") if x)
         return [(t, r, j) if j else (t, r) for _o, t, r, j in chosen], tail
 
     def update_dosbar(self):
@@ -2606,7 +2702,8 @@ class App:
             up = self.connected or self.connecting
             bar.set_hints([("F1", "Help"), ("F2", "Hangup" if up else "Dial"), ("F3", "Log"),
                            ("F5", "Skin"), ("F6", "Colours"), ("F7", "Font"), ("F10", "Menu"),
-                           ("F11", "Full"), ("^W", "Worlds")], right="Alt-D Normal  Alt-X Exit")
+                           ("F11", "Full"), ("^W", "Worlds")],
+                           right="Alt-D Normal  Alt-X Exit")
             cw = max(1, self.f_norm.measure("0"))
             cols = int(bar.winfo_width() / cw) if bar.winfo_width() > 100 else int(self.cfg["dos_cols"])
             segs, tail = self._dos_segments(max(20, cols - 2))
@@ -2662,6 +2759,10 @@ class App:
             {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
             {"label": "Aliases...", "hotkey": "A", "shortcut": "Ctrl-A", "action": self.open_aliases},
             {"label": "Panes / layout...", "hotkey": "V", "shortcut": "Ctrl-P", "action": self.open_panes},
+            {"label": "Timer...", "hotkey": "I", "shortcut": "Alt-T", "action": self.open_timers},
+            {"label": "Notepad", "hotkey": "D", "shortcut": "Alt-N", "action": self.toggle_notepad},
+            {"label": "Moon", "hotkey": "M", "shortcut": "Alt-M", "action": self.open_moon},
+            {"label": "Hotkeys...", "hotkey": "J", "action": self.open_hotkeys},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
              "action": self.toggle_log},
@@ -2741,6 +2842,9 @@ class App:
         var = getattr(self, "_xvars", {}).get(key)
         if var is not None and var.get() != value:
             var.set(value)
+        if key == "clock":
+            self._start_xtick()
+            self._update_clock()
         if key == "links" and not value:
             for w in self._text_widgets():
                 w.tag_remove("link", "1.0", "end")
@@ -3740,12 +3844,18 @@ class App:
         return self._dos_menu("Game palette", items, back=lambda: self.dos_colors_menu(False))
 
     def dos_key_menu(self, kind):
-        keys, labels = (COLOR_KEYS, COLOR_LABELS) if kind == "ui" else (DOS_KEYS, DOS_LABELS)
-        cur = self.theme if kind == "ui" else self._dc()
+        if kind == "ui":
+            keys, labels = COLOR_KEYS, COLOR_LABELS
+        else:                           # the DOS screen also has its typed-command and message colours
+            keys, labels = ("echo", "system") + DOS_KEYS, dict(COLOR_LABELS, **DOS_LABELS)
+        cur = self.theme if kind == "ui" else dict(self._dc(), echo=self.theme["echo"], system=self.theme["system"])
+
+        def cur_now(k, kind):
+            return (self.theme if kind == "ui" or k in ("echo", "system") else self._dc())[k]
         items = [{"label": "%-26s %s" % (labels[k], cur[k]), "swatch": cur[k],
                   "hotkey": str(i + 1) if i < 9 else None,
                   "action": (lambda k=k: self.dos_pick_color(
-                      labels[k], (self.theme if kind == "ui" else self._dc())[k],
+                      labels[k], cur_now(k, kind),
                       lambda h, k=k: self._set_override((k,), h), lambda: self.dos_key_menu(kind)))}
                  for i, k in enumerate(keys)]
         return self._dos_menu("Interface colours" if kind == "ui" else "DOS screen colours", items,
@@ -5000,13 +5110,17 @@ class App:
     def _local(self, line):
         cmd, _, arg = line[1:].partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
+        if self._extras_command(cmd, arg):
+            return
         if cmd in ("help", "?"):
             self.system("Local commands:\n"
                         "  /connect [host [port]]   /disconnect   /reconnect   /quit\n"
                         "  /alias name expansion    (use ; between commands, $* for arguments)\n"
                         "  /unalias name            /aliases\n"
                         "  /log [file]              start or stop logging\n"
-                        "  /clear                   //text sends \"/text\" to the game")
+                        "  /clear                   //text sends \"/text\" to the game\n"
+                        "  /timer 10m [label]       /timer list | cancel [n]   (also 21:30, game 21:30)\n"
+                        "  /moon   /notes   /hotkeys")
         elif cmd == "connect":
             bits = arg.split()
             if bits:
