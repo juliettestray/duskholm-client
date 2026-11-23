@@ -1237,9 +1237,551 @@ def _():
     q.destroy()
 
 
-@check('runtime < 40s')
+# ------------------------------------------------------------------ table
+TCOLS = [{'title': 'Name', 'width': 0}, {'title': 'Address', 'width': 14},
+         {'title': 'Port', 'width': 5, 'align': 'r'}]
+
+
+def trows(n, role=None):
+    out = []
+    for i in range(n):
+        r = ['Board %d' % i, 'host%d.org' % i, i]
+        out.append({'cells': r, 'role': role} if role else r)
+    return out
+
+
+def mk_table(n=8, log=None, **kw):
+    log = [] if log is None else log
+    kw.setdefault('height', 5)
+    kw.setdefault('hints', [('Enter', 'Dial'), ('A', 'Add'), ('Esc', 'Close')])
+    t = dosui.DosTable(kw.pop('parent', area), kw.pop('title', 'Dialing'), kw.pop('columns', TCOLS),
+                       trows(n) if isinstance(n, int) else n, kw.pop('colors', C), kw.pop('font', FONT),
+                       lambda a, i, tb: log.append((a, i, tb)), **kw)
+    return t, log
+
+
+def tclick(t, col, row, dy=None):
+    t._cv.event_generate('<Button-1>', x=col * t.cw + 2, y=row * t.lh + (t.lh // 2 if dy is None else dy))
+    upd(1)
+
+
+class FakeKey:
+    def __init__(self, keysym, char='', state=0):
+        self.keysym, self.char, self.state = keysym, char, state
+
+
+def fkey(t, keysym, char=''):
+    """Deliver a key Windows cannot synthesise through event_generate (keypad keysyms)."""
+    t._on_key(FakeKey(keysym, char))
+    upd(1)
+
+
+def dclick(t, col, row, dy=None):
+    for _i in range(2):
+        tclick(t, col, row, dy)
+
+
+def text_items(t):
+    cv = t._cv
+    return [(cv.itemcget(i, 'text'), cv.itemcget(i, 'fill'), cv.coords(i))
+            for i in cv.find_withtag('deco') if cv.type(i) == 'text']
+
+
+@check('table: layout, alignment, flexible column, truncation, right align, header')
 def _():
-    assert time.time() - T0 < 40, time.time() - T0
+    rows = [['A', 'b.org', 7], ['Very long board name ' * 5, 'x' * 60, 12345678], ['x'], None,
+            {'cells': ['Dict', 'row', 1, 'extra cell ignored'], 'role': 'bogus'}, 5, ()]
+    t, log = mk_table(rows, min_width=60)
+    t.open()
+    upd()
+    assert t.row_count == 6, t.row_count
+    assert all(len(l) == t._cols for l in t.plain), [len(l) for l in t.plain]
+    assert len(t.plain) == t._rows and t.winfo_width() == t._cols * t.cw
+    assert t._cols >= 60 and t._widths[1] == 14 and t._widths[2] == 5
+    assert sum(t._widths) + 6 + 2 == t._inner                 # flexible column took the rest
+    top, head, rule = t.plain[0], t.plain[1], t.plain[2]
+    assert top[0] == '╔' and top[-1] == '╗' and ' Dialing ' in top
+    assert abs(top.index(' Dialing ') - (t._cols - 9) / 2) <= 1.5
+    assert head.startswith('║ Name') and 'Address' in head and head.rstrip('║').rstrip().endswith('Port')
+    assert rule[0] == '╟' and rule[-1] == '╢' and rule.count('┼') == 2
+    data = t.plain[3:3 + t._vis]
+    bars = [[i for i, ch in enumerate(l) if ch == '│'] for l in [head] + data[:t.row_count]]
+    assert all(b == bars[0] and len(b) == 2 for b in bars), bars
+    assert [i for i, ch in enumerate(rule) if ch == '┼'] == bars[0]
+    assert '…' in data[1] and data[1].count('…') == 3            # name, address, number cell cut
+    assert data[2].startswith('║ x') and data[2][bars[0][1] + 1:-1].strip() == ''
+    assert data[3].startswith('║ Dict') and 'extra' not in data[3]
+    assert data[4].startswith('║ 5')                              # non-list row -> one cell
+    assert data[0].split('│')[2][:-2].endswith('    7'), repr(data[0].split('│')[2])   # right aligned
+    assert t.plain[-1][0] == '╚' and t.plain[-1][-1] == '╝' and '╧' not in t.plain[-1]
+    assert t.plain[-3][0] == '╟' and t.plain[-3].count('┴') == 2
+    assert t.plain[-2].startswith('║ Enter Dial  A Add  Esc Close')
+    for s, f, (x, y) in text_items(t):                           # pixel-exact: cell boundaries
+        assert x % t.cw == 0 and y % t.lh == 0, (s, x, y)
+    # fixed-only columns: extra width goes to the last column
+    t2, _l = mk_table(3, columns=[{'title': 'A', 'width': 6}, {'title': 'B', 'width': 6, 'align': 'r'}],
+                      min_width=40)
+    assert t2._cols == 40 and t2._widths[0] == 6 and t2._widths[1] == 40 - 2 - 2 - 3 - 6
+    assert all(len(l) == 40 for l in t2.plain)
+    # width 3 minimum, a second flexible column becomes 3 wide
+    t3, _l = mk_table(2, columns=[{'title': 'x', 'width': 0}, {'title': 'y', 'width': 0}, {'title': 'z', 'width': 1}])
+    assert t3._widths[1] == 3 and t3._widths[2] == 3 and t3._widths[0] >= 8
+    # no footer: no footer rows, junctions in the bottom border
+    t4, _l = mk_table(3, hints=None)
+    assert t4._rows == t4._vis + 4 and t4.plain[-1].count('╧') == 2 and t4.plain[3].startswith('║ Board')
+    for x in (t, t2, t3, t4):
+        x.destroy()
+
+
+@check('table: roles colour rows, selection bar, header and key colours')
+def _():
+    cs = dosui.dos_colors({})
+    rows = [{'cells': ['n%d' % i, 'a', 1], 'role': r} for i, r in enumerate(['normal', 'dim', 'good', 'warn', 'bad'])]
+    t, _l = mk_table(rows, selected=0, height=5)
+    t.open(); upd()
+    want = {'n0': cs['dos_menu_sel_fg'], 'n1': cs['dos_menu_dim'], 'n2': cs['good'], 'n3': cs['warn'],
+            'n4': cs['bad']}
+    got = {s[1:3]: f for s, f, xy in text_items(t) if s.startswith(' n')}
+    assert got == want, got
+    t.select(1); upd()
+    got = {s[1:3]: f for s, f, xy in text_items(t) if s.startswith(' n')}
+    assert got['n0'] == cs['dos_menu_fg'] and got['n1'] == cs['dos_menu_sel_fg']
+    bars = [i for i in t._cv.find_withtag('deco') if t._cv.type(i) == 'rectangle'
+            and t._cv.itemcget(i, 'fill') == cs['dos_menu_sel_bg']]
+    assert len(bars) == 1
+    x0, y0, x1, y1 = t._cv.coords(bars[0])
+    assert x0 == t.cw and x1 + 1 == (t._cols - 1) * t.cw and (y1 + 1 - y0) == t.lh and y0 == 4 * t.lh
+    hd = [f for s, f, xy in text_items(t) if s.startswith(' Name')]
+    assert hd and all(f == cs['dos_key_fg'] for f in hd)
+    keys = [(s, f) for s, f, xy in text_items(t) if s in ('Enter', 'A', 'Esc')]
+    assert len(keys) == 3 and all(f == cs['dos_key_fg'] for s, f in keys)
+    t.destroy()
+
+
+@check('table: empty state, 1 row, hints garbage, no footer')
+def _():
+    t, log = mk_table([], hints=[('Enter', 'Dial'), None, 5, ('x',)], height=None)
+    t.open(); upd()
+    assert t.selected is None and t.row_count == 0 and t._vis == 3
+    line = [l for l in t.plain if '(empty)' in l]
+    assert len(line) == 1
+    assert abs(line[0].index('(empty)') - (t._cols - 7) / 2) <= 1.5
+    assert all('│' not in l for l in t.plain[3:3 + t._vis])
+    for ks in ('Up', 'Down', 'Prior', 'Next', 'Home', 'End'):
+        key(t._cv, ks)
+        assert t.selected is None
+    key(t._cv, 'Return')
+    assert log[-1][:2] == ('select', None)
+    t.select(3); assert t.selected is None
+    t.close()
+    t.set_rows(trows(1)); t.open(); upd()
+    assert t.selected == 0 and t._vis == 3
+    for ks in ('Up', 'Down', 'End', 'Home', 'Next', 'Prior'):
+        key(t._cv, ks)
+        assert t.selected == 0
+    assert all(len(l) == t._cols for l in t.plain)
+    t.destroy()
+    t, log = mk_table(0, hints=None, height=2)
+    assert t._vis == 2 and len(t.plain) == 6
+    t.destroy()
+
+
+@check('table: selection movement, ends do not wrap, PageUp/PageDown/Home/End')
+def _():
+    t, log = mk_table(30, height=6, selected=0)
+    t.open(); upd()
+    assert t.selected == 0 and t._vis == 6
+    key(t._cv, 'Up'); assert t.selected == 0                  # no wrap at the top
+    key(t._cv, 'Down'); assert t.selected == 1
+    fkey(t, 'KP_Down'); assert t.selected == 2
+    fkey(t, 'KP_Up'); assert t.selected == 1
+    key(t._cv, 'Next'); assert t.selected == 6, t.selected     # a page = vis-1
+    fkey(t, 'KP_Next'); assert t.selected == 11
+    key(t._cv, 'Prior'); assert t.selected == 6
+    fkey(t, 'KP_Prior'); key(t._cv, 'Prior'); assert t.selected == 0
+    key(t._cv, 'End'); assert t.selected == 29 and t.offset == 30 - 6
+    key(t._cv, 'Down'); assert t.selected == 29                # no wrap at the bottom
+    key(t._cv, 'Next'); assert t.selected == 29
+    key(t._cv, 'Home'); assert t.selected == 0 and t.offset == 0
+    fkey(t, 'KP_End'); assert t.selected == 29
+    fkey(t, 'KP_Home'); assert t.selected == 0
+    assert not log                                              # navigation never calls on_action
+    t.select(15); assert t.selected == 15 and t.offset <= 15 < t.offset + 6
+    t.select(-4); assert t.selected == 0
+    t.select(999); assert t.selected == 29
+    t.select('x'); assert t.selected == 29
+    t.select(None); assert t.selected == 29
+    for sel, want in ((-5, 0), (3, 3), (100, 29), ('q', 0), (None, 0)):
+        u, _l = mk_table(30, selected=sel)
+        assert u.selected == want, (sel, u.selected)
+        u.destroy()
+    t.destroy()
+
+
+@check('table: scrolling 100 and 5000 rows keeps the selection visible, renders only visible rows')
+def _():
+    for n in (100, 5000):
+        t, log = mk_table(n, height=7)
+        t.open(); upd()
+        t0 = time.time()
+        for _i in range(40):
+            key(t._cv, 'Down')
+            assert t.offset <= t.selected < t.offset + 7, (t.selected, t.offset)
+        assert t.selected == 40
+        for _i in range(5):
+            key(t._cv, 'Next')
+            assert t.offset <= t.selected < t.offset + 7
+        key(t._cv, 'End')
+        assert t.selected == n - 1 and t.offset == n - 7
+        assert 'host%d.org' % (n - 1) in t.plain[3 + 6] and 'Board %d ' % (n - 8) not in ''.join(t.plain)
+        key(t._cv, 'Home')
+        assert t.offset == 0 and 'Board 0' in t.plain[3]
+        for _i in range(12):
+            key(t._cv, 'Prior')
+            assert t.offset <= t.selected < t.offset + 7
+        assert len(t._cv.find_all()) < 600, len(t._cv.find_all())     # only visible rows are drawn
+        t.select(n // 2)
+        assert t.offset <= t.selected < t.offset + 7
+        t.select(0); upd()                       # scrollbar: arrows at the ends, thumb in the track
+        col = [l[-1] for l in t.plain[3:3 + 7]]
+        assert col[0] == '▲' and col[-1] == '▼' and len(col) == 7, col
+        assert col[1] == '█', col
+        t.select(n - 1)
+        col = [l[-1] for l in t.plain[3:3 + 7]]
+        assert col[-2] == '█', col
+        assert time.time() - t0 < 12
+        t.destroy()
+    t, _l = mk_table(5, height=7)
+    assert all(l[-1] == '║' for l in t.plain[3:10]) and t._scroll_cells() == []
+    t.destroy()
+    t, _l = mk_table(20, height=8)
+    big = sum(1 for l in t.plain[3:11] if l[-1] == '█')
+    t.set_rows(trows(2000))
+    small = sum(1 for l in t.plain[3:11] if l[-1] == '█')
+    assert big > small >= 1, (big, small)
+    t.destroy()
+
+
+@check('table: default key mapping, on_action arguments, close semantics, actions do not close')
+def _():
+    focus(entry_focus)
+    t, log = mk_table(6, selected=2)
+    t.open(); upd()
+    assert root.focus_get() is t._cv
+    for ks, act in (('Return', 'select'), ('a', 'add'), ('A', 'add'),
+                    ('Insert', 'add'), ('e', 'edit'), ('E', 'edit'), ('Delete', 'remove'), ('r', 'remove'),
+                    ('R', 'remove')):
+        key(t._cv, ks)
+        a, i, tb = log[-1]
+        assert (a, i) == (act, 2) and tb is t, (ks, log[-1][:2])
+        assert t.is_open()
+    fkey(t, 'KP_Enter')
+    assert log[-1][:2] == ('select', 2)
+    n = len(log)
+    for ks in ('x', 'space', 'F5', 'Tab', 'BackSpace', 'z', '1'):
+        key(t._cv, ks)
+    key(t._cv, 'a', state=4)                 # Ctrl-A is not 'a'
+    assert len(log) == n and t.is_open()
+    key(t._cv, 'Escape')
+    assert log[-1][:2] == ('close', None) and not t.is_open() and len(log) == n + 1
+    assert root.focus_get() is entry_focus, root.focus_get()
+    key(t._cv, 'Escape')
+    assert len(log) == n + 1                 # closed table does not fire again
+    seen = []
+    t._on_action = lambda a, i, tb: seen.append((a, i, tb.is_open()))
+    t.open(); upd(); key(t._cv, 'Escape')
+    assert seen == [('close', None, False)]
+    t.destroy()
+    # custom mapping replaces the defaults; names are case-insensitive for letters
+    t, log = mk_table(6, keys={'d': 'dial', 'F2': 'edit', 'Escape': 'close', 'plus': 'add', 'q': 'close',
+                               'Return': 'go', 'X': 'drop'})
+    t.open(); upd()
+    key(t._cv, 'D'); key(t._cv, 'd'); key(t._cv, 'F2'); key(t._cv, 'x'); key(t._cv, 'Return')
+    assert [a for a, i, tb in log] == ['dial', 'dial', 'edit', 'drop', 'go'], log
+    n = len(log)
+    key(t._cv, 'a'); key(t._cv, 'Delete'); fkey(t, 'KP_Enter'); key(t._cv, 'e'); key(t._cv, 'Insert')
+    assert len(log) == n                       # defaults no longer apply
+    t._cv.event_generate('<Key>', keysym='plus'); upd(1)
+    assert log[-1][0] == 'add'
+    key(t._cv, 'Q')
+    assert not t.is_open() and log[-1][:2] == ('close', None)
+    t.destroy()
+    # nav keys are not remappable
+    t, log = mk_table(6, keys={'Down': 'x', 'Home': 'y', 'Up': 'z'}, selected=1)
+    t.open(); upd(); key(t._cv, 'Down'); key(t._cv, 'Home')
+    assert t.selected == 0 and log == []
+    t.destroy()
+    # keys={} -> no actions at all; garbage keys ignored
+    for kk in ({}, {None: 'a', '': 'b', 'x': None}, 5, 'abc', [1, 2]):
+        t, log = mk_table(3, keys=kk)
+        t.open(); upd()
+        for ks in ('Return', 'Escape', 'a', 'x'):
+            key(t._cv, ks)
+        if kk in ({}, {None: 'a', '': 'b', 'x': None}):
+            assert log == [] and t.is_open()
+        t.destroy()
+    # callback may replace rows and close; exceptions leave the state sane
+    t, log = mk_table(4)
+    t._on_action = lambda a, i, tb: (tb.set_rows(trows(2)), tb.close()) if a == 'remove' else None
+    t.open(); upd(); key(t._cv, 'Delete')
+    assert not t.is_open() and t.row_count == 2
+    t.open(); upd()
+    errs = []
+    root.report_callback_exception = lambda *a: errs.append(a)
+    try:
+        t._on_action = lambda a, i, tb: 1 / 0
+        key(t._cv, 'Return')
+        assert errs and t.is_open() and t.selected == 0
+        key(t._cv, 'Down'); assert t.selected == 1
+        key(t._cv, 'Escape')
+        assert not t.is_open() and len(errs) == 2
+    finally:
+        del root.report_callback_exception
+    t._on_action = None
+    t.open(); key(t._cv, 'Return'); key(t._cv, 'Escape')
+    t.destroy()
+
+
+@check('table: mouse click, double-click, wheel, scroll arrows and track, outside click')
+def _():
+    t, log = mk_table(40, height=6, selected=0)
+    t.open(40, 30); upd()
+    tclick(t, 5, 3 + 2)
+    assert t.selected == 2 and log == []
+    tclick(t, 5, 3 + 5)
+    assert t.selected == 5
+    tclick(t, 5, 1); tclick(t, 5, 2); tclick(t, 5, 3 + 6); tclick(t, 0, 4)       # header, rule, below, border
+    assert t.selected == 5 and log == []
+    tclick(t, t._seps[0], 3 + 1)                                            # on a rule: still the row
+    assert t.selected == 1
+    dclick(t, 5, 3 + 3)
+    assert t.selected == 3 and log[-1][:2] == ('select', 3), log             # double -> 'Return' action
+    n = len(log)
+    n = len(log)
+    tclick(t, 5, 3 + 4)
+    assert len(log) == n                                                      # single click: no action
+    tclick(t, 5, 3 + 4)
+    assert t.selected == 4 and log[-1][:2] == ('select', 4) and len(log) == n + 1
+    n = len(log)
+    dclick(t, 5, 1)
+    assert len(log) == n and t.is_open()                                      # header double click: nothing
+    # wheel: 3 rows per notch, selection pulled into view
+    t.select(0); upd()
+    t._cv.event_generate('<MouseWheel>', x=60, y=60, delta=-120); upd(1)
+    assert t.offset == 3 and t.selected == 3, (t.offset, t.selected)
+    t._cv.event_generate('<MouseWheel>', x=60, y=60, delta=120); upd(1)
+    assert t.offset == 0 and t.selected == 3
+    t._cv.event_generate('<MouseWheel>', x=60, y=60, delta=120); upd(1)
+    assert t.offset == 0                                                      # clamped
+    for _i in range(40):
+        t._cv.event_generate('<MouseWheel>', x=60, y=60, delta=-120)
+    upd(1)
+    assert t.offset == 40 - 6 and t.selected == 34              # pulled to the first visible row
+    t._cv.event_generate('<Button-4>', x=60, y=60); upd(1)
+    assert t.offset == 40 - 6 - 3 and t.offset <= t.selected < t.offset + 6
+    # arrows and track
+    t.select(0); upd()
+    tclick(t, t._cols - 1, 3 + 5)
+    assert t.offset == 1 and t.selected == 1
+    tclick(t, t._cols - 1, 3 + 0)
+    assert t.offset == 0
+    tclick(t, t._cols - 1, 3 + 0)
+    assert t.offset == 0
+    tclick(t, t._cols - 1, 3 + 4)                   # track below the thumb: page down
+    assert t.offset == 5
+    tclick(t, t._cols - 1, 3 + 1)                   # on the thumb itself: nothing
+    assert t.offset == 5
+    key(t._cv, 'End'); assert t.offset == 34
+    tclick(t, t._cols - 1, 3 + 1)                   # track above the thumb: page up
+    assert t.offset == 29 and t.offset <= t.selected < t.offset + 6 and t.is_open()
+    # clicks outside never close it
+    area.event_generate('<Button-1>', x=850, y=500); upd(2)
+    root.event_generate('<Button-1>', x=5, y=5); upd(2)
+    assert t.is_open() and not [1 for a, i, tb in log if a == 'close']
+    key(t._cv, 'End'); assert t.selected == 39       # keys still work after clicking
+    t.destroy()
+    t, log = mk_table(40, height=6, keys={'a': 'add'})
+    t.open(); upd()
+    dclick(t, 5, 4)
+    assert log == [] and t.selected == 1                                       # Return unmapped -> no action
+    t.destroy()
+
+
+@check('table: set_rows keeps selection, clamps, shrinks, empties, keeps scroll; height=None')
+def _():
+    t, log = mk_table(50, height=6, selected=0)
+    t.open(); upd()
+    t.select(30); off = t.offset
+    t.set_rows(trows(60))
+    assert t.selected == 30 and t.offset == off and t.row_count == 60
+    t.set_rows(trows(20))
+    assert t.selected == 19 and t.offset == 14
+    t.set_rows(trows(3))
+    assert t.selected == 2 and t.offset == 0 and all(len(l) == t._cols for l in t.plain)
+    t.set_rows([])
+    assert t.selected is None and t.row_count == 0 and t.is_open()
+    assert any('(empty)' in l for l in t.plain)
+    key(t._cv, 'Down'); key(t._cv, 'End'); assert t.selected is None
+    t.set_rows(trows(10), selected=7)
+    assert t.selected == 7 and t.offset <= 7 < t.offset + 6
+    t.set_rows(trows(10), selected=99)
+    assert t.selected == 9
+    t.set_rows(trows(10), selected=-3)
+    assert t.selected == 0
+    t.set_rows(None); assert t.row_count == 0
+    t.set_rows([None, None, ['x']]); assert t.row_count == 1 and t.selected == 0
+    t.set_rows(trows(100)); t.select(50); t.set_rows(trows(100))
+    assert t.selected == 50 and t.offset <= 50 < t.offset + 6
+    assert log == []
+    t.destroy()
+    t, log = mk_table(2, height=None, hints=None)       # fits the rows (min 3, max ~60% of parent)
+    t.open(); upd()
+    assert t._vis == 3
+    t.set_rows(trows(8)); upd()
+    assert t._vis == 8 and t.winfo_height() == t._rows * t.lh and t.is_open()
+    t.set_rows(trows(500)); upd()
+    cap = int(area.winfo_height() * 0.6) // t.lh - 4
+    assert t._vis == cap, (t._vis, cap)
+    assert t.winfo_x() >= 0 and t.winfo_y() >= 0
+    t.set_rows(trows(1)); upd(); assert t._vis == 3
+    t.close(); t.set_rows(trows(4)); t.open(); upd(); assert t.row_count == 4 and t.is_open()
+    t.destroy()
+
+
+@check('table: restyle (colours, fonts 9..32pt), height/width clamp, shadows')
+def _():
+    t, log = mk_table(30, height=8, selected=4)
+    t.open(); upd()
+    w1 = t.winfo_width()
+    t.restyle(dosui.dos_colors({'dos_menu_bg': '#202020', 'dos_menu_sel_bg': '#808000'}), FONT_BIG)
+    upd()
+    assert t.is_open() and t.winfo_width() > w1 and str(t._cv.cget('bg')) == '#202020'
+    assert t.selected == 4 and t.offset <= 4 < t.offset + t._vis
+    assert t.winfo_height() <= area.winfo_height()
+    assert any(str(t._cv.itemcget(i, 'fill')) == '#808000' for i in t._cv.find_withtag('deco')
+               if t._cv.type(i) == 'rectangle')
+    for sz in (9, 12, 20, 32):
+        f = tkfont.Font(family='Consolas', size=sz)
+        t.restyle(C, f)
+        upd()
+        assert t._wpx == t._cols * t.cw and t._hpx == t._rows * t.lh
+        assert t.winfo_width() <= area.winfo_width() and t.winfo_height() <= area.winfo_height()
+        assert t.winfo_x() >= 0 and t.winfo_y() >= 0
+        assert all(len(l) == t._cols for l in t.plain)
+        assert t.offset <= t.selected < t.offset + t._vis
+        for ks in ('Next', 'End', 'Home'):
+            key(t._cv, ks)
+        for s, fl, (x, y) in text_items(t):
+            assert x % t.cw == 0 and y % t.lh == 0
+    t.restyle(None)
+    t.restyle('garbage', FONT)
+    upd()
+    before = children_count(area)
+    t.close(); assert children_count(area) == before - 2      # shadows go with close
+    t.open(); assert children_count(area) == before
+    t.close(); t.destroy()
+    t, log = mk_table(500, height=500, min_width=500, font=FONT_BIG)
+    t.open(); upd()
+    assert t.winfo_height() <= area.winfo_height() and t.winfo_width() <= area.winfo_width()
+    assert t.selected == 0
+    t.destroy()
+    t, log = mk_table(5, title='T' * 300, hints=[('K' * 100, 'L' * 100)], columns=[
+        {'title': 'C' * 200, 'width': 90}, {'title': 'D', 'width': 90}], min_width=1000)
+    t.open(); upd()
+    assert t.winfo_width() <= area.winfo_width() and all(len(l) == t._cols for l in t.plain)
+    t.destroy()
+
+
+@check('table: tiny parent, odd inputs, long cells never raise')
+def _():
+    tiny = tk.Frame(root, width=60, height=40)
+    tiny.place(x=0, y=0)
+    upd()
+    for f in (FONT_SMALL, FONT_BIG):
+        t, log = mk_table(50, parent=tiny, font=f, height=None)
+        t.open(); upd()
+        for ks in ('Down', 'Next', 'End', 'Home', 'Up', 'Prior', 'Return', 'a'):
+            key(t._cv, ks)
+        t._cv.event_generate('<MouseWheel>', x=3, y=3, delta=-120)
+        tclick(t, 1, 3); tclick(t, 1, 4)
+        t.set_rows([]); t.set_rows(trows(3)); t.restyle(C, f); t.select(2)
+        assert all(len(l) == t._cols for l in t.plain)
+        t.close(); t.destroy()
+    tiny.destroy()
+    weird = [None, 5, 'str', [], (), {}, {'cells': None}, {'cells': 'abc'}, {'cells': [None, 3.5, b'x', 'é\n\t\r']},
+             [object()], ['\n' * 100], ['W' * 10000, 'Q' * 10000], {'role': None, 'cells': ['x']}]
+    for cols in (None, [], 5, [None], ['a', 3], [{'title': None, 'width': 'x'}], [{'width': -5}],
+                 [{'title': 'x', 'width': 0}] * 4, [{'title': 'z', 'width': 1000}] * 3,
+                 [{'title': 'r', 'width': 4, 'align': 'R'}, {'title': 'q', 'align': 5}]):
+        t, log = mk_table(weird, columns=cols, height='x', min_width='y', title=None, selected=object(),
+                          hints='garbage')
+        t.open(); upd()
+        assert all(len(l) == t._cols for l in t.plain), cols
+        for ks in ('Down', 'End', 'Return', 'Up', 'Home'):
+            key(t._cv, ks)
+        t.destroy()
+    t = dosui.DosTable(area, None, None, None, None, None, None)
+    t.open(); upd(); key(t._cv, 'Return'); key(t._cv, 'Escape'); t.destroy()
+    t, log = mk_table(5, height=0); assert t._vis >= 1; t.destroy()
+    t, log = mk_table(5, height=-3); assert t._vis >= 1; t.destroy()
+
+
+@check('table: lifecycle - destroy while open, double close, parent destroyed, no leaks after 100 cycles')
+def _():
+    focus(entry_focus)
+    before = children_count(area)
+    t, log = mk_table(5)
+    t.open(); upd()
+    t.destroy()
+    t.close(); t.close(); t.destroy()
+    upd()
+    assert log == [] and children_count(area) == before
+    t, log = mk_table(5)                                        # destroy from inside the callback
+    t._on_action = lambda a, i, tb: (log.append(a), tb.destroy())
+    t.open(); upd(); key(t._cv, 'Return')
+    assert log == ['select'] and children_count(area) == before
+    t, log = mk_table(5)
+    t._on_action = lambda a, i, tb: (log.append(a), tb.destroy())
+    t.open(); upd(); key(t._cv, 'Escape')
+    assert log == ['close'] and children_count(area) == before
+    focus(entry_focus)
+    t, log = mk_table(5)                                        # close() is silent; focus restored
+    t.open(); t.close(); t.close(); upd()
+    assert log == [] and root.focus_get() is entry_focus
+    t.open(); t.open(); upd(); t.close(); upd()
+    assert root.focus_get() is entry_focus and log == [] and not t.is_open()
+    t.destroy()
+    p = tk.Frame(root, width=300, height=200); p.place(x=0, y=0); upd()
+    t, log = mk_table(5, parent=p)                              # parent destroyed while open
+    t.open(); upd()
+    p.destroy(); upd()
+    t.close(); t.destroy(); t.close()
+    assert log == []
+    after_before = root.tk.call('after', 'info')
+    b0 = str(root.tk.call('bind', root._w, '<ButtonPress-1>'))
+    for n in range(100):
+        t, log = mk_table(1 + n % 7)
+        if n % 2:
+            t.open()
+            key(t._cv, 'Down')
+        if n % 5 == 0:
+            t.set_rows(trows(n))
+        t.destroy()
+    upd(3)
+    assert children_count(area) == before, (children_count(area), before)
+    assert len(root.tk.call('after', 'info')) == len(after_before)
+    assert str(root.tk.call('bind', root._w, '<ButtonPress-1>')).strip() == b0.strip()
+    t, log = mk_table(5)
+    t.open(); upd()
+    assert children_count(area) == before + 3
+    t.close(); assert children_count(area) == before + 1
+    t.destroy(); assert children_count(area) == before
+    assert 'DosTable' in dosui.__all__
+
+
+@check('runtime < 45s')
+def _():
+    assert time.time() - T0 < 45, time.time() - T0
 
 
 try:

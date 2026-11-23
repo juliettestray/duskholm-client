@@ -1,8 +1,9 @@
 # Duskholm client
 
-A small, dependency-free telnet client for the Haven-Duskholm MUD. Two Python files
-(`duskholm_client.py` plus `dosui.py`, the widgets for the DOS look), tkinter only (ships with
-the standard Windows Python installer). Keep the two files together.
+A small, dependency-free telnet client for the Haven-Duskholm MUD. Three Python files
+(`duskholm_client.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for configurable prompt
+formats), tkinter only (ships with the standard Windows Python installer). Keep them together.
+Start it with `pythonw duskholm_client.py` to avoid the console window.
 
 ```
 python duskholm_client.py [host [port]]
@@ -63,8 +64,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **DOS terminal look** (`Alt+D`, or View > DOS terminal look; off by default), modelled on
   early-90s terminal software such as Telix and Terminate. The menu bar, toolbar and scrollbar
   go away; the game fills the window with a one-character coloured border on each side (the
-  screen is as many columns wide as fit), and a text-mode scrollbar runs down the right edge
-  (arrows scroll a line, clicking the track pages up or down, both repeat while held). The font
+  screen is as many columns wide as fit), and when there is something to scroll a text-mode
+  scrollbar takes the place of the right-hand border (arrows scroll a line, clicking the track
+  pages up or down, both repeat while held, and the thumb drags). The font
   is auto-sized so at least 80 columns and about 25 rows fit; turn that off with F7 > Auto-fit
   size to pick your own size, and the border stays one character either way. Underneath: an input line and a two-row status bar, with
   function-key hints on top and live status below (connection, online clock, HP as a block
@@ -98,6 +100,23 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   with TAB characters, so the client expands each tab to the next multiple of 8 columns itself
   instead of relying on the text widget's own tab stops. Bold and italic text also keep the same
   character width as normal text, so bitmap-style fonts stay on the grid.
+- **Worlds / dialing directory** (`Ctrl+W`, or `/worlds`): saved addresses with name, host,
+  port, TLS and a note, plus the date of your last call. In the DOS look it is a Telix-style
+  directory (`Enter` dial, `A` add, `E` edit, `Del` remove, `Esc` close); in the normal look it is
+  an ordinary list window. *Duskholm* is saved by default.
+- **Dial by hand.** While not connected, type `ATDT <host> <port>` (also `ATD`, `ATDP`, `ATT`,
+  `host:port`, a saved world's name, and an optional `tls`/`plain`) and the client answers like a
+  modem: `DIALING ...`, `CONNECT` or `NO CARRIER`. Typing `telnet` gives a small pretend telnet
+  command line (`open host port`, `status`, `?`, `quit`), or `telnet host port` connects
+  directly. Both only act while offline; once connected, everything you type goes to the game.
+  Port 3001 means TLS, anything else plain unless you say `tls`.
+- **Prompt bar formats.** The stat bar / DOS status row reads your game's prompt. The default is
+  the Haven/Duskholm style (`[350/350DF 0ST 0WN 0LG M:0 K:0 ( )]`). Presets for stock ROM/Diku
+  prompts and a simple `[HP: x/y MP: x/y]` style are built in, and you can design your own
+  (View/F10 menu > Prompt bar format, or `/prompt`): a regular-expression pattern with named
+  groups, plus which groups are gauges, counters, cooldowns or text, with a live test line.
+  Patterns are checked for safety (no catastrophic backtracking, backreferences or lookbehind).
+- **Line spacing**: extra pixels between lines, 0-12 (Font dialog, or F7 in the DOS look).
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -133,6 +152,9 @@ python tests/test_dosui.py        # the DOS-style menus, dialogs and status bar 
 python tests/test_dos_mode.py     # the DOS look wired into the client: keys, menus, status, full screen
 python tests/test_dos_dialogs.py  # the DOS-style Colours and Font screens, end to end
 python tests/test_layout.py       # tab alignment, bold width, one-cell DOS border, DOS scrollbar
+python tests/test_polish.py       # skin switch re-fit, readable DOS colours, scrollbar in the border
+python tests/test_prompts.py      # the prompt-format engine (parsing, validation, safety)
+python tests/test_features.py     # ATDT, fake telnet, worlds, prompt editors, line spacing
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

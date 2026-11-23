@@ -36,6 +36,7 @@ import tkinter.font as tkfont
 from tkinter import colorchooser, messagebox, simpledialog
 
 import dosui
+import prompts
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -43,6 +44,7 @@ TLS_PORT = 3001
 SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".duskholm_client.json")
 MAX_SCROLLBACK_LINES = 20000
 KEEPALIVE_SECONDS = 120
+APP_NAME = "Duskholm"    # working name; every user-visible mention comes from here
 MIN_FONT, MAX_FONT = 7, 40
 RECONNECT_SECONDS = 30   # wait between automatic reconnect attempts
 QUIT_GRACE = 15          # a close this soon after the user sent "quit" is intentional
@@ -249,15 +251,15 @@ def _dos(bar, bar_fg, bar2, bar2_fg, key, menu, menu_fg, border, sel, sel_fg, di
 
 
 _DOS_STYLE = {
-    "Plain": _dos("#c8c8c8", "#101114", "#1a1c21", "#c8c8c8", "#e5c07b", "#1a1c21", "#e8e8e8",
+    "Plain": _dos("#2a2d35", "#d8d8d8", "#1a1c21", "#c8c8c8", "#e5c07b", "#1a1c21", "#e8e8e8",
                   "#8a93a3", "#c8c8c8", "#101114", "#6f7a8a", "#05060a", "#0b0c0e"),
-    "Plain Light": _dos("#1f2328", "#fafaf7", "#ecece6", "#1f2328", "#9a5b00", "#ffffff", "#111111",
+    "Plain Light": _dos("#d6d6ce", "#1f2328", "#ecece6", "#1f2328", "#8a4f00", "#ffffff", "#111111",
                         "#1f2328", "#1f2328", "#fafaf7", "#7b8088", "#b8b8b0", "#d0d0c8"),
     "Moody": _dos("#2a2438", "#d8d2e6", "#14121d", "#b9b4c8", "#d4a84e", "#14121d", "#d8d2e6",
                   "#c9a24b", "#c9a24b", "#0b0a10", "#6e6784", "#050408", "#07060b"),
-    "Retro Phosphor": _dos("#33ff66", "#020a02", "#061406", "#33ff66", "#e0ff6a", "#061406",
+    "Retro Phosphor": _dos("#0f4a1c", "#b8ffc8", "#061406", "#33ff66", "#e0ff6a", "#061406",
                            "#33ff66", "#33ff66", "#33ff66", "#020a02", "#1f7a35", "#010501", "#010601"),
-    "Retro DOS": _dos("#00aaaa", "#000000", "#0000aa", "#ffffff", "#ffff55", "#0000aa", "#ffffff",
+    "Retro DOS": _dos("#007a7a", "#ffffff", "#0000aa", "#ffffff", "#ffff55", "#0000aa", "#ffffff",
                       "#ffffff", "#00aaaa", "#000000", "#9999dd", "#000044", "#0000aa"),
 }
 for _n, _d in _DOS_STYLE.items():
@@ -877,6 +879,19 @@ def clean_settings(cfg):
     cfg["ui_mode"] = "dos" if cfg.get("ui_mode") == "dos" else "normal"
     cfg["dos_cols"] = to_int(cfg.get("dos_cols"), 80, 40, 200)
     cfg["dos_font_size"] = to_int(cfg.get("dos_font_size"), 0, 0, MAX_FONT)   # 0 = not chosen
+    cfg["line_spacing"] = to_int(cfg.get("line_spacing"), 0, 0, 12)
+    cfg["worlds"] = clean_worlds(cfg.get("worlds"))
+    pp = cfg.get("prompt_profile")
+    cfg["prompt_profile"] = pp.strip()[:60] if isinstance(pp, str) and pp.strip() else prompts.DEFAULT_PRESET
+    custom, names = [], set(n.lower() for n in prompts.PRESETS)
+    for raw in (cfg.get("prompt_custom") if isinstance(cfg.get("prompt_custom"), list) else [])[:40]:
+        prof = prompts.validate_profile(raw)
+        if prof is not None and prof["kind"] == "regex" and prof["name"].lower() not in names:
+            names.add(prof["name"].lower())
+            custom.append(prof)
+        if len(custom) >= 20:
+            break
+    cfg["prompt_custom"] = custom
     so = cfg.get("skin_overrides")
     cfg["skin_overrides"] = ({k: v for k, v in list(so.items())[:50]
                               if isinstance(k, str) and len(k) < 60 and isinstance(v, dict)}
@@ -893,6 +908,107 @@ def clean_settings(cfg):
                                                                 cfg.get("geometry", "")):
         cfg.pop("geometry", None)
     return cfg
+
+# ---- saved worlds (the "dialing directory") -------------------------------------------------
+_HOST_RE = re.compile(r"^[A-Za-z0-9._\-]{1,253}$")
+DEFAULT_WORLDS = [{"name": "Duskholm", "host": "duskholm.com", "port": TLS_PORT, "tls": True,
+                   "note": "Haven-style MUD", "last": 0}]
+
+
+def clean_world(w):
+    """A sanitised world dict, or None if it is unusable. Never raises."""
+    if not isinstance(w, dict):
+        return None
+    name = w.get("name")
+    host = w.get("host")
+    if not isinstance(name, str) or not isinstance(host, str):
+        return None
+    name = "".join(ch for ch in name if ch.isprintable()).strip()[:40]
+    host = host.strip()
+    if not name or not _HOST_RE.match(host) or host.startswith(("-", ".")):
+        return None
+    port = w.get("port")
+    if isinstance(port, bool) or not isinstance(port, (int, str)):
+        return None
+    try:
+        port = int(port)
+    except ValueError:
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    note = w.get("note")
+    note = "".join(ch for ch in note if ch.isprintable()).strip()[:80] if isinstance(note, str) else ""
+    last = w.get("last")
+    last = last if isinstance(last, int) and not isinstance(last, bool) and 0 <= last < 4102444800 else 0
+    return {"name": name, "host": host, "port": port, "tls": bool(w.get("tls")), "note": note, "last": last}
+
+
+def clean_worlds(lst):
+    """Saved worlds from settings: sanitised, de-duplicated by name (case-insensitive), capped.
+    A missing or non-list value gives the default list; an empty list stays empty."""
+    if not isinstance(lst, list):
+        return copy.deepcopy(DEFAULT_WORLDS)
+    out, seen = [], set()
+    for w in lst[:400]:
+        c = clean_world(w)
+        if c is not None and c["name"].lower() not in seen:
+            seen.add(c["name"].lower())
+            out.append(c)
+        if len(out) >= 200:
+            break
+    return out
+
+
+def parse_dial_target(rest, worlds=(), default_port=None):
+    """Parse what follows ATDT / ATD / ATT, or telnet's `open`: 'host port', 'host:port', or the
+    name of a saved world, plus an optional tls / ssl / plain / notls flag. Returns
+    (host, port, tls, world_name_or_None); raises ValueError with a readable message."""
+    tokens = [t for t in str(rest).replace(",", " ").split() if t]
+    flag = None
+    rest_tokens = []
+    for t in tokens:
+        if t.lower() in ("tls", "ssl"):
+            flag = True
+        elif t.lower() in ("plain", "notls"):
+            flag = False
+        else:
+            rest_tokens.append(t)
+    if not rest_tokens:
+        raise ValueError("usage: host [port] [tls|plain]  (or the name of a saved world)")
+    wanted = " ".join(rest_tokens).lower()                 # a saved world's name may contain spaces
+    for w in worlds:
+        if isinstance(w, dict) and str(w.get("name", "")).lower() == wanted:
+            return w["host"], int(w["port"]), bool(w["tls"]) if flag is None else flag, w["name"]
+    if len(rest_tokens) > 2:
+        raise ValueError("usage: host [port] [tls|plain]  (or the name of a saved world)")
+    host = rest_tokens[0]
+    port_text = rest_tokens[1] if len(rest_tokens) == 2 else None
+    if port_text is None and host.count(":") == 1:
+        host, port_text = host.split(":")
+    if not _HOST_RE.match(host) or host.startswith(("-", ".")):
+        raise ValueError("'%s' is not a valid host name" % host[:60])
+    if port_text is None:
+        port = default_port if default_port is not None else TLS_PORT
+    else:
+        if not (port_text.isascii() and port_text.isdigit() and 1 <= int(port_text) <= 65535):
+            raise ValueError("the port must be a number from 1 to 65535")
+        port = int(port_text)
+    tls = flag if flag is not None else (port == TLS_PORT)
+    return host, port, tls, None
+
+
+AT_DIAL = ("ATDT", "ATDP", "ATD", "ATT")
+AT_OK = ("AT", "ATZ", "ATH", "ATH0", "ATE0", "ATE1", "ATV1", "ATQ0")
+TELNET_HELP = (
+    "Commands may be abbreviated.  Commands are:",
+    "",
+    "open        connect to a site:  open host-name [port]",
+    "close       close current connection",
+    "status      print status information",
+    "quit        exit telnet",
+    "?           print help information",
+)
+
 
 # Plain-skin values, kept as module constants for callers/tests that want the defaults.
 PANEL = BUILTIN_SKINS[DEFAULT_SKIN]["panel"]
@@ -935,10 +1051,12 @@ class StatBar(tk.Frame):
         for letter, n in d["cooldowns"]:
             # the game colours these green when ready and red while cooling down
             out.append(("%s:%d" % (letter, n), th["ansi"][9] if n > 0 else th["ansi"][10]))
-        if d["facing"]:
-            out.append((d["facing"], th["fg"]))
-        for t in d["tags"]:
-            out.append((t, th["alert"]))
+        for label, cur, mx in d["gauges"][1:]:              # further gauges (mana, move, ...)
+            role = prompts.gauge_color_role(cur, mx)
+            out.append(("%s %d/%d" % (label, cur, mx) if mx is not None else "%s %d" % (label, cur),
+                        th["ansi"][{"good": 10, "warn": 11, "bad": 9}[role]]))
+        for i, t in enumerate(d["text"]):
+            out.append((t, th["fg"] if i == 0 else th["alert"]))
         return out
 
     def set_data(self, data):
@@ -951,12 +1069,13 @@ class StatBar(tk.Frame):
         c = self.canvas
         c.delete("all")
         h = self.font.metrics("linespace") + 6
-        txt = "%d/%d %s" % self.data["hp"] if self.data else ""
+        hp = self.data.get("hp") if self.data else None
+        txt = "%d/%d %s" % hp if hp else ""
         w = max(self.HP_W, self.bold.measure(txt) + 28)      # grows with the font
         c.configure(height=h, width=w)
         c.create_rectangle(0, 0, w - 1, h - 1, outline=th["panel_edge"], fill=th["bg"])
-        if self.data:
-            cur, mx, _label = self.data["hp"]
+        if hp:
+            cur, mx, _label = hp
             frac = 0.0 if mx <= 0 else max(0.0, min(1.0, cur / mx))
             c.create_rectangle(1, 1, 1 + int((w - 3) * frac), h - 2, outline="",
                                fill=hp_color(cur, mx, th["ansi"]))
@@ -1124,13 +1243,16 @@ class App:
         self._dosscroll = None                        # the DOS-style scrollbar (built with the widgets)
         self._overlay = None                          # the open DOS menu/dialog, if any
         self._colors_snapshot = None                  # skin state when the DOS colour screens opened
+        self._dial_mode = None                        # "modem" (ATDT) / "telnet" (fake CLI) / None
+        self._telnet_cli = False                      # the fake telnet command line is active
+        self._worlds_win = None                       # the ordinary Worlds dialog, if open
         self._dos_job = None                          # 1-second status refresh while in the DOS look
         self._online_since = 0.0
         self._fit_job = None
         self._measure_font = None
         self.theme = self._effective_theme()
 
-        root.title("Duskholm")
+        root.title(APP_NAME)
         root.configure(bg=self.theme["bg"])
         root.geometry(self.cfg.get("geometry", "1000x700"))
         self._build_fonts()
@@ -1148,7 +1270,7 @@ class App:
         self.input.focus_set()
         self._pump_job = root.after(25, self._pump)
         root.bind("<Destroy>", self._on_root_destroy, add="+")
-        self.system("Duskholm client. Type /help for local commands, or press Connect.")
+        self.system("%s client. Type /help for local commands, or press Connect." % APP_NAME)
 
     # ---- settings ----------------------------------------------------
     def _load_settings(self):
@@ -1158,7 +1280,8 @@ class App:
                "skin": DEFAULT_SKIN, "skin_overrides": {},
                "ui_mode": "normal", "dos_skin": DEFAULT_DOS_SKIN, "fullscreen": False,
                "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0,
-               "dos_fit": True}
+               "dos_fit": True, "line_spacing": 0, "worlds": None,
+               "prompt_profile": prompts.DEFAULT_PRESET, "prompt_custom": []}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -1218,6 +1341,13 @@ class App:
         self.f_ital = tkfont.Font(family=fam, size=size, slant="italic")
         self.f_bi = tkfont.Font(family=fam, size=size, weight="bold", slant="italic")
         self._sync_variants()
+
+    def _font_changed(self):
+        """The cell size changed: in the DOS look the column count and font fit depend on it, so
+        recompute now (waiting for a window event leaves the screen mis-sized until one arrives)."""
+        if self.dos:
+            self.root.update_idletasks()
+            self._fit_font()
 
     def _sync_variants(self):
         """Keep bold/italic on the same character grid as normal text. If a styled variant has a
@@ -1300,9 +1430,13 @@ class App:
                                      padx=8, pady=4, cursor="arrow"), "text")
         sb = self._sb = self._reg(tk.Scrollbar(mid, command=self.out.yview), "scroll")
         self.out.configure(yscrollcommand=sb.set)
-        self._dosscroll = dosui.DosScrollbar(mid, self.out.yview, dosui.dos_colors(self.theme), self.f_norm)
+        # the DOS scrollbar replaces the right-hand border cell (placed over it) while there is
+        # something to scroll; the parent is the holder so it can sit at the very edge
+        self._dosscroll = dosui.DosScrollbar(self._holder, self.out.yview, dosui.dos_colors(self.theme),
+                                             self.f_norm)
         self.out.bind("<KeyPress>", self._out_key)
         self.out.bind("<Control-MouseWheel>", self._zoom_wheel)
+        self._apply_spacing()
 
         self.input = self._reg(tk.Entry(self.root, font=self.f_norm, highlightthickness=1), "input")
         self.input.bind("<Return>", self._on_enter)
@@ -1318,6 +1452,8 @@ class App:
         self.dosbar = dosui.DosStatusBar(self.root, dosui.dos_colors(self.theme), self.f_norm, self.f_bold)
         for w in (self.root,):
             w.bind("<F11>", self.toggle_fullscreen)
+            w.bind("<Control-w>", self._on_ctrl_w)
+            w.bind("<Control-W>", self._on_ctrl_w)
             w.bind("<Alt-Return>", self.toggle_fullscreen)
             w.bind("<Alt-d>", self.toggle_dos_mode)
             w.bind("<Alt-D>", self.toggle_dos_mode)
@@ -1331,6 +1467,8 @@ class App:
         m = tk.Menu(self.root)
         f = tk.Menu(m, tearoff=0)
         f.add_command(label="Connect / Disconnect", command=self.toggle_connection)
+        f.add_command(label="Worlds...   Ctrl+W", command=self.open_worlds)
+        f.add_command(label="Prompt bar format...", command=self.edit_prompt)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
         f.add_separator()
@@ -1459,6 +1597,7 @@ class App:
             for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
                 f.configure(family=fam)
             self._sync_variants()
+            self._font_changed()
         self.statbar.set_theme(th)
         self._restyle_dosbar()
 
@@ -1473,19 +1612,19 @@ class App:
         self._mid.pack_forget()
         self._mid.place_forget()
         self._sb.pack_forget()
-        self._dosscroll.pack_forget()
+        self._dosscroll.place_forget()
         self.out.pack_forget()
         if self.dos:
             self.root.config(menu="")                              # no menu bar
             self._holder.pack(fill="both", expand=True)
             self._mid.place(relx=0.5, rely=0.0, anchor="n", relheight=1.0)
-            self.out.configure(yscrollcommand=self._dosscroll.set)
-            self._dosscroll.pack(side="right", fill="y")           # one-cell text-mode scrollbar
+            self.out.configure(yscrollcommand=self._on_dos_yscroll)
             self.out.configure(width=self._dos_cols_now())
-            self.out.pack(side="left", fill="both", expand=True)
+            self.out.pack(fill="both", expand=True)
             self.input.pack(fill="x", ipady=2)
             if self.dosbar is not None:
                 self.dosbar.pack(fill="x")
+            self._dos_scroll_visibility()
         else:
             self.root.config(menu=self._menubar)
             self._top.pack(fill="x")
@@ -1507,6 +1646,16 @@ class App:
         if contrast_ratio(c["input_bg"], menu) < 1.6:
             c["input_bg"] = "#000000" if rel_luminance(menu) < 0.5 else "#ffffff"
             c["input_fg"] = ensure_contrast(c["input_fg"], c["input_bg"], 7.0)
+        # every text colour must be readable on the background it is drawn on (user skins and
+        # edited colours can break this); the key colour is used on three backgrounds at once
+        for fg, bg, ratio in (("dos_bar_fg", "dos_bar_bg", 4.5), ("dos_bar2_fg", "dos_bar2_bg", 4.5),
+                              ("dos_menu_fg", "dos_menu_bg", 4.5), ("dos_menu_sel_fg", "dos_menu_sel_bg", 4.5),
+                              ("dos_menu_dim", "dos_menu_bg", 3.0)):
+            c[fg] = ensure_contrast(c[fg], c[bg], ratio)
+        bgs = (c["dos_bar_bg"], c["dos_bar2_bg"], c["dos_menu_bg"])
+        cands = [c["dos_key_fg"]] + [ensure_contrast(c["dos_key_fg"], b, 4.5) for b in bgs] + ["#000000", "#ffffff"]
+        c["dos_key_fg"] = max(cands, key=lambda k: (min(contrast_ratio(k, b) for b in bgs) >= 4.5,
+                                                    cands[0] == k, min(contrast_ratio(k, b) for b in bgs)))
         return c
 
     def _restyle_dosbar(self):
@@ -1517,6 +1666,12 @@ class App:
                 pass
         if self._dosscroll is not None:
             self._dosscroll.restyle(self._dc(), self.f_norm)
+        if self._overlay_open():
+            # an open menu/dialog caches the cell size: re-measure it when the font or theme changes
+            try:
+                self._overlay.restyle(self._dc(), self.f_norm)
+            except (tk.TclError, AttributeError, TypeError):
+                pass
 
     def _start_dos_tick(self):
         if self._dos_job is None:
@@ -1550,7 +1705,7 @@ class App:
         pr = self._last_prompt if self.connected else None
         if self.connected:
             cands.append((3, 2, dosui.format_duration(time.time() - self._online_since), "key"))
-        if pr:
+        if pr and pr.get("hp"):
             cur, mx, label = pr["hp"]
             gauge, role = dosui.gauge_text(cur, mx, 8)
             cands.append((2, 1, "%s %s %d/%d" % (label, gauge, cur, mx), role))
@@ -1560,9 +1715,12 @@ class App:
             if pr["counters"]:
                 cands.append((5, 3, " ".join("%s%d" % (lb, n) for lb, n in pr["counters"]),
                               "warn" if any(n for _, n in pr["counters"]) else "dim"))
-            extra = ([pr["facing"]] if pr["facing"] else []) + pr["tags"]
-            if extra:
-                cands.append((7, 5, " ".join(extra), "normal"))
+            for label, cur, mx in pr["gauges"][1:]:
+                g, role = prompts.gauge_color_role(cur, mx), None
+                cands.append((6, 6, "%s %d/%d" % (label, cur, mx) if mx is not None else "%s %d" % (label, cur),
+                              g if g in ("good", "warn", "bad") else "normal"))
+            if pr["text"]:
+                cands.append((7, 5, " ".join(pr["text"]), "normal"))
         cands.append((6, 6, ("TLS " if self.v_tls.get() else "") + ("ANSI-MXP" if (self.connected and self.term.mxp) else "ANSI"),
                       "dim"))
         chosen, used = [], 0
@@ -1584,9 +1742,9 @@ class App:
             return
         try:
             up = self.connected or self.connecting
-            bar.set_hints([("F1", "Help"), ("F2", "Disconnect" if up else "Connect"), ("F3", "Log"),
-                           ("F5", "Skin"), ("F6", "Colours"), ("F7", "Font"), ("F10", "Menu"),
-                           ("F11", "Full")], right="Alt-D Normal  Alt-X Exit")
+            bar.set_hints([("F1", "Help"), ("F2", "Hangup" if up else "Dial"), ("^W", "Worlds"),
+                           ("F10", "Menu"), ("F11", "Full"), ("F5", "Skin"), ("F6", "Colours"),
+                           ("F7", "Font"), ("F3", "Log")], right="Alt-D Normal  Alt-X Exit")
             cw = max(1, self.f_norm.measure("0"))
             cols = int(bar.winfo_width() / cw) if bar.winfo_width() > 100 else int(self.cfg["dos_cols"])
             segs, tail = self._dos_segments(max(20, cols - 2))
@@ -1637,6 +1795,8 @@ class App:
             {"label": "Disconnect" if up else "Connect", "hotkey": "C", "shortcut": "F2",
              "action": self.toggle_connection},
             {"label": "Connection settings...", "hotkey": "S", "action": self.dos_connect_dialog},
+            {"label": "Worlds...", "hotkey": "W", "shortcut": "Ctrl-W", "action": self.open_worlds},
+            {"label": "Prompt bar format...", "hotkey": "B", "action": self.edit_prompt},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
              "action": self.toggle_log},
@@ -1655,7 +1815,7 @@ class App:
             {"label": "Help", "hotkey": "H", "shortcut": "F1", "action": self.dos_help},
             {"label": "Exit", "hotkey": "X", "shortcut": "Alt-X", "action": self.dos_confirm_quit},
         ]
-        return self._dos_menu("Duskholm", items, corner=True)
+        return self._dos_menu(APP_NAME, items, corner=True)
 
     def dos_skin_menu(self, after=None):
         cur = self._skin_name()
@@ -1741,10 +1901,255 @@ class App:
         return self._overlay
 
     def dos_confirm_quit(self):
-        self._overlay = dosui.confirm(self.root, "Exit", "Disconnect and exit Duskholm?",
+        self._overlay = dosui.confirm(self.root, "Exit", "Disconnect and exit %s?" % APP_NAME,
                                       self._dc(), self.f_norm,
                                       lambda r, v: self.on_quit() if r == "yes" else None)
         return self._overlay
+
+    # ---- prompt profiles ---------------------------------------------------------------
+    def all_profiles(self):
+        d = {n: prompts.get_preset(n) for n in prompts.PRESETS}
+        for p in self.cfg["prompt_custom"]:
+            d[p["name"]] = p
+        return d
+
+    def current_profile(self):
+        profiles = self.all_profiles()
+        return profiles.get(self.cfg["prompt_profile"]) or profiles[prompts.DEFAULT_PRESET]
+
+    def set_prompt_profile(self, name):
+        if name not in self.all_profiles():
+            return False
+        self.cfg["prompt_profile"] = name
+        self._last_prompt = None
+        self._update_statbar()                      # re-read the line that is on screen right now
+        self.update_dosbar()
+        self._save_settings()
+        return True
+
+    def save_prompt_profile(self, profile):
+        """Validate and store a custom profile, then select it. Returns (ok, message)."""
+        prof = prompts.validate_profile(profile)
+        if prof is None or prof["kind"] != "regex":
+            ok, msg, _r = prompts.check_profile(profile, "x")
+            return False, msg if not ok and "problem" in msg.lower() else "That profile cannot be used."
+        if prof["name"].lower() in (n.lower() for n in prompts.PRESETS):
+            return False, "'%s' is a built-in name; pick another." % prof["name"]
+        custom = [c for c in self.cfg["prompt_custom"] if c["name"].lower() != prof["name"].lower()]
+        if len(custom) >= 20:
+            return False, "Too many custom prompt profiles (20 maximum)."
+        custom.append(prof)
+        self.cfg["prompt_custom"] = custom
+        self.set_prompt_profile(prof["name"])
+        return True, "Saved '%s'." % prof["name"]
+
+    def delete_prompt_profile(self, name):
+        before = len(self.cfg["prompt_custom"])
+        self.cfg["prompt_custom"] = [c for c in self.cfg["prompt_custom"] if c["name"] != name]
+        if self.cfg["prompt_profile"] == name:
+            self.set_prompt_profile(prompts.DEFAULT_PRESET)
+        else:
+            self._save_settings()
+        return len(self.cfg["prompt_custom"]) < before
+
+    @staticmethod
+    def profile_from_fields(name, pattern, gauges, counters, cooldowns, text, sample):
+        """Build a regex profile from the editor's text fields. Returns (profile_or_None, message)."""
+        lists, err = prompts.parse_specs(gauges, counters, cooldowns, text)
+        if err:
+            return None, err
+        prof = {"name": name, "kind": "regex", "pattern": pattern, "sample": sample, **lists}
+        ok, msg, _res = prompts.check_profile(prof, sample or "x")
+        if prompts.validate_profile(prof) is None:
+            return None, msg
+        return prof, msg
+
+    def edit_prompt(self):
+        """Choose / edit the prompt-bar format (ordinary window)."""
+        if self.dos:
+            return self.dos_prompt_menu()
+        top = tk.Toplevel(self.root)
+        top.title("Prompt bar")
+        top.transient(self.root)
+        profiles = self.all_profiles()
+        names = list(profiles) + ["New custom..."]
+        cur = self.cfg["prompt_profile"] if self.cfg["prompt_profile"] in profiles else prompts.DEFAULT_PRESET
+        var = tk.StringVar(value=cur)
+        tk.Label(top, text="The prompt bar reads the game's prompt line. Pick a format, or design your own.",
+                 wraplength=520, justify="left").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+        tk.Label(top, text="Format").grid(row=1, column=0, sticky="w", padx=(10, 6), pady=4)
+        opt = tk.OptionMenu(top, var, *names, command=lambda n: load(n))
+        opt.grid(row=1, column=1, sticky="w", pady=4)
+        fields = {}
+        rows = (("name", "Name", 30), ("pattern", "Pattern", 60), ("gauges", "Gauges", 60),
+                ("counters", "Counters", 60), ("cooldowns", "Cooldowns", 60), ("text", "Text", 60),
+                ("sample", "Sample line", 60))
+        for r, (key, label, width) in enumerate(rows, start=2):
+            tk.Label(top, text=label).grid(row=r, column=0, sticky="w", padx=(10, 6), pady=3)
+            sv = tk.StringVar()
+            e = tk.Entry(top, textvariable=sv, width=width)
+            e.grid(row=r, column=1, sticky="w", pady=3, padx=(0, 10))
+            fields[key] = (sv, e)
+        tk.Label(top, justify="left", wraplength=520,
+                 text="Pattern: a regular expression with named groups, e.g. (?P<hp>[0-9]+)/(?P<hpmax>[0-9]+)\n"
+                      "Gauges: HP=hp/hpmax, MN=mana/manamax     Counters: ST=st     Cooldowns: M=m     Text: facing"
+                 ).grid(row=9, column=0, columnspan=2, sticky="w", padx=10, pady=(4, 2))
+        result = tk.Label(top, text="", wraplength=520, justify="left", anchor="w")
+        result.grid(row=10, column=0, columnspan=2, sticky="we", padx=10, pady=6)
+        state = {"builtin": False}
+
+        def values():
+            return {k: fields[k][0].get() for k in fields}
+
+        def build():
+            v = values()
+            return self.profile_from_fields(v["name"].strip(), v["pattern"], v["gauges"], v["counters"],
+                                            v["cooldowns"], v["text"], v["sample"])
+
+        def test(*_):
+            if state["builtin"]:
+                result.configure(text="Built-in format. Choose 'New custom...' to design your own.")
+                return
+            prof, msg = build()
+            if prof is None:
+                result.configure(text=msg)
+            else:
+                ok, msg2, _r = prompts.check_profile(prof, fields["sample"][0].get())
+                result.configure(text=msg2)
+
+        def load(name):
+            if name == "New custom...":
+                prof = prompts.get_preset("Custom")
+                prof["name"] = "My prompt"
+                state["builtin"] = False
+            else:
+                prof = profiles[name]
+                state["builtin"] = name in prompts.PRESETS
+            specs = prompts.format_specs(prof)
+            for k, val in (("name", prof["name"]), ("pattern", prof.get("pattern", "")),
+                           ("gauges", specs["gauges"]), ("counters", specs["counters"]),
+                           ("cooldowns", specs["cooldowns"]), ("text", specs["text"]),
+                           ("sample", prof.get("sample", ""))):
+                fields[k][0].set(val)
+            for k, (sv, e) in fields.items():
+                e.configure(state="disabled" if state["builtin"] else "normal")
+            test()
+
+        def use():
+            name = var.get()
+            if name == "New custom...":
+                return save()
+            self.set_prompt_profile(name)
+            result.configure(text="Now using '%s'." % name)
+
+        def save():
+            prof, msg = build()
+            if prof is None:
+                result.configure(text=msg)
+                return
+            ok, msg2 = self.save_prompt_profile(prof)
+            result.configure(text=msg2)
+            if ok:
+                top.destroy()
+
+        def delete():
+            name = var.get()
+            if name in self.cfg["prompt_custom"] and False:
+                return
+            if any(c["name"] == name for c in self.cfg["prompt_custom"]) and \
+                    messagebox.askyesno("Prompt bar", "Delete '%s'?" % name, parent=top):
+                self.delete_prompt_profile(name)
+                top.destroy()
+
+        for k, (sv, e) in fields.items():
+            sv.trace_add("write", test)
+        btn = tk.Frame(top)
+        btn.grid(row=11, column=0, columnspan=2, sticky="e", padx=10, pady=(0, 10))
+        tk.Button(btn, text="Use", width=9, command=use).pack(side="left")
+        tk.Button(btn, text="Save custom", width=11, command=save).pack(side="left", padx=6)
+        tk.Button(btn, text="Delete", width=9, command=delete).pack(side="left")
+        tk.Button(btn, text="Close", width=9, command=top.destroy).pack(side="left", padx=6)
+        top.bind("<Escape>", lambda e: top.destroy())
+        top._actions = dict(load=load, use=use, save=save, delete=delete, test=test, fields=fields,
+                            var=var, result=result, state=state)
+        load(cur)
+        self._theme_tree(top)
+        return top
+
+    def dos_prompt_menu(self):
+        cur = self.cfg["prompt_profile"]
+        profiles = self.all_profiles()
+        items = [{"label": n, "checked": n == cur, "hotkey": str(i + 1) if i < 9 else None,
+                  "action": (lambda n=n: self._dos_use_profile(n))} for i, n in enumerate(profiles)]
+        custom_now = any(c["name"] == cur for c in self.cfg["prompt_custom"])
+        items += [None,
+                  {"label": "Edit this format...", "hotkey": "E", "action": lambda: self.dos_prompt_edit(cur)},
+                  {"label": "New custom format...", "hotkey": "N", "action": lambda: self.dos_prompt_edit(None)},
+                  {"label": "Delete this format", "hotkey": "D", "enabled": custom_now,
+                   "action": lambda: self._dos_delete_profile(cur)}]
+        return self._dos_menu("Prompt bar", items)
+
+    def _dos_use_profile(self, name):
+        self.set_prompt_profile(name)
+        self._reopen(self.dos_prompt_menu)
+
+    def _dos_delete_profile(self, name):
+        self.delete_prompt_profile(name)
+        self._reopen(self.dos_prompt_menu)
+
+    def dos_prompt_edit(self, name, values=None):
+        """Edit a profile (built-in ones are copied) or create a new one, as a DOS form."""
+        if values is None:
+            if name is None:
+                prof = prompts.get_preset("Custom")
+                prof["name"] = "My prompt"
+            else:
+                prof = self.all_profiles().get(name) or prompts.get_preset("Custom")
+                if prof["kind"] == "haven":
+                    self.system("The Haven / Duskholm format is built in. Use New custom format to design your own.")
+                    self._reopen(self.dos_prompt_menu)
+                    return None
+                if name in prompts.PRESETS:
+                    prof["name"] = name + " (custom)"
+            specs = prompts.format_specs(prof)
+            values = {"name": prof["name"], "pattern": prof.get("pattern", ""), "gauges": specs["gauges"],
+                      "counters": specs["counters"], "cooldowns": specs["cooldowns"], "text": specs["text"],
+                      "sample": prof.get("sample", "")}
+        fields = [{"key": k, "label": lbl, "type": "text", "value": values.get(k, ""), "width": 46}
+                  for k, lbl in (("name", "Name"), ("pattern", "Pattern"), ("gauges", "Gauges"),
+                                 ("counters", "Counters"), ("cooldowns", "Cooldowns"), ("text", "Text"),
+                                 ("sample", "Sample"))]
+
+        def result(res, vals):
+            if res == "cancel":
+                self._reopen(self.dos_prompt_menu)
+                return
+            prof, msg = self.profile_from_fields(vals["name"].strip(), vals["pattern"], vals["gauges"],
+                                                 vals["counters"], vals["cooldowns"], vals["text"], vals["sample"])
+            if res == "test":
+                if prof is None:
+                    text = msg
+                else:
+                    text = prompts.check_profile(prof, vals["sample"])[1]
+                self._overlay = dosui.show_message(
+                    self.root, "Test", text, self._dc(), self.f_norm,
+                    on_result=lambda r, v: self._reopen(lambda: self.dos_prompt_edit(name, vals)))
+                return
+            if prof is None:
+                self.system(msg)
+                self._reopen(lambda: self.dos_prompt_edit(name, vals))
+                return
+            ok, msg2 = self.save_prompt_profile(prof)
+            self.system(msg2)
+            if not ok:
+                self._reopen(lambda: self.dos_prompt_edit(name, vals))
+            else:
+                self._reopen(self.dos_prompt_menu)
+
+        return self._dos_dialog("Prompt format", fields,
+                                [("Save", "save"), ("Test", "test"), ("Cancel", "cancel")], result, width=66,
+                                message="Pattern groups, e.g. (?P<hp>[0-9]+)  -  Gauges: HP=hp/hpmax  "
+                                        "Counters: ST=st  Cooldowns: M=m  Text: facing")
 
     def _reopen(self, fn, *args):
         """Re-open a menu once the one that just ran its action has fully closed."""
@@ -1878,6 +2283,8 @@ class App:
         cur = self.font_family
         head = [{"label": "Size: %d..." % int(self.f_norm.cget("size")), "hotkey": "Z",
                  "action": self.dos_font_size_dialog},
+                {"label": "Line spacing: %d..." % int(self.cfg["line_spacing"]), "hotkey": "L",
+                 "action": self.dos_spacing_dialog},
                 {"label": "Auto-fit size", "hotkey": "A", "checked": bool(self.cfg["dos_autofit"]),
                  "action": self.dos_toggle_autofit},
                 {"label": "Use the skin's font", "hotkey": "K", "action": self.dos_font_skin},
@@ -1886,6 +2293,20 @@ class App:
                         for f in fams]
         start = len(head) + (fams.index(cur) if cur in fams else 0)
         return self._dos_menu("Font", items, initial=start)
+
+    def dos_spacing_dialog(self):
+        fields = [{"key": "n", "label": "Extra pixels between lines (0 - 12)", "type": "text",
+                   "value": str(int(self.cfg["line_spacing"])), "width": 4}]
+
+        def result(name, values):
+            if name == "ok":
+                try:
+                    self.apply_spacing(int(str(values.get("n", "")).strip()))
+                except ValueError:
+                    self.system("Line spacing must be a whole number from 0 to 12.")
+            self._reopen(self.dos_font_menu)
+
+        return self._dos_dialog("Line spacing", fields, [("OK", "ok"), ("Cancel", "cancel")], result, width=50)
 
     def dos_toggle_autofit(self):
         self.cfg["dos_autofit"] = not self.cfg["dos_autofit"]
@@ -1918,6 +2339,11 @@ class App:
 
         return self._dos_dialog("Font size", fields, [("OK", "ok"), ("Cancel", "cancel")], result, width=46,
                                 message="Setting a size turns font auto-fit off.")
+
+    def _on_ctrl_w(self, _e=None):
+        if not self._overlay_open():
+            self.open_worlds()
+        return "break"
 
     def _dos_only(self, fn):
         """Key handler that acts only in the DOS look and when no menu/dialog is already open."""
@@ -1995,7 +2421,7 @@ class App:
         return "break"
 
     def _dos_banner(self):
-        self.system("DUSKHOLM TERMINAL   F1 help   F10 menu   F11 full screen   Alt+D normal look")
+        self.system("%s TERMINAL   F1 help   F10 menu   F11 full screen   Alt+D normal look" % APP_NAME.upper())
 
     def _set_font_size(self, size):
         """Apply a size to the display fonts without changing the saved preference."""
@@ -2004,6 +2430,37 @@ class App:
         self._sync_variants()
         self._restyle_dosbar()
         self._update_dos_cols()
+
+    def _on_dos_yscroll(self, first, last):
+        self._dosscroll.set(first, last)
+        self._dos_scroll_visibility(first, last)
+
+    def _dos_scroll_visibility(self, first=None, last=None):
+        """Show the scrollbar in the right border cell when the text is longer than the view."""
+        try:
+            if first is None:
+                first, last = self.out.yview()
+            scrollable = self.dos and (float(first) > 0.0 or float(last) < 1.0)
+            if scrollable and not self._dosscroll.winfo_ismapped():
+                self._dosscroll.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
+                self._dosscroll.lift()
+            elif not scrollable and self._dosscroll.winfo_ismapped():
+                self._dosscroll.place_forget()
+        except (tk.TclError, ValueError):
+            pass
+
+    def _apply_spacing(self):
+        n = int(self.cfg["line_spacing"])
+        self.out.configure(spacing2=n, spacing3=n)       # between wrapped lines / after each line
+
+    def apply_spacing(self, n):
+        self.cfg["line_spacing"] = max(0, min(12, int(n)))
+        self._apply_spacing()
+        self._save_settings()
+        if self.dos:
+            self.root.update_idletasks()
+            self._fit_font()
+        return self.cfg["line_spacing"]
 
     def _dos_cols_now(self):
         """Columns for the DOS screen: the window width in character cells, less a one-cell
@@ -2015,7 +2472,7 @@ class App:
         if w < 100:
             return fixed
         cw = max(1, self.f_norm.measure("0"))
-        return max(40, int((w - 3 * cw - 16) / cw))        # 3 cells = 2 borders + scrollbar; 16px = text padding
+        return max(40, int((w - 2 * cw - 16) / cw))        # 2 cells = the borders (the right one doubles as the scrollbar)
 
     def _update_dos_cols(self):
         if not self.dos:
@@ -2025,14 +2482,14 @@ class App:
             self.out.configure(width=n)
 
     def _fit_size(self, min_cols, avail_w, avail_h):
-        """Largest font size at which at least `min_cols` columns (plus borders and scrollbar)
+        """Largest font size at which at least `min_cols` columns (plus the two border cells)
         fit the width and 25 rows (as in 80x25 DOS) fit the height."""
         if self._measure_font is None:
             self._measure_font = tkfont.Font(family=self.font_family, size=10)
         f = self._measure_font
         for size in range(MAX_FONT, MIN_FONT - 1, -1):
             f.configure(family=self.font_family, size=size)
-            if f.measure("0") * (min_cols + 3) + 16 <= avail_w and f.metrics("linespace") * 25 <= avail_h:
+            if f.measure("0") * (min_cols + 2) + 16 <= avail_w and (f.metrics("linespace") + int(self.cfg["line_spacing"])) * 25 <= avail_h:
                 return size
         return MIN_FONT
 
@@ -2226,7 +2683,14 @@ class App:
             self.btn.configure(text="Disconnect")
             self.status.configure(text="Connected")
             self._online_since = time.time()
-            if self.dos and self.cfg["dos_flourish"]:
+            self._telnet_cli = False
+            self._note_world_called()
+            mode, self._dial_mode = self._dial_mode, None
+            if mode == "modem":
+                self._say("CONNECT%s" % (" (TLS)" if self.v_tls.get() else ""))
+            elif mode == "telnet":
+                self._say("Connected to %s.\nEscape character is '^]'." % self.v_host.get())
+            elif self.dos and self.cfg["dos_flourish"]:
                 self.system("CONNECT%s" % (" (TLS)" if self.v_tls.get() else ""))
             else:
                 self.system("Connected to %s:%s%s." % (self.v_host.get(), self.v_port.get(),
@@ -2234,7 +2698,15 @@ class App:
             self.update_dosbar()
         elif kind == "failed":
             self._set_disconnected()
-            self.system("Could not connect: %s" % payload)
+            mode, self._dial_mode = self._dial_mode, None
+            if mode == "modem":
+                self._say("NO CARRIER")
+                self.system("Could not connect: %s" % payload)
+            elif mode == "telnet":
+                self._say("telnet: Unable to connect to remote host: %s" % payload)
+                self._telnet_prompt()
+            else:
+                self.system("Could not connect: %s" % payload)
             if "CERTIFICATE" in payload.upper():
                 self._cancel_reconnect()      # retrying cannot fix a certificate problem
                 self.system("TLS certificate was not accepted. Options > Verify TLS certificate "
@@ -2260,7 +2732,7 @@ class App:
             self._line = self._line[-2000:]
 
     def _update_statbar(self):
-        p = parse_prompt(self._line)
+        p = prompts.parse_prompt(self._line, self.current_profile())
         if p is None:
             return
         if self.term.echo_off:
@@ -2324,10 +2796,379 @@ class App:
             if line.startswith("/") and not line.startswith("//"):
                 self._local(line)
                 return "break"
+            if self._dial_command(line):
+                return "break"
             if line.startswith("//"):
                 line = line[1:]
         self.send_line(line, echo=not secret, secret=secret)
         return "break"
+
+    # ---- dialing by hand: ATDT <host> <port>, and a pretend telnet command line --------------
+    def _offline(self):
+        return not (self.connected or self.connecting)
+
+    def _say(self, text):
+        """Plain output line from the client itself (modem / telnet replies), no brackets."""
+        prefix = "\n" if self.out.get("end-2c", "end-1c") not in ("\n", "") else ""
+        self._append([(prefix + text + "\n", None)])
+
+    def _dial_command(self, line):
+        """Handle modem-style and telnet-style commands, but only while NOT connected (online,
+        everything typed belongs to the game). Returns True if the line was consumed."""
+        if self._telnet_cli:
+            if not self._offline():
+                self._telnet_cli = False
+            else:
+                self._append([(line + "\n", "echo")])
+                self._telnet_cli_line(line)
+                return True
+        if not self._offline():
+            return False
+        parts = line.strip().split(None, 1)
+        if not parts:
+            return False
+        word, rest = parts[0].upper(), (parts[1] if len(parts) > 1 else "")
+        if word in AT_DIAL:
+            self._append([(line + "\n", "echo")])
+            try:
+                host, port, tls, _name = parse_dial_target(rest, self.cfg["worlds"])
+            except ValueError as e:
+                self._say("ERROR: %s" % e)
+                return True
+            self._begin_dial(host, port, tls, "modem")
+            return True
+        if word in AT_OK and not rest:
+            self._append([(line + "\n", "echo")])
+            self._say("OK")
+            return True
+        if word == "TELNET":
+            self._append([(line + "\n", "echo")])
+            self._telnet_start(rest)
+            return True
+        return False
+
+    def _begin_dial(self, host, port, tls, mode):
+        self.v_host.set(host)
+        self.v_port.set(str(port))
+        self.v_tls.set(bool(tls))
+        self._cancel_reconnect()
+        if mode == "modem":
+            self._say("DIALING %s:%d%s" % (host, port, " (TLS)" if tls else ""))
+        elif mode == "telnet":
+            self._say("Trying %s..." % host)
+        self._start_connect(quiet=mode is not None, mode=mode)
+
+    def _telnet_prompt(self):
+        self._append([("telnet> ", None)])                # no newline: the typed command follows
+
+    def _telnet_start(self, rest):
+        if rest.strip():
+            try:
+                host, port, tls, _n = parse_dial_target(rest, self.cfg["worlds"], default_port=23)
+            except ValueError as e:
+                self._say("telnet: %s" % e)
+                return
+            self._begin_dial(host, port, tls, "telnet")
+            return
+        self._telnet_cli = True
+        self._say("Welcome to the telnet client.\nEscape character is '^]'.\n")
+        self._telnet_prompt()
+
+    def _telnet_cli_line(self, line):
+        parts = line.strip().split(None, 1)
+        if not parts:
+            self._telnet_prompt()
+            return
+        cmd, rest = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+        if cmd in ("o", "op", "ope", "open"):
+            try:
+                host, port, tls, _n = parse_dial_target(rest, self.cfg["worlds"], default_port=23)
+            except ValueError as e:
+                self._say("usage: open host-name [port]   (%s)" % e)
+                self._telnet_prompt()
+                return
+            self._begin_dial(host, port, tls, "telnet")
+            return                                         # the connection events print the rest
+        if cmd in ("q", "qu", "qui", "quit", "exit"):
+            self._telnet_cli = False
+            self._say("")
+            return
+        if cmd in ("?", "h", "he", "hel", "help"):
+            for t in TELNET_HELP:
+                self._say(t)
+        elif cmd in ("st", "sta", "stat", "statu", "status"):
+            self._say("No connection.")
+        elif cmd in ("c", "cl", "clo", "clos", "close"):
+            self._say("?No connection.")
+        else:
+            self._say("?Invalid command")
+        self._telnet_prompt()
+
+    # ---- saved worlds ---------------------------------------------------------------------
+    def dial_world(self, world, modem=None):
+        """Connect to a saved world (disconnecting first if already online)."""
+        w = clean_world(world)
+        if w is None:
+            return
+        use_modem = (self.dos and self.cfg["dos_flourish"]) if modem is None else modem
+        mode = "modem" if use_modem else None
+
+        def go():
+            self._begin_dial(w["host"], w["port"], w["tls"], mode)
+
+        if self.connected or self.connecting:
+            self.toggle_connection()
+            self.root.after(300, go)
+        else:
+            go()
+
+    def _save_worlds(self, worlds):
+        self.cfg["worlds"] = clean_worlds(worlds)
+        self._save_settings()
+
+    def _note_world_called(self):
+        """Remember when a saved world was last connected."""
+        try:
+            host, port = self.v_host.get().strip().lower(), int(self.v_port.get())
+        except ValueError:
+            return
+        changed = False
+        for w in self.cfg["worlds"]:
+            if w["host"].lower() == host and w["port"] == port:
+                w["last"] = int(time.time())
+                changed = True
+        if changed:
+            self._save_settings()
+
+    def open_worlds(self):
+        if self.dos:
+            return self.dos_worlds()
+        if self._worlds_win is not None:
+            try:
+                if self._worlds_win.winfo_exists():
+                    self._worlds_win.lift()
+                    return self._worlds_win
+            except tk.TclError:
+                pass
+        top = tk.Toplevel(self.root)
+        self._worlds_win = top
+        top.title("Worlds")
+        top.transient(self.root)
+        tk.Label(top, text="Saved worlds").pack(anchor="w", padx=10, pady=(8, 0))
+        box = tk.Frame(top)
+        box.pack(fill="both", expand=True, padx=10, pady=4)
+        lb = tk.Listbox(box, height=12, width=64, exportselection=False, font=self.f_norm,
+                        highlightthickness=0, activestyle="none")
+        sc = tk.Scrollbar(box, command=lb.yview)
+        lb.configure(yscrollcommand=sc.set)
+        lb.pack(side="left", fill="both", expand=True)
+        sc.pack(side="right", fill="y")
+
+        def refresh(select=None):
+            lb.delete(0, "end")
+            for w in self.cfg["worlds"]:
+                lb.insert("end", "%-22s %-32s %s" % (w["name"][:22], "%s:%d" % (w["host"], w["port"]),
+                                                   "TLS" if w["tls"] else "plain"))
+            if self.cfg["worlds"]:
+                i = max(0, min(len(self.cfg["worlds"]) - 1, select or 0))
+                lb.selection_set(i)
+                lb.see(i)
+
+        def current():
+            sel = lb.curselection()
+            return sel[0] if sel else None
+
+        def connect(_e=None):
+            i = current()
+            if i is not None:
+                w = self.cfg["worlds"][i]
+                top.destroy()
+                self.dial_world(w, modem=False)
+            return "break"
+
+        def edit_form(index):
+            existing = self.cfg["worlds"][index] if index is not None else None
+            self._world_form(existing, lambda w: save(index, w), top)
+
+        def save(index, w):
+            lst = list(self.cfg["worlds"])
+            clash = [i for i, x in enumerate(lst) if x["name"].lower() == w["name"].lower() and i != index]
+            if clash:
+                messagebox.showerror("Worlds", "There is already a world called '%s'." % w["name"], parent=top)
+                return False
+            if index is None:
+                lst.append(w)
+            else:
+                w["last"] = lst[index]["last"]
+                lst[index] = w
+            self._save_worlds(lst)
+            refresh(len(lst) - 1 if index is None else index)
+            return True
+
+        def delete(_e=None):
+            i = current()
+            if i is None:
+                return "break"
+            name = self.cfg["worlds"][i]["name"]
+            if messagebox.askyesno("Worlds", "Delete '%s'?" % name, parent=top):
+                lst = list(self.cfg["worlds"])
+                del lst[i]
+                self._save_worlds(lst)
+                refresh(i)
+            return "break"
+
+        btns = tk.Frame(top)
+        btns.pack(fill="x", padx=10, pady=(4, 10))
+        tk.Button(btns, text="Connect", width=10, command=connect).pack(side="left")
+        tk.Button(btns, text="Add...", width=8, command=lambda: edit_form(None)).pack(side="left", padx=6)
+        tk.Button(btns, text="Edit...", width=8,
+                  command=lambda: edit_form(current()) if current() is not None else None).pack(side="left")
+        tk.Button(btns, text="Delete", width=8, command=delete).pack(side="left", padx=6)
+        tk.Button(btns, text="Close", width=8, command=top.destroy).pack(side="right")
+        lb.bind("<Double-Button-1>", connect)
+        lb.bind("<Return>", connect)
+        lb.bind("<Delete>", delete)
+        lb.bind("<Insert>", lambda e: edit_form(None))
+        top.bind("<Escape>", lambda e: top.destroy())
+        top._actions = dict(connect=connect, delete=delete, add=lambda: edit_form(None),
+                            edit=lambda: edit_form(current()), refresh=refresh, listbox=lb, save=save)
+        refresh()
+        self._theme_tree(top)
+        lb.focus_set()
+        return top
+
+    def _store_world(self, index, w):
+        """Add (index None) or replace a saved world. Returns (ok, message)."""
+        lst = list(self.cfg["worlds"])
+        if any(x["name"].lower() == w["name"].lower() and i != index for i, x in enumerate(lst)):
+            return False, "There is already a world called '%s'." % w["name"]
+        if index is None:
+            if len(lst) >= 200:
+                return False, "Too many saved worlds (200 maximum)."
+            lst.append(w)
+        else:
+            w["last"] = lst[index]["last"]
+            lst[index] = w
+        self._save_worlds(lst)
+        return True, "Saved '%s'." % w["name"]
+
+    # ---- DOS look: the dialing directory ---------------------------------------------------
+    def _worlds_rows(self):
+        rows = []
+        for i, w in enumerate(self.cfg["worlds"]):
+            last = time.strftime("%Y-%m-%d", time.localtime(w["last"])) if w["last"] else "-"
+            rows.append({"cells": [str(i + 1), w["name"], w["host"], str(w["port"]),
+                                   "yes" if w["tls"] else "", last],
+                         "role": "normal" if w["last"] else "dim"})
+        return rows
+
+    def dos_worlds(self, selected=0):
+        cols = [{"title": "#", "width": 3, "align": "r"}, {"title": "Name", "width": 18},
+                {"title": "Host", "width": 0}, {"title": "Port", "width": 5, "align": "r"},
+                {"title": "TLS", "width": 3}, {"title": "Last call", "width": 10}]
+        hints = [("Enter", "Dial"), ("A", "Add"), ("E", "Edit"), ("Del", "Remove"), ("Esc", "Close")]
+
+        def act(name, idx, table):
+            worlds = self.cfg["worlds"]
+            if name == "select" and idx is not None:
+                w = worlds[idx]
+                table.close()
+                self.dial_world(w)
+            elif name == "add":
+                table.close()
+                self._dos_world_form(None, None)
+            elif name == "edit" and idx is not None:
+                table.close()
+                self._dos_world_form(idx, None)
+            elif name == "remove" and idx is not None:
+                table.close()
+                victim = worlds[idx]["name"]
+                self._overlay = dosui.confirm(
+                    self.root, "Remove", "Remove '%s' from the directory?" % victim, self._dc(), self.f_norm,
+                    lambda r, v: self._remove_world(idx) if r == "yes" else self._reopen(self.dos_worlds, idx))
+
+        table = dosui.DosTable(self.root, "Dialing directory", cols, self._worlds_rows(), self._dc(),
+                               self.f_norm, act, hints=hints, min_width=64, selected=selected)
+        self._overlay = table
+        table.open()
+        return table
+
+    def _remove_world(self, idx):
+        lst = list(self.cfg["worlds"])
+        if 0 <= idx < len(lst):
+            del lst[idx]
+            self._save_worlds(lst)
+        self._reopen(self.dos_worlds, max(0, idx - 1))
+
+    def _dos_world_form(self, index, values):
+        existing = self.cfg["worlds"][index] if index is not None else None
+        if values is None:
+            values = {"name": existing["name"] if existing else "", "host": existing["host"] if existing else "",
+                      "port": str(existing["port"]) if existing else str(TLS_PORT),
+                      "tls": existing["tls"] if existing else True, "note": existing["note"] if existing else ""}
+        fields = [{"key": "name", "label": "Name", "type": "text", "value": values["name"], "width": 30},
+                  {"key": "host", "label": "Host", "type": "text", "value": values["host"], "width": 30},
+                  {"key": "port", "label": "Port", "type": "text", "value": values["port"], "width": 6},
+                  {"key": "tls", "label": "Use TLS", "type": "check", "value": bool(values["tls"])},
+                  {"key": "note", "label": "Note", "type": "text", "value": values["note"], "width": 40}]
+
+        def result(res, vals):
+            back = lambda sel: self._reopen(self.dos_worlds, sel)
+            if res != "save":
+                back(index if index is not None else 0)
+                return
+            w = clean_world(vals)
+            if w is None:
+                self.system("Please give a name, a valid host and a port from 1 to 65535.")
+                self._reopen(lambda: self._dos_world_form(index, vals))
+                return
+            ok, msg = self._store_world(index, w)
+            if not ok:
+                self.system(msg)
+                self._reopen(lambda: self._dos_world_form(index, vals))
+                return
+            back(len(self.cfg["worlds"]) - 1 if index is None else index)
+
+        return self._dos_dialog("Edit entry" if existing else "New entry", fields,
+                                [("Save", "save"), ("Cancel", "cancel")], result, width=58)
+
+    def _world_form(self, world, on_save, parent):
+        """Add / edit one world in an ordinary dialog."""
+        win = tk.Toplevel(parent)
+        win.title("Edit world" if world else "Add world")
+        win.transient(parent)
+        v = {"name": tk.StringVar(value=world["name"] if world else ""),
+             "host": tk.StringVar(value=world["host"] if world else ""),
+             "port": tk.StringVar(value=str(world["port"]) if world else str(TLS_PORT)),
+             "note": tk.StringVar(value=world["note"] if world else "")}
+        tls = tk.BooleanVar(value=world["tls"] if world else True)
+        for r, (label, key, width) in enumerate((("Name", "name", 30), ("Host", "host", 30),
+                                                 ("Port", "port", 8), ("Note", "note", 40))):
+            tk.Label(win, text=label).grid(row=r, column=0, sticky="w", padx=(10, 6), pady=4)
+            tk.Entry(win, textvariable=v[key], width=width).grid(row=r, column=1, sticky="w", pady=4, padx=(0, 10))
+        tk.Checkbutton(win, text="Use TLS", variable=tls).grid(row=4, column=1, sticky="w")
+
+        def ok():
+            w = clean_world({"name": v["name"].get(), "host": v["host"].get(), "port": v["port"].get(),
+                             "tls": tls.get(), "note": v["note"].get()})
+            if w is None:
+                messagebox.showerror("World", "Please give a name, a valid host and a port from 1 to 65535.",
+                                     parent=win)
+                return
+            if on_save(w) is not False:
+                win.destroy()
+
+        row = tk.Frame(win)
+        row.grid(row=5, column=0, columnspan=2, sticky="e", padx=10, pady=10)
+        tk.Button(row, text="OK", width=8, command=ok).pack(side="right")
+        tk.Button(row, text="Cancel", width=8, command=win.destroy).pack(side="right", padx=6)
+        win.bind("<Return>", lambda e: ok())
+        win.bind("<Escape>", lambda e: win.destroy())
+        win._set = v
+        win._tls = tls
+        win._ok = ok
+        self._theme_tree(win)
+        return win
 
     def _on_paste(self, _e):
         # Entry would insert newlines as odd glyphs; flatten them (never auto-send a paste).
@@ -2422,6 +3263,12 @@ class App:
             if not self.connected:
                 self._cancel_reconnect()
                 self.toggle_connection()
+        elif cmd == "worlds":
+            self.open_worlds()
+        elif cmd == "prompt":
+            self.edit_prompt()
+        elif cmd == "dial":
+            self._dial_command("ATDT " + arg) if arg else self.system("Usage: /dial host [port] [tls|plain] or a saved world's name")
         elif cmd == "reconnect":
             self._cancel_reconnect()
             if self.connected or self.connecting:
@@ -2474,7 +3321,7 @@ class App:
             return
         self._start_connect()
 
-    def _start_connect(self, auto=False):
+    def _start_connect(self, auto=False, quiet=False, mode=None):
         host = self.v_host.get().strip()
         try:
             port = int(self.v_port.get())
@@ -2487,7 +3334,10 @@ class App:
         self.connecting = True
         self.btn.configure(text="Cancel")
         self.status.configure(text="Connecting…")
-        if self.dos and self.cfg["dos_flourish"]:
+        self._dial_mode = mode
+        if quiet:
+            pass                                      # the caller already printed its own wording
+        elif self.dos and self.cfg["dos_flourish"]:
             self.system("%s%s:%d" % ("ATDT " if not auto else "ATDT (redial) ", host, port))
         else:
             self.system("%s %s:%d…" % ("Reconnecting to" if auto else "Connecting to", host, port))
@@ -2566,6 +3416,7 @@ class App:
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
             f.configure(family=self.font_family, size=self.cfg["font_size"])
         self._sync_variants()
+        self._font_changed()
         self.statbar.refresh()
         self._restyle_dosbar()
         self._save_settings()
@@ -2644,6 +3495,9 @@ class App:
         v_size = tk.IntVar(value=cur_size)
         sp = tk.Spinbox(row, from_=MIN_FONT, to=MAX_FONT, width=4, textvariable=v_size)
         sp.pack(side="left", padx=6)
+        tk.Label(row, text="Line spacing").pack(side="left", padx=(14, 0))
+        v_gap = tk.IntVar(value=int(self.cfg["line_spacing"]))
+        tk.Spinbox(row, from_=0, to=12, width=3, textvariable=v_gap).pack(side="left", padx=6)
 
         prev_font = tkfont.Font(family=cur_fam, size=cur_size)
         preview = tk.Label(top, text='The quick brown fox: "Hello," she said. 0O 1lI\n'
@@ -2671,6 +3525,10 @@ class App:
         def ok():
             fam, size = chosen()
             self.apply_font(fam, size)
+            try:
+                self.apply_spacing(int(v_gap.get()))
+            except (tk.TclError, ValueError):
+                pass
             top.destroy()
 
         def skin_font():

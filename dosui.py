@@ -9,7 +9,7 @@ Public API:
     gauge_text(cur, maximum, width=10) -> (text, role)
     format_duration(seconds) -> 'HH:MM:SS'
     parse_hex_color(text) -> '#rrggbb' | None
-    DosMenu, DosDialog, DosColorPicker, DosStatusBar, show_message(), confirm(), DosMessage
+    DosMenu, DosDialog, DosColorPicker, DosTable, DosStatusBar, show_message(), confirm(), DosMessage
 """
 import math
 import re
@@ -19,7 +19,7 @@ import tkinter.font as tkfont
 
 __all__ = ['BOX_DOUBLE', 'BOX_SINGLE', 'dos_colors', 'gauge_text', 'format_duration',
            'parse_hex_color', 'DosMenu', 'DosDialog', 'DosColorPicker', 'DosStatusBar', 'DosMessage', 'show_message', 'confirm',
-           'DosScrollbar']
+           'DosScrollbar', 'DosTable']
 
 BOX_DOUBLE = '╔═╗║╚╝'     # tl, horizontal, tr, vertical, bl, br
 BOX_SINGLE = '┌─┐│└┘'
@@ -1509,6 +1509,577 @@ class DosColorPicker(_DosBox):
         self._render()
         if self._is_open:
             self._place_box(self.winfo_x(), self.winfo_y())
+
+
+# --------------------------------------------------------------------------
+# DosTable
+# --------------------------------------------------------------------------
+_TABLE_ROLES = ('normal', 'dim', 'good', 'warn', 'bad')
+_TABLE_NAV = {'Up': 'up', 'KP_Up': 'up', 'Down': 'down', 'KP_Down': 'down',
+              'Prior': 'pgup', 'KP_Prior': 'pgup', 'Next': 'pgdn', 'KP_Next': 'pgdn',
+              'Home': 'home', 'KP_Home': 'home', 'End': 'end', 'KP_End': 'end'}
+_TABLE_KEYS = {'Return': 'select', 'KP_Enter': 'select', 'Escape': 'close', 'a': 'add',
+               'Insert': 'add', 'e': 'edit', 'Delete': 'remove', 'r': 'remove'}
+_TABLE_SEP = ' │ '          # (drawn as spaces in the row text; the rule is a separate cell)
+_TABLE_WHEEL = 3            # rows per wheel notch
+_TABLE_EMPTY = '(empty)'
+
+
+class DosTable(_DosBox):
+    """Keyboard-driven list/table ('dialing directory').
+
+    on_action(action_name, selected_index_or_None, table) is called for every mapped key
+    (default map: Return/KP_Enter select, Escape close, a/Insert add, e edit, Delete/r remove);
+    'close' closes the table first and passes None.  Other actions leave the table open.
+    Navigation (Up/Down/PageUp/PageDown/Home/End, mouse wheel, click, double-click) is built in.
+    Row indices refer to the rows after None entries were dropped."""
+
+    _close_on_outside = False
+
+    def __init__(self, parent, title, columns, rows, colors, font, on_action, keys=None,
+                 hints=None, min_width=0, height=None, selected=0):
+        _DosBox.__init__(self, parent, colors, font)
+        self._dead = False
+        self._title = '' if title is None else str(title).replace('\n', ' ')
+        self._on_action = on_action
+        self._colspec = self._norm_columns(columns)
+        self._data = self._norm_rows(rows)
+        self._keymap = self._norm_keys(keys)
+        self._hints = self._norm_hints(hints)
+        try:
+            self._min_width = max(0, int(min_width))
+        except Exception:
+            self._min_width = 0
+        try:
+            h = int(height) if height is not None else None
+            self._height = h if h is not None and h >= 1 else None
+        except Exception:
+            self._height = None
+        self._pos = (None, None)
+        self._vis = 1
+        self._inner = 4
+        self._widths = []
+        self._seps = []
+        self.plain = []             # plain text of every canvas row (introspection / tests)
+        self._off = 0
+        try:
+            sel = int(selected)
+        except Exception:
+            sel = 0
+        self._sel = max(0, min(len(self._data) - 1, sel)) if self._data else -1
+        self._layout()
+        self._fit_offset(centre=True)
+        self._render()
+        cv = self._cv
+        cv.bind('<Key>', self._on_key)
+        cv.bind('<ButtonPress-1>', lambda e: self._on_click(e, False))
+        cv.bind('<Double-ButtonPress-1>', lambda e: self._on_click(e, True))
+        cv.bind('<MouseWheel>', self._on_wheel)
+        cv.bind('<Button-4>', lambda e: self._wheel_rows(-_TABLE_WHEEL))
+        cv.bind('<Button-5>', lambda e: self._wheel_rows(_TABLE_WHEEL))
+
+    # -- normalisation --------------------------------------------------
+    @staticmethod
+    def _norm_columns(columns):
+        out, flex = [], False
+        try:
+            seq = list(columns) if columns is not None else []
+        except Exception:
+            seq = []
+        for c in seq:
+            if not isinstance(c, dict):
+                c = {'title': c}
+            try:
+                w = int(c.get('width') or 0)
+            except Exception:
+                w = 0
+            if w <= 0:
+                if flex:
+                    w = 3
+                else:
+                    flex, w = True, 0
+            else:
+                w = max(3, w)
+            t = c.get('title')
+            out.append({'title': '' if t is None else str(t).replace('\n', ' '), 'width': w,
+                        'align': 'r' if str(c.get('align', 'l')).lower().startswith('r') else 'l'})
+        if not out:
+            out = [{'title': '', 'width': 0, 'align': 'l'}]
+        return out
+
+    @staticmethod
+    def _cell(v):
+        return ('' if v is None else str(v)).replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+
+    @classmethod
+    def _norm_rows(cls, rows):
+        out = []
+        try:
+            seq = list(rows) if rows is not None else []
+        except Exception:
+            seq = []
+        for r in seq:
+            if r is None:
+                continue
+            role = 'normal'
+            try:
+                if isinstance(r, dict):
+                    role = r.get('role') if r.get('role') in _TABLE_ROLES else 'normal'
+                    cells = r.get('cells')
+                    cells = list(cells) if isinstance(cells, (list, tuple)) else []
+                elif isinstance(r, (list, tuple)):
+                    cells = list(r)
+                else:
+                    cells = [r]
+                out.append((tuple(cls._cell(x) for x in cells), role))
+            except Exception:
+                out.append(((), 'normal'))
+        return out
+
+    @staticmethod
+    def _norm_keys(keys):
+        src = _TABLE_KEYS if keys is None else keys
+        out = {}
+        try:
+            items = list(src.items())
+        except Exception:
+            items = list(_TABLE_KEYS.items())
+        for k, v in items:
+            if k is None or v is None or str(k) == '':
+                continue
+            out[str(k).lower()] = str(v)
+        return out
+
+    @staticmethod
+    def _norm_hints(hints):
+        out = []
+        try:
+            seq = list(hints or [])
+        except Exception:
+            seq = []
+        for h in seq:
+            try:
+                k, lab = str(h[0]), str(h[1])
+            except Exception:
+                k, lab = str(h), ''
+            out.append((k.replace('\n', ' '), lab.replace('\n', ' ')))
+        return out
+
+    # -- layout ---------------------------------------------------------
+    def _layout(self):
+        pw, ph = self._parent_size()
+        ncol = len(self._colspec)
+        n = len(self._data)
+        chrome = 4 + (2 if self._hints else 0)
+        max_vis = max(1, ph // self.lh - chrome - 1)
+        if self._height is not None:
+            vis = min(self._height, max_vis)
+        else:
+            cap = min(max_vis, max(3, int(ph * 0.6) // self.lh - chrome))
+            vis = min(cap, max(n, 3))
+        self._vis = max(1, vis)
+        fixed = [c['width'] for c in self._colspec]
+        flex = fixed.index(0) if 0 in fixed else -1
+        widths = list(fixed)
+        gaps = len(_TABLE_SEP) * (ncol - 1)
+        if flex >= 0:
+            k = flex
+            m = max([len(self._colspec[k]['title'])] +
+                    [min(len(r[0][k]), 60) for r in self._data if k < len(r[0])] or [0])
+            widths[k] = max(8, min(m, 40))
+        foot = ''
+        if self._hints:
+            foot = self._footer_text()
+        title = self._title
+        want = max(2 + gaps + sum(widths), (len(title) + 4) if title else 0,
+                   len(foot) + 1 if foot else 0, self._min_width - 2, 4)
+        inner = min(want, max(4, max(6, pw // self.cw - 1) - 2))
+        if inner > 2 + gaps + sum(widths):
+            extra = inner - (2 + gaps + sum(widths))
+            widths[flex if flex >= 0 else ncol - 1] += extra
+        while 2 + gaps + sum(widths) > inner:
+            k = flex if flex >= 0 and widths[flex] > 3 else -1
+            if k < 0:
+                wmax = max(widths)
+                if wmax <= 3:
+                    break
+                k = widths.index(wmax)
+            widths[k] -= 1
+        self._widths = widths
+        self._inner = inner
+        seps, x = [], 1
+        for w in widths[:-1]:
+            x += w + 1
+            if 1 + x < inner + 1:
+                seps.append(1 + x)
+            x += 2
+        self._seps = seps
+        rows = self._vis + chrome
+        self._size_canvas(inner + 2, rows)
+        self._fit_offset()
+
+    def _footer_text(self):
+        return ' ' + '  '.join(('%s %s' % (k, lab)).rstrip() for k, lab in self._hints)
+
+    def _fit_offset(self, centre=False):
+        n, vis = len(self._data), self._vis
+        off = self._off
+        if self._sel >= 0:
+            if centre and not (off <= self._sel < off + vis):
+                off = self._sel - vis // 2
+            elif self._sel < off:
+                off = self._sel
+            elif self._sel >= off + vis:
+                off = self._sel - vis + 1
+        self._off = max(0, min(off, max(0, n - vis)))
+
+    # -- row text ---------------------------------------------------------
+    def _fmt(self, cells):
+        """Row text of exactly self._inner chars; separator positions are spaces."""
+        parts = []
+        for k, w in enumerate(self._widths):
+            s = _trunc(cells[k] if k < len(cells) else '', w)
+            parts.append(s.rjust(w) if self._colspec[k]['align'] == 'r' else s.ljust(w))
+        text = ' ' + (' ' * len(_TABLE_SEP)).join(parts) + ' '
+        return text[:self._inner].ljust(self._inner)
+
+    def _with_rules(self, text):
+        """Insert the vertical rules into a _fmt() string (plain-text view)."""
+        chars = list(text)
+        for s in self._seps:
+            if 0 <= s - 1 < len(chars):
+                chars[s - 1] = '│'
+        return ''.join(chars)
+
+    def _scroll_cells(self):
+        """Right-border glyph per data row: list of (glyph, kind) ; empty when not scrollable."""
+        n, vis = len(self._data), self._vis
+        if n <= vis or vis < 2:
+            return []
+        out = [('║', 'none')] * vis
+        out[0] = ('▲', 'arrow')
+        out[-1] = ('▼', 'arrow')
+        t = vis - 2
+        if t >= 1:
+            th = max(1, int(round(t * float(vis) / n)))
+            pos = int(round((t - th) * self._off / float(n - vis))) if n > vis else 0
+            for i in range(t):
+                out[1 + i] = ('█', 'thumb') if pos <= i < pos + th else ('░', 'track')
+        return out
+
+    # -- drawing ----------------------------------------------------------
+    def _render(self):
+        cv, c = self._cv, self.colors
+        cv.delete('deco')
+        bg, bd, fg = c['dos_menu_bg'], c['dos_menu_border'], c['dos_menu_fg']
+        cols, vis, inner = self._cols, self._vis, self._inner
+        d0 = 3
+        has_foot = bool(self._hints)
+        tl, hz, tr, vt, bl, br = BOX_DOUBLE
+        n = len(self._data)
+        self._draw_frame(self._title, (2, vis + 3) if has_foot else (2,))
+        plain = []
+        # plain text of the frame rows (mirrors _draw_frame)
+        title = ' %s ' % self._title if self._title else ''
+        title = _trunc(title, max(0, cols - 4)) if title else ''
+        left = (cols - 2 - len(title)) // 2
+        plain.append((tl + hz * left + title + hz * (cols - 2 - left - len(title)) + tr)[:cols])
+        keyfg = c['dos_key_fg'] if c['dos_key_fg'] != bg else fg
+        # header
+        htext = self._fmt([k['title'] for k in self._colspec])
+        self._text(1, 1, htext, keyfg)
+        for s in self._seps:
+            self._cells(s, 1, '│', bd)
+        plain.append(vt + self._with_rules(htext) + vt)
+        rule = list(SEP_FILL * inner)
+        for s in self._seps:
+            jg = '┼' if n else '┴'
+            rule[s - 1] = jg
+            self._cells(s, 2, jg, bd, bg)
+        plain.append(SEP_LEFT + ''.join(rule) + SEP_RIGHT)
+        # data rows
+        scroll = self._scroll_cells()
+        rolefg = {'normal': fg, 'dim': c['dos_menu_dim'], 'good': c['good'], 'warn': c['warn'],
+                  'bad': c['bad']}
+        for r in range(vis):
+            i = self._off + r
+            row = d0 + r
+            if n == 0:
+                text = ' ' * inner
+                if r == vis // 2:
+                    pad = max(0, (inner - len(_TABLE_EMPTY)) // 2)
+                    text = (' ' * pad + _TABLE_EMPTY).ljust(inner)[:inner]
+                    self._text(1 + pad, row, _TABLE_EMPTY[:max(0, inner - pad)], c['dos_menu_dim'])
+                plain.append(vt + text + vt)
+                continue
+            if i < n:
+                cells, role = self._data[i]
+                text = self._fmt(cells)
+            else:
+                text, role = ' ' * inner, 'normal'
+            sel = (i == self._sel)
+            if sel:
+                rfg, rbg = c['dos_menu_sel_fg'], c['dos_menu_sel_bg']
+            else:
+                rfg, rbg = rolefg[role], None
+            if text.strip():
+                self._text(1, row, text, rfg, rbg)
+            elif rbg:
+                self._rect(1, row, inner, rbg)
+            for s in self._seps:
+                self._cells(s, row, '│', rfg if sel else bd)
+            right = vt
+            if scroll:
+                right, kind = scroll[r]
+                if kind == 'thumb':
+                    self._rect(cols - 1, row, 1, bd)
+                elif kind == 'track':
+                    self._cells(cols - 1, row, right, c['dos_menu_dim'], bg)
+                elif kind == 'arrow':
+                    lim = (right == '▲' and self._off == 0) or \
+                          (right == '▼' and self._off + vis >= n)
+                    self._cells(cols - 1, row, right, c['dos_menu_dim'] if lim else bd, bg)
+            plain.append(vt + self._with_rules(text) + right)
+        # footer / bottom
+        if has_foot:
+            frule = list(SEP_FILL * inner)
+            for s in (self._seps if n else ()):
+                frule[s - 1] = '┴'
+                self._cells(s, d0 + vis, '┴', bd, bg)
+            plain.append(SEP_LEFT + ''.join(frule) + SEP_RIGHT)
+            ftxt = self._footer_text()[:inner].ljust(inner)
+            frow = d0 + vis + 1
+            self._text(1, frow, ftxt, fg)
+            plain.append(vt + ftxt + vt)
+            self._draw_foot_keys(frow, bg, keyfg)
+            plain.append(bl + hz * inner + br)
+        else:
+            bot = list(hz * inner)
+            for s in (self._seps if n else ()):
+                bot[s - 1] = '╧'
+                self._cells(s, d0 + vis, '╧', bd, bg)
+            plain.append(bl + ''.join(bot) + br)
+        self.plain = plain
+
+    def _draw_foot_keys(self, frow, bg, keyfg):
+        pos = 1                      # inner offset of the first key
+        for j, (k, lab) in enumerate(self._hints):
+            if j:
+                pos += 2
+            seg = k[:max(0, self._inner - pos)]
+            if seg:
+                self._text(1 + pos, frow, seg, keyfg, bg)
+            pos += len(('%s %s' % (k, lab)).rstrip())
+            if pos >= self._inner:
+                break
+
+    # -- selection / scrolling --------------------------------------------
+    @property
+    def selected(self):
+        return self._sel if self._sel >= 0 else None
+
+    @property
+    def row_count(self):
+        return len(self._data)
+
+    @property
+    def offset(self):
+        """Index of the first visible data row."""
+        return self._off
+
+    @property
+    def visible_rows(self):
+        """Number of data rows shown at once."""
+        return self._vis
+
+    def select(self, index):
+        """Select a row (index clamped; no-op when empty or index not a number)."""
+        if not self._data:
+            return
+        try:
+            i = max(0, min(len(self._data) - 1, int(index)))
+        except Exception:
+            return
+        self._sel = i
+        self._fit_offset(centre=True)
+        self._render()
+
+    def _move_to(self, i):
+        n = len(self._data)
+        if n == 0:
+            return
+        i = max(0, min(n - 1, i))
+        if i == self._sel:
+            return
+        self._sel = i
+        self._fit_offset()
+        self._render()
+
+    def _navigate(self, kind):
+        if not self._data:
+            return
+        sel, step = max(self._sel, 0), max(1, self._vis - 1)
+        self._move_to({'up': sel - 1, 'down': sel + 1, 'pgup': sel - step, 'pgdn': sel + step,
+                       'home': 0, 'end': len(self._data) - 1}[kind])
+
+    def _scroll_by(self, delta):
+        """Scroll the window; the selection is pulled into view so it never hides."""
+        n, vis = len(self._data), self._vis
+        off = max(0, min(self._off + delta, max(0, n - vis)))
+        if off == self._off:
+            return
+        self._off = off
+        if self._sel >= 0:
+            self._sel = max(off, min(off + vis - 1, self._sel))
+        self._render()
+
+    def _wheel_rows(self, rows):
+        if not self._dead:
+            self._scroll_by(rows)
+        return 'break'
+
+    # -- events ------------------------------------------------------------
+    def _fire(self, action, index):
+        cb = self._on_action
+        if self._dead or not callable(cb):
+            return
+        cb(action, index, self)
+
+    def _do_action(self, action):
+        if action == 'close':
+            if self._finish_close():
+                self._fire('close', None)
+        else:
+            self._fire(action, self.selected)
+
+    def _on_key(self, e):
+        if self._dead:
+            return 'break'
+        ks = str(e.keysym)
+        nav = _TABLE_NAV.get(ks)
+        if nav:
+            self._navigate(nav)
+            return 'break'
+        try:
+            state = int(e.state)
+        except Exception:
+            state = 0
+        if state & 0x20004:         # Ctrl / Alt combinations are not ours
+            return 'break'
+        names = [ks.lower()]
+        ch = e.char
+        if ch and len(ch) == 1 and ch.isprintable():
+            names.append(ch.lower())
+        for nm in names:
+            act = self._keymap.get(nm)
+            if act:
+                self._do_action(act)
+                break
+        return 'break'
+
+    def _on_wheel(self, e):
+        try:
+            d = int(e.delta)
+        except Exception:
+            d = 0
+        if d:
+            steps = int(abs(d) / 120) or 1
+            self._wheel_rows((-1 if d > 0 else 1) * steps * _TABLE_WHEEL)
+        return 'break'
+
+    def _on_click(self, e, double):
+        if self._dead:
+            return 'break'
+        try:
+            self._cv.focus_set()
+        except tk.TclError:
+            pass
+        col, row = int(e.x) // self.cw, int(e.y) // self.lh
+        vis, d0 = self._vis, 3
+        if row < d0 or row >= d0 + vis:
+            return 'break'
+        if col == self._cols - 1:
+            if len(self._data) > vis and vis >= 2:
+                r = row - d0
+                if r == 0:
+                    self._scroll_by(-1)
+                elif r == vis - 1:
+                    self._scroll_by(1)
+                else:
+                    cells = self._scroll_cells()
+                    if cells and cells[r][1] == 'track':
+                        up = any(cells[j][1] == 'thumb' for j in range(r + 1, vis))
+                        self._scroll_by(-(vis - 1) if up else vis - 1)
+            return 'break'
+        if col < 1 or col > self._cols - 2:
+            return 'break'
+        i = self._off + row - d0
+        if 0 <= i < len(self._data):
+            if i != self._sel:
+                self._sel = i
+                self._fit_offset()
+                self._render()
+            if double:
+                act = self._keymap.get('return')
+                if act:
+                    self._do_action(act)
+        return 'break'
+
+    # -- public ------------------------------------------------------------
+    def set_rows(self, rows, selected=None):
+        """Replace the data.  Selection (and scroll position) are kept where possible."""
+        self._data = self._norm_rows(rows)
+        n = len(self._data)
+        if n == 0:
+            self._sel = -1
+        else:
+            if selected is not None:
+                try:
+                    self._sel = int(selected)
+                except Exception:
+                    pass
+            self._sel = max(0, min(n - 1, self._sel if self._sel >= 0 else 0))
+        old = (self._cols, self._rows)
+        self._layout()
+        self._fit_offset(centre=selected is not None)
+        self._render()
+        if self._is_open and (self._cols, self._rows) != old:
+            self._place_box(*self._pos)
+
+    def open(self, x=None, y=None):
+        if self._is_open:
+            self._finish_close()
+        self._pos = (x, y)
+        self._begin_open()
+        self._layout()
+        self._fit_offset()
+        self._render()
+        self._place_box(x, y)
+        try:
+            self.update_idletasks()
+            self._cv.focus_set()
+        except tk.TclError:
+            pass
+
+    def close(self):
+        """Close silently (the 'close' key action calls on_action; this does not)."""
+        self._finish_close()
+
+    def restyle(self, colors, font=None):
+        self.colors = dos_colors(colors)
+        if font is not None:
+            self._font = font
+        self._measure()
+        self.configure(bg=self.colors['dos_menu_bg'])
+        self._layout()
+        self._render()
+        if self._is_open:
+            self._place_box(*self._pos)
+
+    def destroy(self):
+        self._dead = True
+        self._on_action = None
+        _DosBox.destroy(self)
 
 
 # --------------------------------------------------------------------------

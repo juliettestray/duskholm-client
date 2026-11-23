@@ -58,7 +58,7 @@ assert 0.5 <= _border <= 2.0, ("border should be about one character cell", _bor
 assert app.theme["name"] == "Retro DOS" and app.cfg["skin"] == "Moody", "DOS look has its own skin; normal one untouched"
 assert not app.statbar.winfo_ismapped(), "the in-game stat bar is replaced by the DOS bar"
 hint, stat = rows()
-assert "F1 Help" in hint and "F10 Menu" in hint and "F2 Connect" in hint, hint
+assert "F1 Help" in hint and "F10 Menu" in hint and "F2 Dial" in hint and "^W Worlds" in hint, hint
 assert "OFFLINE" in stat and "ANSI" in stat and "TLS" not in stat, stat
 assert app._dos_job is not None
 assert app.f_norm.cget("size") > 11, "font auto-fitted to the 80-column screen"
@@ -67,7 +67,7 @@ assert app.f_norm.cget("size") > 11, "font auto-fitted to the 80-column screen"
 app.toggle_connection(); pump(1.0)
 assert app.connected and conns
 hint, stat = rows()
-assert "ONLINE 127.0.0.1:%d" % port in stat and "ANSI" in stat and "F2 Disconnect" in hint, (hint, stat)
+assert "ONLINE 127.0.0.1:%d" % port in stat and "ANSI" in stat and "F2 Hangup" in hint, (hint, stat)
 out = app.out.get("1.0", "end-1c")
 assert "ATDT 127.0.0.1:%d" % port in out and "CONNECT" in out, out
 conns[0].sendall(b"The air is still.\n\r\x1b[0;32m[\x1b[1;33m204/350\x1b[0mDF \x1b[36m1\x1b[0mST 2WN 0LG M:3 K:0 (North 1/5:1/5)] ")
