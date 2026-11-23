@@ -63,6 +63,8 @@ import toolsui                      # gradient maker, hex converter, customize f
 import colortools
 import custom as customize_data
 import worldfile
+import speech
+import access
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -894,15 +896,19 @@ EXTRA_BOOLS = [
     ("scroll_on_send", True, "Jump to the bottom when I send", "Jump to bottom on send", "S"),
     ("show_echo", True, "Show the commands I send", "Show my commands", "M"),
     ("custom_form", True, "Fill-in form when I type 'customize'", "Customize form", "F"),
+    ("screen_reader", False, "Screen reader mode", "Screen reader mode", "Y"),
+    ("sr_alerts", True, "Screen reader: announce stun, health and ready timers", "Reader alerts", "T"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
     ("bell_new", "off", ("off", "always", "unfocused", "scrolled"), "Beep on new output", "N"),
     ("clock", "off", ("off", "real", "game"), "Clock", "C"),
+    ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
 ]
 CHOICE_WORDS = {"off": "off", "always": "always", "unfocused": "when the window is not in front",
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
-                "game": "game time (US Eastern)"}
+                "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
+                "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice"}
 
 
 def clean_settings(cfg):
@@ -941,6 +947,8 @@ def clean_settings(cfg):
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
+    sr = cfg.get("sr_rate")
+    cfg["sr_rate"] = max(-10, min(10, sr)) if isinstance(sr, int) and not isinstance(sr, bool) else 0
     cfg["gradients"] = colortools.validate_saved(cfg.get("gradients"))
     go = cfg.get("game_offset")
     cfg["game_offset"] = go if isinstance(go, int) and not isinstance(go, bool) and abs(go) <= 14 * 3600 and go % 900 == 0 \
@@ -1041,6 +1049,10 @@ def trigger_from_values(v):
         actions.append({"type": "note", "text": str(v["note"]).strip()})
     if str(v.get("status", "")).strip():
         actions.append({"type": "status", "text": str(v["status"]).strip()})
+    if str(v.get("speak", "")).strip():
+        actions.append({"type": "speak", "text": str(v["speak"]).strip(), "interrupt": bool(v.get("speak_int"))})
+    if v.get("silence"):
+        actions.append({"type": "silence"})
     actions += [a for a in (v.get("keep") or []) if isinstance(a, dict)]     # actions the editor has no controls for
     if not actions:
         return None, "Choose at least one action (highlight, hide, send, beep or note)."
@@ -1097,7 +1109,8 @@ def values_from_trigger(t):
     """The editors' simple values for an existing trigger (None for a new one)."""
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
          "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "hide": False, "send": "",
-         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "status": ""}
+         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "status": "",
+         "speak": "", "speak_int": False, "silence": False}
     if not t:
         return v
     v.update(name=t["name"], enabled=t["enabled"], regex=t["mode"] == "regex", pattern=t["pattern"],
@@ -1117,6 +1130,10 @@ def values_from_trigger(t):
             v["note"] = a["text"]
         elif k == "status":
             v["status"] = a["text"]
+        elif k == "speak":
+            v.update(speak=a["text"], speak_int=bool(a.get("interrupt")))
+        elif k == "silence":
+            v["silence"] = True
         elif k == "route":
             v.update(pane=a["pane"], pane_gag=bool(a.get("gag")))
         else:
@@ -1459,7 +1476,7 @@ class Connection:
                 pass
 
 
-class App(extras.ExtrasMixin, toolsui.ToolsMixin):
+class App(extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
         self.cfg = self._load_settings()
@@ -1489,6 +1506,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         self._img_pending, self._img_polling = 0, False
         self._extras_init()
         self._tools_init()
+        self._access_init()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
         self._cd_job = None
         self._mono = None
@@ -1543,6 +1561,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         self._pump_job = root.after(25, self._pump)
         root.bind("<Destroy>", self._on_root_destroy, add="+")
         self.system("%s client. Type /help for local commands, or press Connect." % APP_NAME)
+        if self.cfg.get("screen_reader"):
+            self.root.after(400, lambda: self.set_screen_reader(True, announce=True))
 
     # ---- settings ----------------------------------------------------
     def _load_settings(self):
@@ -2887,6 +2907,11 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         if key == "clock":
             self._start_xtick()
             self._update_clock()
+        if key == "screen_reader":
+            self.set_screen_reader(bool(value))
+            return
+        if key == "sr_voice" and self.sr_on():
+            self.set_screen_reader(True, announce=True)
         if key == "links" and not value:
             for w in self._text_widgets():
                 w.tag_remove("link", "1.0", "end")
@@ -3362,9 +3387,9 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         win.title("Edit trigger" if existing else "Add trigger")
         win.transient(parent)
         v0 = values_from_trigger(existing)
-        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "status")}
+        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "status", "speak")}
         bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole",
-                                                           "hide", "echo", "beep", "pane_gag")}
+                                                           "hide", "echo", "beep", "pane_gag", "speak_int", "silence")}
         r = 0
 
         def row(label, widget):
@@ -3405,6 +3430,11 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         row("Send to pane", cap)
         row("Client note", tk.Entry(win, textvariable=sv["note"], width=64))
         row("Status line", tk.Entry(win, textvariable=sv["status"], width=64))
+        spk = tk.Frame(win)
+        tk.Entry(spk, textvariable=sv["speak"], width=40).pack(side="left")
+        tk.Checkbutton(spk, text="Interrupt", variable=bv["speak_int"]).pack(side="left", padx=6)
+        tk.Checkbutton(spk, text="Don't read this line aloud", variable=bv["silence"]).pack(side="left", padx=6)
+        row("Speak (screen reader)", spk)
         tk.Label(win, justify="left", wraplength=560,
                  text="Colours: #rrggbb, 0-15 or a name like 'bright cyan'. In commands and notes: %0 is the match, "
                       "%1-%9 the wildcards/groups; ; separates commands."
@@ -4074,6 +4104,10 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
 
     def set_dos_mode(self, on):
         on = bool(on)
+        if on and self.sr_on():
+            self.system("The DOS look is not available in screen reader mode.")
+            self.v_dos.set(False)
+            return
         if on == self.dos:
             self.v_dos.set(self.dos)
             return
@@ -4328,6 +4362,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         # start on a fresh line if the server's prompt is sitting at the end of one
         prefix = "\n" if self.out.get("end-2c", "end-1c") not in ("\n", "") else ""
         self._append([(prefix + "[" + text + "]\n", "system")])
+        self.sr_system(text)
 
     def clear(self):
         self._pending, self._line_plain, self._line_flushed, self._line_hidden_len = [], "", False, 0
@@ -4376,6 +4411,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
                         pass
             try:
                 self.save_notes()                      # notes typed in the last moments
+                self.speech.set_backend(speech.NullBackend())
             except Exception:
                 pass
             self.conn.close()
@@ -4469,6 +4505,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         self._statbar_show()
         self.update_dosbar()
         self._start_cd_tick()
+        self.sr_alerts(self._prompt_view())
 
     def _prompt_view(self):
         """The last prompt with its cooldown timers counted down for the time since it arrived
@@ -4500,6 +4537,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         self.statbar.set_data(self._prompt_view())
         self.update_dosbar()
         self._start_cd_tick()
+        self.sr_alerts(self._prompt_view())
 
     def _statbar_show(self):
         if (self.cfg.get("statbar") and self._last_prompt and not self.dos
@@ -4650,6 +4688,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             segs = [(t, self._tag_for(k)) for t, k in shown]
             segs.append(("\n", self._tag_for(key)))
             self._append(segs, _internal=True)
+        self.sr_hear(plain, effects)
         for fx in effects:
             self._do_effect(fx)
 
@@ -4680,6 +4719,10 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
                 elif kind == "status":
                     effects.append(("status", triggers.expand(act["text"], m["captures"]).replace(
                         "{name}", self.cfg.get("char_name") or "Someone")))
+                elif kind == "speak":
+                    effects.append(("speak", triggers.expand(act["text"], m["captures"]), bool(act.get("interrupt"))))
+                elif kind == "silence":
+                    effects.append(("silence",))
         if routes:
             snapshot = list(pieces) if pieces else [(plain, (None, None, False, False, False, False))]
             for pane in routes:
@@ -4711,6 +4754,9 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             self.system(fx[1])
         elif fx[0] == "status":
             self.set_notice(fx[1])
+        elif fx[0] == "speak":
+            if self.sr_on():
+                self.speech.say(fx[1], interrupt=fx[2])
         elif fx[0] == "send":
             _kind, name, act, caps = fx
             for cmd in triggers.expand_commands(act["text"], caps):   # split first: game text can never add commands
@@ -5319,7 +5365,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
     def _local(self, line):
         cmd, _, arg = line[1:].partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
-        if self._extras_command(cmd, arg) or self._tools_command(cmd, arg):
+        if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg):
             return
         if cmd == "export":
             if arg:
@@ -5344,7 +5390,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
                         "  /timer 10m [label]       /timer list | cancel [n]   (also 21:30, game 21:30)\n"
                         "  /moon   /notes   /hotkeys\n"
                         "  /hex ff8800              /gradient [text]   /customize\n"
-                        "  /export [file]           /import file   (world settings, .snc)")
+                        "  /export [file]           /import file   (world settings, .snc)\n"
+                        "  /sr on|off|status|help|test   screen reader mode")
         elif cmd == "connect":
             bits = arg.split()
             if bits:
@@ -5868,10 +5915,14 @@ def main():
     home = os.path.expanduser("~")
     migrate_legacy_files(os.path.join(home, ".duskholm_client.json"), SETTINGS_PATH,
                          os.path.join(home, ".duskholm_skins"), user_skin_dir())
-    host = sys.argv[1] if len(sys.argv) > 1 else None
-    port = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else None
+    args = [a for a in sys.argv[1:] if a != "--screen-reader"]
+    want_sr = "--screen-reader" in sys.argv[1:]
+    host = args[0] if args else None
+    port = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
     root = tk.Tk()
-    App(root, host, port)
+    app = App(root, host, port)
+    if want_sr and not app.sr_on():
+        root.after(400, lambda: app._set_extra("screen_reader", True))
     root.mainloop()
 
 

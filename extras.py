@@ -145,6 +145,11 @@ HOTKEYS = {
     "panes": ("Panes / layout", "Ctrl-P"), "moon": ("Moon", "Alt-M"), "notepad": ("Notepad", "Alt-N"),
     "timers": ("Timers", "Alt-T"), "dos_toggle": ("DOS look on/off", "Alt-D"),
     "gradient": ("Gradient maker", "Alt-G"), "hex": ("Hex to xterm", "Alt-H"), "customize": ("Customize form", "Alt-K"),
+    # screen reader mode
+    "sr_prev": ("Review: older line", "Alt-Up"), "sr_next": ("Review: newer line", "Alt-Down"),
+    "sr_last": ("Repeat last line", "Alt-R"), "sr_stats": ("Read my stats", "Alt-S"),
+    "sr_pane": ("Read recent pane lines", "Alt-P"), "sr_time": ("Read time and moon", "Alt-C"),
+    "sr_stop": ("Stop speech", "Alt-Q"), "sr_mute": ("Mute / unmute speech", "Alt-Z"),
 }
 FIXED_KEYS = {"F12": "About", "F1": "Help", "F2": "Dial / hang up", "F3": "Log", "F5": "Skin", "F6": "Colours", "F7": "Font",
               "F10": "Menu", "F11": "Full screen", "Alt-X": "Exit", "Ctrl-1..9": "Select pane tab",
@@ -501,6 +506,7 @@ class ExtrasMixin:
                    "panes": self.open_panes, "moon": self.open_moon, "notepad": self.toggle_notepad,
                    "timers": self.open_timers, "dos_toggle": self.toggle_dos_mode,
                    "gradient": self.open_gradient, "hex": self.open_hex, "customize": self.open_customize}
+        actions.update(self.access_actions())
         for action, (seq, _shown) in effective_keys(self.cfg.get("keys")).items():
             fn = actions.get(action)
             if fn is None:
@@ -514,6 +520,9 @@ class ExtrasMixin:
                 for w in (self.root, self.input):
                     w.bind(s, handler)
                     self._hotkey_bound.append((w, s))
+
+    def _hotkey_current(self, action):
+        return effective_keys(self.cfg.get("keys"))[action][1]
 
     def hotkey_table(self):
         return [(a, HOTKEYS[a][0], shown) for a, (_s, shown) in effective_keys(self.cfg.get("keys")).items()]
@@ -540,11 +549,12 @@ class ExtrasMixin:
     def open_hotkeys(self):
         rows = self.hotkey_table()
         if self.dos:
+            rows = [r for r in rows if not r[0].startswith("sr_")]      # screen reader keys: normal look only
             fields = [{"key": a, "label": title, "type": "text", "value": shown, "width": 12} for a, title, shown in rows]
 
             def result(res, vals):
                 if res == "save":
-                    ok, msg = self.set_hotkeys({a: vals.get(a, "") for a, _t, _s in rows})
+                    ok, msg = self.set_hotkeys({a: vals.get(a, self._hotkey_current(a)) for a, _t, _s in self.hotkey_table()})
                     self.system(msg)
                     if not ok:
                         self._reopen(self.open_hotkeys)

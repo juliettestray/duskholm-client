@@ -4,14 +4,14 @@ A small, dependency-free telnet client for MUDs, built for Duskholm and other Ha
 A handful of Python files (`sanctuary.py` is the program; the rest are its parts: `dosui.py`
 DOS-look widgets, `prompts.py` prompt formats, `triggers.py` triggers and aliases, `layout.py` pane
 geometry, `extras.py` timers/clock/notepad/hotkeys, `toolsui.py` colour tools and the customize
-form, `colortools.py`, `custom.py`, `moon.py`, `emojis.py`, `boxes.py`, `worldfile.py`), tkinter
+form, `colortools.py`, `custom.py`, `moon.py`, `emojis.py`, `boxes.py`, `worldfile.py`, `speech.py` and `access.py` for screen reader mode), tkinter
 only (ships with the standard Windows Python installer; Pillow is used for JPEG/WebP pictures if
 it happens to be installed).
 Keep them together. Double-click `Sanctuary.pyw`, or run `pythonw sanctuary.py`, to start it
 without a console window.
 
 ```
-python sanctuary.py [host [port]]
+python sanctuary.py [host [port]] [--screen-reader]
 ```
 
 Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
@@ -186,6 +186,23 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Customize form** (`Alt+K`, or just type `customize`): fill in an item's fields, `Ctrl+S`
   sends all the `customize` lines. Save what you made in the **design book**, sorted by type, and
   load it later. (`customize <item> ...` with arguments still goes straight to the game.)
+- **Screen reader mode** (Options > Screen reader mode, `/sr on`, or start with `--screen-reader`).
+  The client keeps to its plain window (the DOS look is switched off) and *speaks*: new game lines
+  (never the prompt, never line-drawing or art), client messages, pane lines with the pane's name
+  (`OOC: ...`), links as "link example.com", emoji by name. It announces stun at 50/75/100, health
+  falling below 50/25/10 percent, and when the move or attack timer is ready. It talks through NVDA
+  when NVDA is running (it uses NVDA's controller library, found in NVDA's folder), through JAWS
+  when you choose it (needs the `pywin32` package), or otherwise through the Windows voice, which
+  needs nothing installed. Speech runs on its own thread, so it can never freeze the window; a flood
+  of lines is cut short with "N lines skipped".
+  Keys (all changeable under `/hotkeys`): `Alt+Up` / `Alt+Down` step back and forward through recent
+  lines, `Alt+R` repeat the last line, `Alt+S` read your stats, `Alt+P` read recent pane lines,
+  `Alt+C` read the time and the moon, `Alt+Q` stop speaking, `Alt+Z` mute. `/sr help` says it all
+  again. Triggers gain two actions, **Speak** (say a message, optionally interrupting) and **Don't
+  read this line aloud**. `/sr voice auto|nvda|jaws|windows|off`, `/sr rate -10..10` (Windows voice),
+  `/sr alerts on|off`, `/sr test`.
+  This mode has only been exercised with a fake voice so far; feedback from people who use a
+  screen reader every day is very welcome.
 - **World settings files** (File > Export / Import world settings, `/export`, `/import`): one
   `.snc` file holds a world and, optionally, its triggers, aliases, pane layout, prompt formats,
   gradients and designs. Importing is careful: triggers that send commands and all aliases arrive
@@ -256,6 +273,8 @@ python tests/test_colortools.py   # hex to xterm, gradients (fuzzed)
 python tests/test_custom.py       # the customize form's commands and the design book
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
+python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flood control, review
+python tests/test_access.py       # screen reader mode end to end with a fake voice
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 
