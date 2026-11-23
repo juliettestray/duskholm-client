@@ -1,12 +1,12 @@
-"""Adversarial property/fuzz checks for duskholm_client.Terminal (stdlib only).
+"""Adversarial property/fuzz checks for sanctuary.Terminal (stdlib only).
 
 Run:  python tests/test_fuzz.py
 Every check runs; PASS/FAIL printed per check with a minimal reproducer; exit 1 on any FAIL.
 """
 import os, sys, time, random, traceback
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
-from duskholm_client import Terminal, IAC, WILL, WONT, DO, DONT, SB, SE, GA
+import sanctuary as dc
+from sanctuary import Terminal, IAC, WILL, WONT, DO, DONT, SB, SE, GA
 
 MB = 1 << 20
 NOP = 241
@@ -55,7 +55,7 @@ def ddmin(data, pred, budget=3.0):
 def loc(e):
     where = "?"
     for fr in traceback.extract_tb(e.__traceback__):
-        if fr.filename.endswith("duskholm_client.py"):
+        if fr.filename.endswith("sanctuary.py"):
             where = "%s() line %d" % (fr.name, fr.lineno)
     return "%s: %s @ %s" % (type(e).__name__, str(e)[:60], where)
 

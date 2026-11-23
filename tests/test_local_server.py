@@ -5,7 +5,7 @@ localhost; never point it at a live game.
 """
 import os, socket, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from duskholm_client import Terminal
+from sanctuary import Terminal
 
 HOST, PORT = "127.0.0.1", 3500
 

@@ -1,7 +1,7 @@
 import os, socket, sys, tempfile, threading, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
-from duskholm_client import Terminal, IAC, WILL, DO, DONT, WONT, SB, SE, GA
+import sanctuary as dc
+from sanctuary import Terminal, IAC, WILL, DO, DONT, WONT, SB, SE, GA
 
 def texts(evs): return "".join(e[1] for e in evs if e[0] == "text")
 def sends(evs): return [e[1] for e in evs if e[0] == "send"]

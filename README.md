@@ -1,15 +1,19 @@
-# Duskholm client
+# Sanctuary
 
-A small, dependency-free telnet client for the Haven-Duskholm MUD. Three Python files
-(`duskholm_client.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for configurable prompt
-formats), tkinter only (ships with the standard Windows Python installer). Keep them together.
-Start it with `pythonw duskholm_client.py` to avoid the console window.
+A small, dependency-free telnet client for MUDs, built for Duskholm and other Haven-style games.
+Three Python files (`sanctuary.py`, `dosui.py` for the DOS-look widgets, `prompts.py` for
+configurable prompt formats), tkinter only (ships with the standard Windows Python installer).
+Keep them together. Double-click `Sanctuary.pyw`, or run `pythonw sanctuary.py`, to start it
+without a console window.
 
 ```
-python duskholm_client.py [host [port]]
+python sanctuary.py [host [port]]
 ```
 
 Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
+
+*Formerly "Duskholm client".* Your old settings (`~/.duskholm_client.json`) and skins
+(`~/.duskholm_skins/`) are copied to the new names on first start; nothing is moved or deleted.
 
 ## What it handles
 
@@ -58,7 +62,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
     keeping its hue. It applies to every colour the game can send, not just the 16. `1.0`
     shows colours exactly as sent.
   - **Your own skins**: *Save as new skin…* writes a small JSON file to
-    `~/.duskholm_skins/`; drop in files from others (or hand-write one) and they appear in the
+    `~/.sanctuary_skins/`; drop in files from others (or hand-write one) and they appear in the
     Skin menu. Bad or oversized files are ignored.
   - Windows draws the menu bar and scrollbar itself, so those keep the system look.
 - **DOS terminal look** (`Alt+D`, or View > DOS terminal look; off by default), modelled on
@@ -120,7 +124,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
-Settings live in `~/.duskholm_client.json`.
+Settings live in `~/.sanctuary.json`.
 
 ## Local commands
 
@@ -155,6 +159,7 @@ python tests/test_layout.py       # tab alignment, bold width, one-cell DOS bord
 python tests/test_polish.py       # skin switch re-fit, readable DOS colours, scrollbar in the border
 python tests/test_prompts.py      # the prompt-format engine (parsing, validation, safety)
 python tests/test_features.py     # ATDT, fake telnet, worlds, prompt editors, line spacing
+python tests/test_rename.py       # the name, settings migration from the old name, the launcher
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Duskholm telnet client - a small tkinter MUD client for Haven-Duskholm.
+Sanctuary - a small tkinter telnet client for MUDs, built for Duskholm and other Haven-style games.
 
-Run:   python duskholm_client.py [host [port]]
+Run:   python sanctuary.py [host [port]]      (pythonw, or Sanctuary.pyw, hides the console)
 Needs: Python 3.8+ with tkinter (standard on Windows installers). No other deps.
 
 Speaks what the server speaks (see src/comm.c):
@@ -24,6 +24,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import socket
 import ssl
 import sys
@@ -41,10 +42,10 @@ import prompts
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
 TLS_PORT = 3001
-SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".duskholm_client.json")
+SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".sanctuary.json")
 MAX_SCROLLBACK_LINES = 20000
 KEEPALIVE_SECONDS = 120
-APP_NAME = "Duskholm"    # working name; every user-visible mention comes from here
+APP_NAME = "Sanctuary"   # every user-visible mention of the client's name comes from here
 MIN_FONT, MAX_FONT = 7, 40
 RECONNECT_SECONDS = 30   # wait between automatic reconnect attempts
 QUIT_GRACE = 15          # a close this soon after the user sent "quit" is intentional
@@ -311,7 +312,7 @@ _WIN_RESERVED = ({"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 1
 
 
 def user_skin_dir():
-    return os.path.join(os.path.expanduser("~"), ".duskholm_skins")
+    return os.path.join(os.path.expanduser("~"), ".sanctuary_skins")
 
 
 def load_user_skins(path=None):
@@ -3393,7 +3394,7 @@ class App:
             self.system("Logging stopped.")
             return
         if not path:
-            path = time.strftime("duskholm-%Y%m%d-%H%M%S.log")
+            path = time.strftime("sanctuary-%Y%m%d-%H%M%S.log")
         try:
             self.logfile = open(path, "a", encoding="utf-8")
         except OSError as e:
@@ -3739,7 +3740,30 @@ class App:
         self.root.destroy()
 
 
+def migrate_legacy_files(old_settings, new_settings, old_skins, new_skins):
+    """After the rename from "Duskholm": copy (never move, never overwrite) the old settings file
+    and skin folder to their new names so nothing is lost. Returns what was copied."""
+    done = []
+    try:
+        if os.path.isfile(old_settings) and not os.path.exists(new_settings):
+            shutil.copyfile(old_settings, new_settings)
+            done.append("settings")
+        if os.path.isdir(old_skins) and not os.path.exists(new_skins):
+            os.makedirs(new_skins, exist_ok=True)
+            for fn in os.listdir(old_skins):
+                src = os.path.join(old_skins, fn)
+                if fn.lower().endswith(".json") and os.path.isfile(src) and os.path.getsize(src) <= 65536:
+                    shutil.copyfile(src, os.path.join(new_skins, fn))
+            done.append("skins")
+    except OSError:
+        pass
+    return done
+
+
 def main():
+    home = os.path.expanduser("~")
+    migrate_legacy_files(os.path.join(home, ".duskholm_client.json"), SETTINGS_PATH,
+                         os.path.join(home, ".duskholm_skins"), user_skin_dir())
     host = sys.argv[1] if len(sys.argv) > 1 else None
     port = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else None
     root = tk.Tk()

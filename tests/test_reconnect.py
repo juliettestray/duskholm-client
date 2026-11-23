@@ -1,7 +1,7 @@
 """Auto-reconnect behaviour, against a local fake server only."""
 import os, socket, sys, tempfile, threading, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
+import sanctuary as dc
 import tkinter as tk
 
 dc.RECONNECT_SECONDS = 2

@@ -1,8 +1,8 @@
-﻿"""Adversarial tests for the pure theme/colour functions in duskholm_client.py.
+﻿"""Adversarial tests for the pure theme/colour functions in sanctuary.py.
 Every check runs; PASS/FAIL printed per check; exit code 1 if any fail. Stdlib only."""
 import colorsys, copy, json, math, os, random, shutil, sys, tempfile, time, traceback
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from duskholm_client import (rel_luminance, contrast_ratio, ensure_contrast, validate_theme,
+from sanctuary import (rel_luminance, contrast_ratio, ensure_contrast, validate_theme,
                              BUILTIN_SKINS, user_skin_dir, load_user_skins, save_user_skin,
                              HEX_RE, COLOR_KEYS, RELIEFS)
 
@@ -446,7 +446,7 @@ def snapshot(root):
 
 
 import subprocess as _sp
-_CHILD = ("import sys,json;sys.path.insert(0,%r);import duskholm_client as dc;"
+_CHILD = ("import sys,json;sys.path.insert(0,%r);import sanctuary as dc;"
           "r=dc.load_user_skins(sys.argv[1]);print(json.dumps(r))") % os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 

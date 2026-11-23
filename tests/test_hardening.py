@@ -2,7 +2,7 @@
 stale connection events, cancelling a stalled connection. All local, no real game."""
 import os, queue, socket, sys, tempfile, threading, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
+import sanctuary as dc
 
 # ---- sanitize_outgoing --------------------------------------------------------------
 clean, dropped, trunc = dc.sanitize_outgoing("“don’t” — café\t… ok\nx")

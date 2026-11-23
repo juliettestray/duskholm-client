@@ -1,7 +1,7 @@
 """Skins, palette editing, contrast lifting, persistence, user skins, the colour dialog."""
 import json, os, sys, tempfile, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
+import sanctuary as dc
 import tkinter as tk
 from tkinter import colorchooser, simpledialog
 

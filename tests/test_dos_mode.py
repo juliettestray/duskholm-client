@@ -1,7 +1,7 @@
 """The DOS terminal look: layout, status bar, menus/dialogs wired to the client, keys, full screen."""
 import json, os, socket, sys, tempfile, threading, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
+import sanctuary as dc
 import tkinter as tk
 
 tmp = tempfile.mkdtemp()

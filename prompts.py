@@ -50,7 +50,7 @@ _LABEL_BAD = set(",=/;")          # would break the spec-string round trip
 
 
 # ======================================================================================
-# Duskholm ("haven") parser -- identical behaviour to duskholm_client.parse_prompt
+# Duskholm ("haven") parser -- identical behaviour to sanctuary.parse_prompt
 # ======================================================================================
 _HAVEN_RE = re.compile(
     r"\[(\d{1,9})/(\d{1,9})([A-Za-z]{1,4})"          # [350/350DF

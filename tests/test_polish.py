@@ -1,7 +1,7 @@
 """Regression tests for the polish batch: skin switch re-fit, readable DOS colours, scrollbar in the border."""
 import json, os, sys, tempfile, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
+import sanctuary as dc
 import tkinter as tk
 
 tmp = tempfile.mkdtemp()

@@ -30,7 +30,7 @@ def ms(f):
 
 # ---------------------------------------------------------------- legacy parser (tests only)
 def legacy():
-    import duskholm_client as dc
+    import sanctuary as dc
     return dc.parse_prompt
 
 

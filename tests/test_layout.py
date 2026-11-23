@@ -1,7 +1,7 @@
 """Tab alignment, bold/italic grid width, the DOS look's one-cell border, and the DOS scrollbar."""
 import json, os, sys, tempfile, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import duskholm_client as dc
+import sanctuary as dc
 import dosui
 import tkinter as tk
 import tkinter.font as tkfont
