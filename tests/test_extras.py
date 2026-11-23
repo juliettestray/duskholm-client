@@ -195,8 +195,6 @@ app._on_data(b"[Name        ] - Ywellia\n\r"); pump(0.2)
 assert app.cfg["char_name"] == "Ywellia"
 app._on_data(b"[Name        ] - <script>\n\r"); pump(0.1)
 assert app.cfg["char_name"] == "Ywellia"
-pr = [p for p in sc.trigger_presets() if p["name"] == "Preview your credit walk"][0]
-app._store_trigger(None, dict(pr, enabled=True))
 app._on_data(b"Your credit walk string is now: strides\n\r"); pump(0.2)
 assert app._notice_text == "Preview: Ywellia strides in from the north", app._notice_text
 c = sc.clean_settings({"host": "x", "game_offset": 100, "char_name": "bad name!"})

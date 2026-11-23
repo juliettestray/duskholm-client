@@ -18,18 +18,33 @@ def pump(t=0.3):
         root.update(); time.sleep(0.01)
 
 
-pr = [p for p in sc.trigger_presets() if p["name"] == "Preview your credit walk"][0]
-ok, msg = app._store_trigger(None, dict(pr, enabled=True))
-assert ok, msg
+assert not any("walk" in p["name"].lower() for p in sc.trigger_presets()), "built in, not a preset"
 app.connected = True; app._online_since = time.time()
 app._on_data(b"Your credit walk string is now: strides boldly\n\r"); pump(0.3)
 assert app._notice_text == "Preview: Someone strides boldly in from the north", app._notice_text
 assert app.notice.cget("text") == app._notice_text
 app._on_data(b"Your ego form walk string is now: slinks\n\r"); pump(0.3)
-assert app._notice_text.endswith("Someone slinks in from the north")
+assert app._notice_text == "Preview: Someone slinks in from the north"
+app._on_data(b"Your changeling form walk is now: stalks predatorily\n\r"); pump(0.3)
+assert app._notice_text == "Preview (changeling form): Someone stalks predatorily in from the north", app._notice_text
+app._on_data(b"Your true form walk is now: strides\n\r"); pump(0.2)
+assert app._notice_text == "Preview (true form): Someone strides in from the north"
+app._on_data(b"[350/350DF 0ST 0WN 0LG M:0 K:0 ()] Your manticore walk is now: prowls\n\r"); pump(0.2)
+assert app._notice_text == "Preview (manticore): Someone prowls in from the north", "even with a prompt stuck to the front"
+app._on_data(b"Your walk is fine\n\r"); pump(0.1)
+assert app._notice_text.startswith("Preview (manticore)"), "other lines do not change it"
+app.cfg["walk_preview"] = False; app.set_notice("")
+app._on_data(b"Your credit walk string is now: x\n\r"); pump(0.2)
+assert app._notice_text == "", "it can be switched off"
+app.cfg["walk_preview"] = True
+app._on_data(b"Your ego form walk string is now: slinks\n\r"); pump(0.3)
 app.set_dos_mode(True); pump(0.4)
 segs, _ = app._dos_segments(100)
 assert any("Someone slinks" in x[0] for x in segs), segs
+segs, _ = app._dos_segments(100)
+texts = [x[0] for x in segs]
+assert texts.index([t for t in texts if "Someone slinks" in t][0]) == len(texts) - 2 and texts[-1].startswith("TLS"), \
+    "the walk preview sits just left of TLS / ANSI at the bottom"
 app.set_notice(""); assert not any("Someone" in x[0] for x in app._dos_segments(100)[0])
 app.set_dos_mode(False)
 # the editor round trip keeps a status action

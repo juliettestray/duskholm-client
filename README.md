@@ -158,10 +158,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `Unread: OOC*3`. In the DOS look everything sits in one double-line frame whose joins match.
 - **Combat readout.** Stun, wounds, the other counters and the move/attack timers sit together
   beside HP. Stun changes colour as it climbs (50 warm, 75 bad). `M:` and `K:` count down on their
-  own once a second, as the game does, instead of waiting for the next prompt.
+  own once a second, as the game does, instead of waiting for the next prompt. The lines the game
+  prints when your defence is back to full (`Your shield pulses briefly...`, `You recover your
+  defenses.` and the rest) fill the DF gauge at once.
 - **Status line message.** A trigger can show a short message on the status line (*Status line*
-  field). The preset *Preview your credit walk* shows `Preview: Someone <walk> in from the north`
-  when you set a credit or ego walk.
+  field). Separately, setting any walk (credit, ego form, changeling form, true form, ...) shows
+  `Preview: <your name> <walk> in from the north` on the status line (next to TLS in the DOS bar),
+  so you can see how it will read. Options > Walk preview turns that off.
 - **Links.** `http(s)` links in the output (and in panes) are underlined and clickable, in both
   looks. Pictures (`.png .jpg .gif .webp .bmp`) open in a viewer that fills the main area, scaled
   to fit (`Esc` closes it; `O` or a click opens the original in your browser); every
@@ -201,7 +204,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `Alt+C` read the time and the moon, `Alt+Q` stop speaking, `Alt+Z` mute. `/sr help` says it all
   again. Triggers gain two actions, **Speak** (say a message, optionally interrupting) and **Don't
   read this line aloud**. `/sr voice auto|nvda|jaws|windows|off`, `/sr rate -10..10` (Windows voice),
-  `/sr alerts on|off`, `/sr test`. Defence is read as "def". `/sr interval 30` (or Options >
+  `/sr alerts on|off`, `/sr test`. **Combat lines** (`/sr combat`, or Options > Screen reader:
+  combat lines): while a fight is on, lines that are not about you can be left unread (they stay on
+  screen and in the review keys): other players hitting NPCs, NPCs fighting each other, NPCs
+  hitting other players, players fighting players. Lines that say you/your or use your name are
+  never skipped. The game does not say who is a player, so it is a guess (one capitalised word is a
+  player, `the goblin` / `a tall man` and names of several words are NPCs) that you can correct with
+  lists of players, NPCs and words that must always be read. Defence is read as "def". `/sr interval 30` (or Options >
   Screen reader: read def and stun) reads your def and stun aloud every 30 seconds while connected;
   `/sr interval off` stops it.
   This mode has only been exercised with a fake voice so far; feedback from people who use a
@@ -299,6 +308,7 @@ python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flood control, review
 python tests/test_access.py       # screen reader mode end to end with a fake voice
 python tests/test_updater.py      # update check/install against a fake local GitHub
+python tests/test_combatfilter.py # skipping other people's fights for the voice
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

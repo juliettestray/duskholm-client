@@ -65,6 +65,7 @@ import custom as customize_data
 import worldfile
 import speech
 import access
+import combatfilter
 import updateui
 
 DEFAULT_HOST = "duskholm.com"
@@ -900,6 +901,7 @@ EXTRA_BOOLS = [
     ("screen_reader", False, "Screen reader mode", "Screen reader mode", "Y"),
     ("sr_alerts", True, "Screen reader: announce stun, health and ready timers", "Reader alerts", "T"),
     ("update_check", False, "Check for updates when Sanctuary starts", "Check for updates at start", "G"),
+    ("walk_preview", True, "Preview my walk on the status line when I set it", "Walk preview", "P"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
@@ -951,6 +953,7 @@ def clean_settings(cfg):
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
     us = cfg.get("update_skip")
     cfg["update_skip"] = us if isinstance(us, str) and re.fullmatch(r"[vV]?[0-9.]{1,20}", us) else ""
+    cfg["sr_combat"] = combatfilter.clean_settings(cfg.get("sr_combat"))
     si = cfg.get("sr_interval")
     cfg["sr_interval"] = 0 if not isinstance(si, int) or isinstance(si, bool) or si <= 0 else max(5, min(3600, si))
     sr = cfg.get("sr_rate")
@@ -1094,9 +1097,6 @@ _PRESET_DEFS = [
      "actions": [{"type": "route", "pane": "Tells"}]},
     {"name": "Capture your own tells to a pane", "mode": "plain", "pattern": "^You tell * '*", "priority": 0,
      "actions": [{"type": "route", "pane": "Tells"}]},
-    {"name": "Preview your credit walk", "mode": "regex", "ignore_case": True,
-     "pattern": "^Your (?:credit|ego form) walk string is now: (.*)$", "priority": 0,
-     "actions": [{"type": "status", "text": "Preview: {name} %1 in from the north"}]},
     {"name": "Capture Guide / Newbie to a pane", "mode": "plain", "pattern": "^[Guide]*", "priority": 0,
      "actions": [{"type": "route", "pane": "Guide"}]},
     {"name": "Capture Newbie to a pane", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
@@ -1770,6 +1770,8 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             for n in range(0, 10):
                 w.bind("<Alt-Key-%d>" % n, lambda e, n=n: (self.toggle_pane_area(n), "break")[1])
             w.bind("<Alt-Return>", self.toggle_fullscreen)
+            w.bind("<FocusIn>", self._on_focus_in, add="+")
+            w.bind("<KeyPress>", self._overlay_key_fallback, add="+")
             w.bind("<F12>", lambda e: (self.open_about(), "break")[1])
             w.bind("<F1>", lambda e: (self.open_help(), "break")[1] if not self.dos else None)
             w.bind("<Configure>", self._on_configure, add="+")
@@ -1866,6 +1868,7 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             sri.add_radiobutton(label=label, value=secs, variable=self._sr_interval_var,
                                 command=lambda: self.set_sr_interval(self._sr_interval_var.get()))
         o.add_cascade(label="Screen reader: read def and stun...", menu=sri)
+        o.add_command(label="Screen reader: combat lines...", command=self.open_combat_filter)
         self._extra_menus = getattr(self, "_extra_menus", []) + [sri]
         m.add_cascade(label="Options", menu=o)
         self._menus = [m, f, v, o, self._skin_menu] + getattr(self, "_extra_menus", [])
@@ -1959,10 +1962,14 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
     def _bind_links(self, w):
         w.tag_bind("link", "<Enter>", lambda e, w=w: w.configure(cursor="hand2"))
         w.tag_bind("link", "<Leave>", lambda e, w=w: w.configure(cursor="arrow"))
+        w.bind("<ButtonPress-1>", lambda e: setattr(self, "_press_xy", (e.x, e.y)), add="+")
         w.tag_bind("link", "<ButtonRelease-1>", lambda e, w=w: self._link_click(w, e))
 
     def _link_click(self, w, e):
-        if not self.cfg.get("links", True) or w.tag_ranges("sel"):
+        if not self.cfg.get("links", True):
+            return
+        px, py = getattr(self, "_press_xy", (e.x, e.y))
+        if abs(e.x - px) > 4 or abs(e.y - py) > 4:                 # dragged to select text, not a click
             return
         try:
             idx = w.index("@%d,%d" % (e.x, e.y))
@@ -2776,7 +2783,7 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         else:
             cands = [(1, 0, "OFFLINE", "dim")]
         if self._notice_text:
-            cands.append((1, 0.5, self._notice_text[:max(10, avail // 2)], "key"))
+            cands.append((1, 5.9, self._notice_text[:max(10, avail // 2)], "key"))      # just left of TLS / ANSI
         unseen = self.unseen_summary()
         if unseen:
             cands.append((2, 0.6, "Unread: " + unseen, "warn"))
@@ -4473,8 +4480,9 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
     def _append(self, pieces, _internal=False):
         """pieces: [(text, tagname_or_None)]. Anything written by the client itself first lets an
         unfinished server line (a prompt) appear, so the order on screen is always the true order."""
-        if not _internal and (self._pending or self._flush_job is not None):
-            self._flush_partial()
+        if not _internal and self._pending and self._flush_job is None:
+            self._flush_partial()           # (while the flush timer runs, the unfinished line is mid-arrival:
+                                            # your echo goes above it rather than into the middle of it)
         if self.cfg.get("connect_boxes") and boxes is not None:
             pieces = boxes.connect_pieces(pieces, skip_tags=("echo", "system"))
         at_bottom = self.out.yview()[1] >= 0.999
@@ -4723,6 +4731,42 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             self._update_statbar()
             self._new_output_bell()
 
+    def _on_focus_in(self, e):
+        """Coming back to the window (from another program, a dialog): keys must have somewhere to go."""
+        if e.widget is self.root:
+            try:
+                self.root.after_idle(self._restore_focus)
+            except tk.TclError:
+                pass
+
+    def _restore_focus(self):
+        try:
+            if self._overlay_open():
+                self._overlay._cv.focus_set()
+                return
+            if getattr(self, "_notepad", None) or getattr(self, "_image_view", None):
+                return
+            fg = self.root.focus_get()
+            if fg is None or fg is self.root or fg is self.out:
+                self.input.focus_set()
+        except (tk.TclError, AttributeError, KeyError):
+            pass
+
+    def _overlay_key_fallback(self, e):
+        """A menu or dialog is open but the keyboard focus has strayed from it: put it back (Esc still closes)."""
+        try:
+            if not self._overlay_open():
+                return
+            fg = self.root.focus_get()
+            if fg is not None and str(fg).startswith(str(self._overlay)):
+                return
+            if e.keysym == "Escape":
+                self.dos_close_overlay()
+                return "break"
+            self._overlay._cv.focus_set()
+        except (tk.TclError, AttributeError):
+            pass
+
     def _window_active(self):
         """True while one of Sanctuary's windows is the one in front. (Tk keeps reporting a focused
         widget after you switch to another program, so on Windows ask the system instead.)"""
@@ -4802,12 +4846,62 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         self._append([(t, self._tag_for(k)) for t, k in pieces], _internal=True)
         self._line_flushed = True
 
+    # the lines the game prints when your defence (DF) is back to full (regened_message in fight.c)
+    DF_FULL_LINES = frozenset([
+        "You fix up and readjust your ballistic armor.", "You fix up and readjust your armor.",
+        "The punctures in your natural armor heal over.", "The pain from your injuries fades.",
+        "Your energy shield flares strongly to life before fading to invisibility.",
+        "Your fire shield flares strongly to life before fading to invisibility.",
+        "Your ice shield flares strongly to life before fading to invisibility.",
+        "Your lightning shield flares strongly to life before fading to invisibility.",
+        "Your shield of stone forms strongly around you before fading to invisibility.",
+        "Your shield of wood forms strongly around you before fading to invisibility.",
+        "Your mental shield ripples strongly to life before fading to invisibility.",
+        "Your shield of darkness flares strongly to life before fading to invisibility.",
+        "Your shield pulses briefly with power before fading to invisibility.",
+        "The discomfort from your injuries fades.", "You start to feel lucky again.",
+        "You feel your mental fatigue lifting.", "You resettle your shield into place.",
+        "You recover your defenses."])
+    _WALK_RE = re.compile(r"^Your (.+?) walk(?: string)? is now: (.+?)\s*$")
     _TIME_RE = re.compile(r"^The time is [A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} (\d\d):(\d\d):(\d\d) (\d{4})\s*$")
     _NAME_RE = re.compile(r"^\[Name\s*\]\s+-\s+([A-Za-z][A-Za-z'-]{0,23})\s*$")
+
+    def _df_full(self):
+        """The game says your defence is back: top the DF gauge up now instead of waiting for the next prompt."""
+        p = self._last_prompt
+        hp = p.get("hp") if p else None
+        if not hp or not hp[1] or hp[0] >= hp[1]:
+            return
+        new = dict(p)
+        new["hp"] = (hp[1], hp[1], hp[2])
+        g = list(p.get("gauges") or [])
+        if g and g[0][0] == hp[2]:
+            g[0] = (g[0][0], hp[1], hp[1])
+            new["gauges"] = g
+        self._last_prompt = new
+        view = self._prompt_view()
+        self.statbar.set_data(view)
+        self.update_dosbar()
+        self.sr_alerts(view)
 
     def learn_from_line(self, plain):
         """Pick up facts the game states about itself: its clock (the `time` command's first line) and
         your character's name (the `display` command). Only the game's output is read, never your input."""
+        try:
+            rest = self._split_prompt(plain)[1]                  # a prompt may be stuck to the front of the line
+        except Exception:
+            rest = plain
+        if rest.strip() in self.DF_FULL_LINES:
+            self._df_full()
+            return
+        if rest.startswith("Your ") and " walk" in rest and self.cfg.get("walk_preview", True):
+            m = self._WALK_RE.match(rest)
+            if m:
+                label, walk = m.group(1), m.group(2)
+                who = self.cfg.get("char_name") or "Someone"
+                form = "" if label.lower() in ("credit", "ego form", "ego") else " (%s)" % label
+                self.set_notice("Preview%s: %s %s in from the north" % (form, who, walk), 90)
+                return
         if plain.startswith("The time is "):
             m = self._TIME_RE.match(plain)
             if m:

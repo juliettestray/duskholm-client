@@ -162,6 +162,31 @@ assert len(beeps) == 1
 del app._window_active
 assert isinstance(app._window_active(), bool)
 
+# a click opens a link even if some text is selected; a drag does not
+app._on_data(b"\n\rclick me: https://example.com/sel and more text\n\r"); pump(0.3)
+app.out.tag_add("sel", "1.0", "1.8")
+opened.clear()
+assert click_at("https://example.com/sel") == "break" and opened == ["https://example.com/sel"], "a leftover selection no longer blocks clicks"
+app._press_xy = (0, 0)
+idx = app.out.search("https://example.com/sel", "1.0"); bb = app.out.bbox(idx + "+2c")
+assert app._link_click(app.out, type("E", (), {"x": bb[0] + 1 + 40, "y": bb[1] + 1})()) is None and opened == ["https://example.com/sel"], "a drag is not a click"
+del app._press_xy
+
+# what you type never lands in the middle of a line that is still arriving
+sent2 = []
+app.cfg["show_echo"] = True; app.cfg["scroll_on_send"] = True
+app.conn = type("C", (), {"send": lambda self, b: sent2.append(b) or True, "close": lambda self, *a: None})()
+app._on_data(b"Bonnie tells you OOCly 'waow'")                      # the rest of the line has not arrived yet
+app.send_line("credit walk stalks")
+app._on_data(b"\n\r"); pump(0.3)
+screen = app.out.get("1.0", "end")
+assert "waow'credit" not in screen and "waow'\ncredit" not in screen, screen[-120:]
+assert "credit walk stalks\nBonnie tells you OOCly 'waow'\n" in screen, repr(screen[-120:])
+# but a real prompt that has already been shown still gets your command after it
+app._on_data(b"[350/350DF 0ST 0WN 0LG M:0 K:0 ()] "); pump(0.4)
+app.send_line("look")
+assert "()] look\n" in app.out.get("1.0", "end"), "after a prompt, your command follows it on the same line"
+
 # options are cleaned from a hand-edited file
 c = sc.clean_settings({"host": "x", "links": "yes", "bell_new": "loud", "emoji": 1})
 assert c["links"] is True and c["bell_new"] == "off" and c["emoji"] is False

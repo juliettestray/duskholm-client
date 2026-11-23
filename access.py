@@ -9,6 +9,8 @@ import re
 import time
 
 import speech
+import combatfilter
+import tkinter as tk
 
 try:
     import prompts
@@ -94,6 +96,8 @@ class AccessMixin:
         only_prompt, plain = self._split_prompt(plain)
         if only_prompt:
             return
+        if not silenced and self._combat_gag(plain):
+            silenced = True                                  # other people's fighting: kept for review, not read
         prefix = ""
         if routes:
             d = self._find_pane_def(routes[0].strip().lower()) if hasattr(self, "_find_pane_def") else None
@@ -110,6 +114,56 @@ class AccessMixin:
             if t:
                 lines.append(t)
                 del lines[:-20]
+
+    def _combat_gag(self, plain):
+        cfg = self.cfg.get("sr_combat")
+        if not cfg:
+            return False
+        p = self._last_prompt
+        return combatfilter.should_skip(plain, cfg, self.cfg.get("char_name") or "", bool(p and p.get("text")))
+
+    def open_combat_filter(self):
+        """Which fighting lines not about you are skipped by the voice."""
+        if self.dos:
+            self.system("Open this in the normal look (Alt+D); screen reader mode uses it anyway.")
+            return None
+        cfg = combatfilter.clean_settings(self.cfg.get("sr_combat"))
+        top = tk.Toplevel(self.root)
+        top.title("Combat lines (screen reader)")
+        top.transient(self.root)
+        tk.Label(top, justify="left", wraplength=480, text="While a fight is on, lines that are not about you can be "
+                 "left unread (they stay on screen and in the review keys). Tick what to skip.").pack(anchor="w", padx=12, pady=(10, 4))
+        skip = {}
+        for c in combatfilter.CATEGORIES:
+            skip[c] = tk.BooleanVar(value=cfg["skip"][c])
+            tk.Checkbutton(top, text="Skip: " + combatfilter.CATEGORY_TEXT[c], variable=skip[c]).pack(anchor="w", padx=24)
+        fight = tk.BooleanVar(value=cfg["only_in_fight"])
+        multi = tk.BooleanVar(value=cfg["multiword_npc"])
+        tk.Checkbutton(top, text="Only while I am in a fight", variable=fight).pack(anchor="w", padx=12, pady=(8, 0))
+        tk.Checkbutton(top, text="Treat a name of several words as an NPC", variable=multi).pack(anchor="w", padx=12)
+        ents = {}
+        for key, label in (("players", "Always players (comma separated)"), ("npcs", "Always NPCs"),
+                           ("always", "Always read lines that mention")):
+            tk.Label(top, text=label).pack(anchor="w", padx=12, pady=(6, 0))
+            v = tk.StringVar(value=", ".join(cfg[key]))
+            tk.Entry(top, textvariable=v, width=56).pack(anchor="w", padx=12)
+            ents[key] = v
+
+        def save():
+            self.cfg["sr_combat"] = combatfilter.clean_settings({
+                "skip": {c: v.get() for c, v in skip.items()}, "only_in_fight": fight.get(), "multiword_npc": multi.get(),
+                "players": combatfilter.parse_names(ents["players"].get()), "npcs": combatfilter.parse_names(ents["npcs"].get()),
+                "always": combatfilter.parse_names(ents["always"].get())})
+            self._save_settings()
+            top.destroy()
+            self.system("Combat line settings saved.")
+        bf = tk.Frame(top)
+        bf.pack(pady=10)
+        tk.Button(bf, text="Save", width=9, command=save).pack(side="left", padx=4)
+        tk.Button(bf, text="Cancel", width=9, command=top.destroy).pack(side="left", padx=4)
+        top.bind("<Escape>", lambda e: top.destroy())
+        self._theme_tree(top)
+        return top
 
     def sr_system(self, text):
         """A client message (connected, timer, error...)."""
@@ -294,9 +348,28 @@ class AccessMixin:
             secs = self.set_sr_interval(0 if a[1] == "off" else int(a[1]))
             msg = "Stats are read every %d seconds." % secs if secs else "Interval reading is off."
             self.system(msg)
+        elif a[0] == "combat":
+            if len(a) == 1:
+                self.open_combat_filter()
+            else:
+                cfg = combatfilter.clean_settings(self.cfg.get("sr_combat"))
+                which = a[1:]
+                if which == ["all"]:
+                    cfg["skip"] = {c: True for c in combatfilter.CATEGORIES}
+                elif which == ["none"]:
+                    cfg["skip"] = {c: False for c in combatfilter.CATEGORIES}
+                elif all(w in combatfilter.CATEGORIES for w in which):
+                    cfg["skip"] = {c: (c in which) for c in combatfilter.CATEGORIES}
+                else:
+                    self.system("Usage: /sr combat [all|none|pn nn np pp]   (pn players hit NPCs, nn NPCs fight, "
+                                "np NPCs hit players, pp players fight)")
+                    return True
+                self.cfg["sr_combat"] = cfg
+                self._save_settings()
+                self.system("Skipping: %s." % (", ".join(c for c in combatfilter.CATEGORIES if cfg["skip"][c]) or "nothing"))
         elif a[0] == "test":
             self.speech.say_now("This is a speech test. If you can hear this, speech is working.")
         else:
             self.system("Usage: /sr on|off|status|help|test, /sr voice auto|nvda|jaws|windows|off, "
-                        "/sr rate -10..10, /sr alerts on|off, /sr interval off|SECONDS")
+                        "/sr rate -10..10, /sr alerts on|off, /sr interval off|SECONDS, /sr combat [all|none|pn nn np pp]")
         return True

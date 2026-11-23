@@ -50,5 +50,26 @@ app.set_dos_mode(False); pump(0.3)
 chips = dict(app.statbar.specs())
 assert "ST 10" in chips
 
+# ---- the lines that say your defence is back top the DF gauge up at once
+app.connected = True
+app._on_data(b"[200/350DF 10ST 0WN 0LG M:0 K:0 (North 1/5:1/5)] "); pump(0.3)
+assert app._last_prompt["hp"] == (200, 350, "DF")
+app._on_data(b"\n\rYour shield is just fine.\n\r"); pump(0.2)
+assert app._last_prompt["hp"] == (200, 350, "DF"), "other lines change nothing"
+app._on_data(b"Your shield pulses briefly with power before fading to invisibility.\n\r"); pump(0.3)
+assert app._last_prompt["hp"] == (350, 350, "DF") and app._last_prompt["gauges"][0] == ("DF", 350, 350)
+assert app.statbar.data["hp"] == (350, 350, "DF"), "the bar shows it"
+app.set_dos_mode(True); pump(0.4)
+assert any("350/350" in t[0] for t in app._dos_segments(120)[0]), "and so does the DOS bar"
+app.set_dos_mode(False); pump(0.3)
+for line in sorted(sc.App.DF_FULL_LINES):
+    app._on_data(b"[100/350DF 10ST 0WN 0LG M:0 K:0 (North 1/5:1/5)] "); pump(0.1)
+    assert app._last_prompt["hp"][0] == 100
+    app._on_data((line + "\n\r").encode()); pump(0.1)
+    assert app._last_prompt["hp"] == (350, 350, "DF"), line
+app._on_data(b"[100/350DF 10ST 0WN 0LG M:0 K:0 (North 1/5:1/5)] You recover your defenses.\n\r"); pump(0.2)
+assert app._last_prompt["hp"] == (350, 350, "DF"), "even with a prompt stuck to the front of the line"
+assert len(sc.App.DF_FULL_LINES) == 18
+
 root.update(); root.destroy()
 print("combat tests OK")

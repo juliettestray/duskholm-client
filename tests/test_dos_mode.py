@@ -218,6 +218,20 @@ for _ in range(2):
     m2 = overlay(); assert m2.selected == want, (m2.selected, want)
 key(m2, "Escape"); pump(0.2)
 
+# stray keyboard focus: Esc still closes an open menu, and coming back to the window re-focuses the input
+app.dos_main_menu(); pump(0.3); assert app._overlay_open()
+app.input.focus_force(); pump(0.2)
+app.input.event_generate("<Escape>"); pump(0.3)
+assert not app._overlay_open(), "Escape closes the menu even when focus had strayed to the input line"
+app.root.focus_force(); pump(0.2)
+app.root.event_generate("<FocusIn>"); pump(0.4)
+assert app.root.focus_get() is app.input, app.root.focus_get()
+app.dos_main_menu(); pump(0.3)
+app.input.focus_force(); pump(0.2)
+app.root.event_generate("<FocusIn>"); pump(0.4)
+assert str(app.root.focus_get()).startswith(str(app._overlay)), "with a menu open, focus goes to the menu"
+app.dos_close_overlay(); pump(0.2)
+
 root.update(); root.destroy()
 root = tk.Tk(); app = dc.App(root); pump(0.5)
 assert app.dos and app.theme["name"] == "Retro DOS" and app.cfg["skin"] == "Moody" and app._dos_job is not None
