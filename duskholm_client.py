@@ -1,0 +1,853 @@
+#!/usr/bin/env python3
+"""
+Duskholm telnet client - a small tkinter MUD client for Haven-Duskholm.
+
+Run:   python duskholm_client.py [host [port]]
+Needs: Python 3.8+ with tkinter (standard on Windows installers). No other deps.
+
+Speaks what the server speaks (see src/comm.c):
+  * plain telnet on 3000, TLS (stunnel) on 3001
+  * WILL ECHO from the server = password prompt (input is masked, not echoed/saved)
+  * MXP: replies DO to WILL MXP, then honours <color fore=#rrggbb>, </color>,
+    <b>/<i>/<u> and the &lt; &gt; &amp; entities; other tags are swallowed
+  * ANSI SGR incl. 16 colour, 38;5;N / 48;5;N (xterm-256) and 38;2;r;g;b
+
+Local commands start with "/" (the game has no "/" commands). "//foo" sends "/foo".
+Type /help in the client for the list.
+"""
+
+import codecs
+import json
+import os
+import queue
+import re
+import socket
+import ssl
+import sys
+import threading
+import time
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import messagebox
+
+DEFAULT_HOST = "duskholm.com"
+PLAIN_PORT = 3000
+TLS_PORT = 3001
+SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".duskholm_client.json")
+MAX_SCROLLBACK_LINES = 20000
+KEEPALIVE_SECONDS = 120
+
+# telnet
+IAC, DONT, DO, WONT, WILL, SB, SE, GA, NOP = 255, 254, 253, 252, 251, 250, 240, 249, 241
+OPT_ECHO, OPT_SGA, OPT_MXP = 1, 3, 91
+
+BG = "#101114"
+FG = "#c8c8c8"
+ECHO_FG = "#6f7a8a"
+SYSTEM_FG = "#d7a84a"
+
+ANSI16 = [
+    "#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
+    "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#ffffff",
+]
+
+
+def xterm_color(n):
+    if n < 16:
+        return ANSI16[n]
+    if n < 232:
+        n -= 16
+        steps = (0, 95, 135, 175, 215, 255)
+        return "#%02x%02x%02x" % (steps[n // 36], steps[(n // 6) % 6], steps[n % 6])
+    g = 8 + (n - 232) * 10
+    return "#%02x%02x%02x" % (g, g, g)
+
+
+MXP_NAMED = {
+    "black": 0, "red": 1, "green": 2, "yellow": 3, "blue": 4, "magenta": 5, "cyan": 6,
+    "white": 7, "gray": 8, "grey": 8,
+}
+HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def mxp_color(value):
+    value = value.strip().lower()
+    if HEX_RE.match(value):
+        return value
+    if value in MXP_NAMED:
+        return ANSI16[MXP_NAMED[value]]
+    return None
+
+
+ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "quot": '"', "apos": "'", "nbsp": " "}
+ATTR_RE = re.compile(r'([A-Za-z]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
+
+
+class Style:
+    """Current text attributes. Immutable-ish: use key() for tag naming."""
+    __slots__ = ("fg", "bg", "bold", "italic", "underline", "inverse", "mfg", "mbg", "mb", "mi", "mu")
+
+    def __init__(self):
+        self.fg = self.bg = None          # '#rrggbb' or None  (from ANSI)
+        self.bold = self.italic = self.underline = self.inverse = False
+        self.mfg = self.mbg = None        # MXP <color> override
+        self.mb = self.mi = self.mu = 0   # MXP <b>/<i>/<u> nesting depth
+
+    def key(self):
+        fg = self.mfg or self.fg
+        bg = self.mbg or self.bg
+        return (fg, bg, self.bold or self.mb > 0, self.italic or self.mi > 0,
+                self.underline or self.mu > 0, self.inverse)
+
+
+class Terminal:
+    """Pure protocol logic: bytes in, events out. No GUI, so it can be tested."""
+
+    def __init__(self, want_mxp=True):
+        self.want_mxp = want_mxp
+        self.mxp = False
+        self.echo_off = False
+        self.style = Style()
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._tstate = "data"
+        self._cmd = 0
+        self._sb = bytearray()
+        self._text = bytearray()
+        self._pending = ""
+        self._us = {}      # options we have agreed to, to avoid negotiation loops
+        self._events = []
+
+    # ---- public ------------------------------------------------------
+    def feed(self, data):
+        """Returns list of events:
+        ('text', str, style_key) ('send', bytes) ('echo', bool) ('bell',) ('prompt',)"""
+        self._events = []
+        for b in data:
+            self._telnet_byte(b)
+        self._flush_text()
+        out, self._events = self._events, []
+        return out
+
+    # ---- telnet layer ------------------------------------------------
+    def _reply(self, verb, opt):
+        self._events.append(("send", bytes([IAC, verb, opt])))
+
+    def _telnet_byte(self, b):
+        st = self._tstate
+        if st == "data":
+            if b == IAC:
+                self._tstate = "iac"
+            else:
+                self._text.append(b)
+        elif st == "iac":
+            if b == IAC:
+                self._text.append(255)
+                self._tstate = "data"
+            elif b in (WILL, WONT, DO, DONT):
+                self._cmd = b
+                self._tstate = "opt"
+            elif b == SB:
+                self._sb = bytearray()
+                self._tstate = "sb"
+            else:
+                if b == GA:
+                    self._flush_text()
+                    self._events.append(("prompt",))
+                self._tstate = "data"
+        elif st == "opt":
+            self._negotiate(self._cmd, b)
+            self._tstate = "data"
+        elif st == "sb":
+            if b == IAC:
+                self._tstate = "sb_iac"
+            else:
+                self._sb.append(b)
+        elif st == "sb_iac":
+            if b == SE:
+                if self._sb[:1] == bytes([OPT_MXP]) and self.want_mxp:
+                    self.mxp = True
+                self._tstate = "data"
+            elif b == IAC:
+                self._sb.append(255)
+                self._tstate = "sb"
+            else:
+                self._tstate = "data"
+
+    def _negotiate(self, verb, opt):
+        self._flush_text()
+        if verb == WILL:
+            if opt == OPT_ECHO:
+                self.echo_off = True
+                self._events.append(("echo", False))
+                self._reply(DO, opt)
+            elif opt == OPT_MXP and self.want_mxp:
+                if not self._us.get(opt):
+                    self._us[opt] = True
+                    self._reply(DO, opt)
+            elif opt == OPT_SGA:
+                if not self._us.get(opt):
+                    self._us[opt] = True
+                    self._reply(DO, opt)
+            else:
+                self._reply(DONT, opt)
+        elif verb == WONT:
+            if opt == OPT_ECHO:
+                self.echo_off = False
+                self._events.append(("echo", True))
+                self._reply(DONT, opt)
+            elif opt == OPT_MXP:
+                self.mxp = False
+        elif verb == DO:
+            self._reply(WONT, opt)
+        # DONT: nothing to undo, we never offer anything
+
+    # ---- text layer --------------------------------------------------
+    def _flush_text(self):
+        if not self._text:
+            return
+        chunk = self._decoder.decode(bytes(self._text))
+        self._text = bytearray()
+        if chunk:
+            self._pending += chunk
+            self._process()
+
+    def _emit(self, s):
+        if s:
+            ev = self._events
+            key = self.style.key()
+            if ev and ev[-1][0] == "text" and ev[-1][2] == key:
+                ev[-1] = ("text", ev[-1][1] + s, key)
+            else:
+                ev.append(("text", s, key))
+
+    def _process(self):
+        s = self._pending
+        i, n = 0, len(s)
+        buf = []
+        while i < n:
+            c = s[i]
+            if c == "\x1b":
+                self._emit("".join(buf)); buf = []
+                if i + 1 >= n:
+                    break
+                if s[i + 1] != "[":
+                    i += 2
+                    continue
+                j = i + 2
+                while j < n and (s[j].isdigit() or s[j] in ";:?"):
+                    j += 1
+                if j >= n:
+                    break  # incomplete CSI, wait for more
+                final = s[j]
+                if final == "m":
+                    self._sgr(s[i + 2:j])
+                # every other CSI (incl. MXP line modes ESC[6z) is dropped
+                i = j + 1
+            elif c == "<" and self.mxp:
+                end = s.find(">", i + 1)
+                if end < 0:
+                    if n - i < 600:
+                        self._emit("".join(buf)); buf = []
+                        break  # tag split across packets
+                    buf.append(c); i += 1
+                    continue
+                self._emit("".join(buf)); buf = []
+                self._mxp_tag(s[i + 1:end])
+                i = end + 1
+            elif c == "&" and self.mxp:
+                end = s.find(";", i + 1, i + 12)
+                if end < 0:
+                    if n - i < 12:
+                        self._emit("".join(buf)); buf = []
+                        break
+                    buf.append(c); i += 1
+                    continue
+                name = s[i + 1:end]
+                if name in ENTITIES:
+                    buf.append(ENTITIES[name])
+                elif name.startswith("#") and name[1:].isdigit():
+                    buf.append(chr(int(name[1:])) if int(name[1:]) < 0x110000 else "?")
+                else:
+                    buf.append(s[i:end + 1])
+                i = end + 1
+            elif c == "\a":
+                self._emit("".join(buf)); buf = []
+                self._events.append(("bell",))
+                i += 1
+            elif c in "\r\x00":
+                i += 1
+            elif c < " " and c not in "\n\t":
+                i += 1
+            else:
+                buf.append(c)
+                i += 1
+        self._emit("".join(buf))
+        self._pending = s[i:]
+
+    def _sgr(self, params):
+        st = self.style
+        parts = [p for p in re.split(r"[;:]", params)] if params else ["0"]
+        vals = [int(p) if p.isdigit() else 0 for p in parts]
+        k = 0
+        while k < len(vals):
+            v = vals[k]
+            if v == 0:
+                st.fg = st.bg = None
+                st.bold = st.italic = st.underline = st.inverse = False
+            elif v == 1: st.bold = True
+            elif v == 3: st.italic = True
+            elif v == 4: st.underline = True
+            elif v == 7: st.inverse = True
+            elif v == 22: st.bold = False
+            elif v == 23: st.italic = False
+            elif v == 24: st.underline = False
+            elif v == 27: st.inverse = False
+            elif 30 <= v <= 37: st.fg = ANSI16[v - 30 + (8 if st.bold else 0)]
+            elif 90 <= v <= 97: st.fg = ANSI16[v - 90 + 8]
+            elif 40 <= v <= 47: st.bg = ANSI16[v - 40]
+            elif 100 <= v <= 107: st.bg = ANSI16[v - 100 + 8]
+            elif v == 39: st.fg = None
+            elif v == 49: st.bg = None
+            elif v in (38, 48):
+                col = None
+                if k + 2 < len(vals) and vals[k + 1] == 5:
+                    col = xterm_color(max(0, min(255, vals[k + 2])))
+                    k += 2
+                elif k + 4 < len(vals) and vals[k + 1] == 2:
+                    r, g, b = (max(0, min(255, x)) for x in vals[k + 2:k + 5])
+                    col = "#%02x%02x%02x" % (r, g, b)
+                    k += 4
+                if col:
+                    if v == 38: st.fg = col
+                    else: st.bg = col
+            k += 1
+
+    def _mxp_tag(self, body):
+        st = self.style
+        body = body.strip()
+        if not body:
+            return
+        closing = body.startswith("/")
+        if closing:
+            body = body[1:].strip()
+        m = re.match(r"([A-Za-z0-9]+)(.*)", body, re.S)
+        if not m:
+            return
+        name, rest = m.group(1).lower(), m.group(2)
+        if name == "color" or name == "c":
+            if closing:
+                st.mfg = st.mbg = None
+            else:
+                for am in ATTR_RE.finditer(rest):
+                    key = am.group(1).lower()
+                    val = am.group(2) or am.group(3) or am.group(4) or ""
+                    if key in ("fore", "f"): st.mfg = mxp_color(val)
+                    elif key in ("back", "b"): st.mbg = mxp_color(val)
+                if not ATTR_RE.search(rest):  # <color red>
+                    first = rest.split()[0] if rest.split() else ""
+                    st.mfg = mxp_color(first)
+        elif name in ("b", "bold", "strong"):
+            st.mb = max(0, st.mb + (-1 if closing else 1))
+        elif name in ("i", "italic", "em"):
+            st.mi = max(0, st.mi + (-1 if closing else 1))
+        elif name in ("u", "underline"):
+            st.mu = max(0, st.mu + (-1 if closing else 1))
+        elif name == "br" and not closing:
+            self._emit("\n")
+        # everything else (send, a, h1.., p, !element, ...) is ignored; text still shows
+
+
+# =========================================================================
+# GUI
+# =========================================================================
+
+class Connection:
+    """Socket owner. Reads on a thread, hands events to the GUI through a queue."""
+
+    def __init__(self, q):
+        self.q = q
+        self.sock = None
+        self._lock = threading.Lock()
+
+    def open(self, host, port, use_tls, verify):
+        threading.Thread(target=self._run, args=(host, port, use_tls, verify), daemon=True).start()
+
+    def _run(self, host, port, use_tls, verify):
+        try:
+            s = socket.create_connection((host, port), timeout=12)
+            if use_tls:
+                ctx = ssl.create_default_context()
+                if not verify:
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                s = ctx.wrap_socket(s, server_hostname=host)
+            s.settimeout(None)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except Exception as e:  # noqa: BLE001
+            self.q.put(("failed", str(e)))
+            return
+        with self._lock:
+            self.sock = s
+        self.q.put(("connected", None))
+        reason = "Connection closed by server."
+        try:
+            while True:
+                data = s.recv(8192)
+                if not data:
+                    break
+                self.q.put(("data", data))
+        except OSError as e:
+            if self.sock is None:
+                return  # we closed it ourselves
+            reason = "Connection lost: %s" % e
+        self.q.put(("closed", reason))
+
+    def send(self, raw):
+        with self._lock:
+            s = self.sock
+        if s is None:
+            return False
+        try:
+            s.sendall(raw)
+            return True
+        except OSError:
+            return False
+
+    def close(self):
+        with self._lock:
+            s, self.sock = self.sock, None
+        if s:
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
+class App:
+    def __init__(self, root, host=None, port=None):
+        self.root = root
+        self.cfg = self._load_settings()
+        if host:
+            self.cfg["host"] = host
+        if port:
+            self.cfg["port"] = port
+            self.cfg["tls"] = (port == TLS_PORT)
+        self.q = queue.Queue()
+        self.conn = Connection(self.q)
+        self.term = Terminal(want_mxp=True)
+        self.connected = False
+        self.connecting = False
+        self.history, self.hist_pos, self.draft = [], 0, ""
+        self.logfile = None
+        self.last_send = time.time()
+        self._tags = set()
+
+        root.title("Duskholm")
+        root.configure(bg=BG)
+        root.geometry(self.cfg.get("geometry", "1000x700"))
+        self._build_fonts()
+        self._build_widgets()
+        self._build_menu()
+        root.protocol("WM_DELETE_WINDOW", self.on_quit)
+        self.input.focus_set()
+        root.after(25, self._pump)
+        self.system("Duskholm client. Type /help for local commands, or press Connect.")
+
+    # ---- settings ----------------------------------------------------
+    def _load_settings(self):
+        cfg = {"host": DEFAULT_HOST, "port": TLS_PORT, "tls": True, "verify": True,
+               "font_size": 11, "aliases": {}, "bell": True, "keepalive": True}
+        try:
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                cfg.update(json.load(f))
+        except (OSError, ValueError):
+            pass
+        return cfg
+
+    def _save_settings(self):
+        self.cfg["geometry"] = self.root.geometry()
+        try:
+            with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(self.cfg, f, indent=2)
+        except OSError:
+            pass
+
+    # ---- ui ----------------------------------------------------------
+    def _build_fonts(self):
+        fam = "Consolas" if "Consolas" in tkfont.families() else "Courier New"
+        size = int(self.cfg.get("font_size", 11))
+        self.f_norm = tkfont.Font(family=fam, size=size)
+        self.f_bold = tkfont.Font(family=fam, size=size, weight="bold")
+        self.f_ital = tkfont.Font(family=fam, size=size, slant="italic")
+        self.f_bi = tkfont.Font(family=fam, size=size, weight="bold", slant="italic")
+
+    def _build_widgets(self):
+        top = tk.Frame(self.root, bg="#1a1c21")
+        top.pack(fill="x")
+        lab = dict(bg="#1a1c21", fg=FG)
+        tk.Label(top, text="Host", **lab).pack(side="left", padx=(8, 2), pady=4)
+        self.v_host = tk.StringVar(value=self.cfg["host"])
+        tk.Entry(top, textvariable=self.v_host, width=22).pack(side="left")
+        tk.Label(top, text="Port", **lab).pack(side="left", padx=(8, 2))
+        self.v_port = tk.StringVar(value=str(self.cfg["port"]))
+        tk.Entry(top, textvariable=self.v_port, width=6).pack(side="left")
+        self.v_tls = tk.BooleanVar(value=self.cfg["tls"])
+        tk.Checkbutton(top, text="TLS", variable=self.v_tls, command=self._tls_toggled,
+                       bg="#1a1c21", fg=FG, selectcolor="#1a1c21", activebackground="#1a1c21",
+                       activeforeground=FG).pack(side="left", padx=6)
+        self.btn = tk.Button(top, text="Connect", width=10, command=self.toggle_connection)
+        self.btn.pack(side="left", padx=4)
+        self.status = tk.Label(top, text="Disconnected", anchor="e", **lab)
+        self.status.pack(side="right", padx=8)
+
+        mid = tk.Frame(self.root, bg=BG)
+        mid.pack(fill="both", expand=True)
+        self.out = tk.Text(mid, bg=BG, fg=FG, font=self.f_norm, wrap="word", state="disabled",
+                           insertbackground=FG, borderwidth=0, highlightthickness=0,
+                           padx=8, pady=4, cursor="arrow", selectbackground="#33466b")
+        sb = tk.Scrollbar(mid, command=self.out.yview)
+        self.out.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.out.pack(side="left", fill="both", expand=True)
+        self.out.tag_configure("echo", foreground=ECHO_FG)
+        self.out.tag_configure("system", foreground=SYSTEM_FG)
+        self.out.bind("<KeyPress>", self._out_key)
+        self.out.bind("<Control-MouseWheel>", self._zoom_wheel)
+
+        self.input = tk.Entry(self.root, bg="#1a1c21", fg="#e8e8e8", insertbackground="#e8e8e8",
+                              font=self.f_norm, relief="flat", highlightthickness=1,
+                              highlightbackground="#2a2d35", highlightcolor="#4a6fa5")
+        self.input.pack(fill="x", padx=0, pady=0, ipady=5)
+        self.input.bind("<Return>", self._on_enter)
+        self.input.bind("<KP_Enter>", self._on_enter)
+        self.input.bind("<Up>", lambda e: self._hist(-1))
+        self.input.bind("<Down>", lambda e: self._hist(+1))
+        self.input.bind("<Prior>", lambda e: self.out.yview_scroll(-1, "pages"))
+        self.input.bind("<Next>", lambda e: self.out.yview_scroll(1, "pages"))
+        self.input.bind("<Escape>", lambda e: self.input.delete(0, "end"))
+        for w in (self.root,):
+            w.bind("<Control-plus>", lambda e: self._zoom(+1))
+            w.bind("<Control-equal>", lambda e: self._zoom(+1))
+            w.bind("<Control-minus>", lambda e: self._zoom(-1))
+            w.bind("<Control-l>", lambda e: self.clear())
+
+    def _build_menu(self):
+        m = tk.Menu(self.root)
+        f = tk.Menu(m, tearoff=0)
+        f.add_command(label="Connect / Disconnect", command=self.toggle_connection)
+        f.add_command(label="Start/stop logging…", command=self.toggle_log)
+        f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
+        f.add_separator()
+        f.add_command(label="Quit", command=self.on_quit)
+        m.add_cascade(label="File", menu=f)
+        v = tk.Menu(m, tearoff=0)
+        v.add_command(label="Bigger font   Ctrl +", command=lambda: self._zoom(+1))
+        v.add_command(label="Smaller font   Ctrl -", command=lambda: self._zoom(-1))
+        m.add_cascade(label="View", menu=v)
+        o = tk.Menu(m, tearoff=0)
+        self.v_verify = tk.BooleanVar(value=self.cfg["verify"])
+        self.v_bell = tk.BooleanVar(value=self.cfg["bell"])
+        self.v_keep = tk.BooleanVar(value=self.cfg["keepalive"])
+        o.add_checkbutton(label="Verify TLS certificate", variable=self.v_verify,
+                          command=lambda: self.cfg.update(verify=self.v_verify.get()))
+        o.add_checkbutton(label="Beep on server bell", variable=self.v_bell,
+                          command=lambda: self.cfg.update(bell=self.v_bell.get()))
+        o.add_checkbutton(label="Send keep-alive", variable=self.v_keep,
+                          command=lambda: self.cfg.update(keepalive=self.v_keep.get()))
+        m.add_cascade(label="Options", menu=o)
+        self.root.config(menu=m)
+
+    # ---- output ------------------------------------------------------
+    def _tag_for(self, key):
+        fg, bg, bold, ital, ul, inv = key
+        if inv:
+            fg, bg = (bg or BG), (fg or FG)
+        name = "s%s|%s|%d%d%d" % (fg, bg, bold, ital, ul)
+        if name not in self._tags:
+            font = {(0, 0): self.f_norm, (1, 0): self.f_bold,
+                    (0, 1): self.f_ital, (1, 1): self.f_bi}[(int(bold), int(ital))]
+            self.out.tag_configure(name, foreground=fg or FG, background=bg or BG,
+                                   underline=bool(ul), font=font)
+            self._tags.add(name)
+        return name
+
+    def _append(self, pieces):
+        """pieces: [(text, tagname_or_None)]"""
+        at_bottom = self.out.yview()[1] >= 0.999
+        self.out.configure(state="normal")
+        for text, tag in pieces:
+            if tag:
+                self.out.insert("end", text, tag)
+            else:
+                self.out.insert("end", text)
+            if self.logfile:
+                try:
+                    self.logfile.write(text)
+                except OSError:
+                    pass
+        lines = int(self.out.index("end-1c").split(".")[0])
+        if lines > MAX_SCROLLBACK_LINES:
+            self.out.delete("1.0", "%d.0" % (lines - MAX_SCROLLBACK_LINES))
+        self.out.configure(state="disabled")
+        if at_bottom:
+            self.out.see("end")
+        if self.logfile:
+            try:
+                self.logfile.flush()
+            except OSError:
+                pass
+
+    def system(self, text):
+        # start on a fresh line if the server's prompt is sitting at the end of one
+        prefix = "\n" if self.out.get("end-2c", "end-1c") not in ("\n", "") else ""
+        self._append([(prefix + "[" + text + "]\n", "system")])
+
+    def clear(self):
+        self.out.configure(state="normal")
+        self.out.delete("1.0", "end")
+        self.out.configure(state="disabled")
+
+    # ---- network pump ------------------------------------------------
+    def _pump(self):
+        try:
+            while True:
+                kind, payload = self.q.get_nowait()
+                if kind == "data":
+                    self._on_data(payload)
+                elif kind == "connected":
+                    self.connecting, self.connected = False, True
+                    self.term = Terminal(want_mxp=True)
+                    self.input.configure(show="")
+                    self.btn.configure(text="Disconnect")
+                    self.status.configure(text="Connected")
+                    self.system("Connected to %s:%s%s." % (self.v_host.get(), self.v_port.get(),
+                                                            " (TLS)" if self.v_tls.get() else ""))
+                elif kind == "failed":
+                    self.connecting = False
+                    self.btn.configure(text="Connect")
+                    self.status.configure(text="Disconnected")
+                    self.system("Could not connect: %s" % payload)
+                    if "CERTIFICATE" in payload.upper():
+                        self.system("TLS certificate was not accepted. Options > Verify TLS certificate "
+                                    "turns checking off, or use the plain port 3000.")
+                elif kind == "closed":
+                    if self.connected:
+                        self.connected = False
+                        self.input.configure(show="")
+                        self.btn.configure(text="Connect")
+                        self.status.configure(text="Disconnected")
+                        self.system(payload)
+        except queue.Empty:
+            pass
+        if (self.connected and self.cfg.get("keepalive") and
+                time.time() - self.last_send > KEEPALIVE_SECONDS):
+            self.conn.send(bytes([IAC, NOP]))
+            self.last_send = time.time()
+        self.root.after(25, self._pump)
+
+    def _on_data(self, data):
+        pieces = []
+        for ev in self.term.feed(data):
+            k = ev[0]
+            if k == "text":
+                pieces.append((ev[1], self._tag_for(ev[2])))
+            elif k == "send":
+                self.conn.send(ev[1])
+            elif k == "echo":
+                self.input.configure(show="" if ev[1] else "*")
+                if not ev[1]:
+                    self.hist_pos = len(self.history)
+            elif k == "bell" and self.cfg.get("bell"):
+                self.root.bell()
+        if pieces:
+            self._append(pieces)
+
+    # ---- input -------------------------------------------------------
+    def _on_enter(self, _e):
+        line = self.input.get()
+        self.input.delete(0, "end")
+        secret = self.term.echo_off
+        if not secret and line.strip() and (not self.history or self.history[-1] != line):
+            self.history.append(line)
+            del self.history[:-500]
+        self.hist_pos, self.draft = len(self.history), ""
+        if not secret and line.startswith("/") and not line.startswith("//"):
+            self._local(line)
+            return "break"
+        if line.startswith("//"):
+            line = line[1:]
+        self.send_line(line, echo=not secret)
+        return "break"
+
+    def send_line(self, line, echo=True):
+        if not self.connected:
+            self.system("Not connected.")
+            return
+        for part in self._expand(line):
+            if echo:
+                self._append([(part + "\n", "echo")])
+            raw = part.encode("utf-8", "replace").replace(b"\xff", b"\xff\xff") + b"\r\n"
+            if not self.conn.send(raw):
+                self.system("Send failed.")
+                return
+        self.last_send = time.time()
+
+    def _expand(self, line):
+        """Alias expansion. Alias templates may hold several commands separated by ';'
+        and use $* for the arguments (otherwise arguments are appended)."""
+        word, _, rest = line.partition(" ")
+        tmpl = self.cfg["aliases"].get(word)
+        if tmpl is None:
+            return [line]
+        rest = rest.strip()
+        parts = [p.strip() for p in tmpl.split(";") if p.strip()]
+        if "$*" in tmpl:
+            return [p.replace("$*", rest) for p in parts]
+        if rest and parts:
+            parts[-1] = parts[-1] + " " + rest
+        return parts
+
+    def _hist(self, d):
+        if not self.history or self.term.echo_off:
+            return "break"
+        if self.hist_pos == len(self.history):
+            self.draft = self.input.get()
+        self.hist_pos = max(0, min(len(self.history), self.hist_pos + d))
+        self.input.delete(0, "end")
+        self.input.insert(0, self.draft if self.hist_pos == len(self.history)
+                          else self.history[self.hist_pos])
+        return "break"
+
+    def _out_key(self, e):
+        # typing while the output pane has focus goes to the input line
+        if e.char and e.char.isprintable() and not (e.state & 0x4):
+            self.input.focus_set()
+            self.input.insert("end", e.char)
+            return "break"
+
+    # ---- local commands ----------------------------------------------
+    def _local(self, line):
+        cmd, _, arg = line[1:].partition(" ")
+        cmd, arg = cmd.lower(), arg.strip()
+        if cmd in ("help", "?"):
+            self.system("Local commands:\n"
+                        "  /connect [host [port]]   /disconnect   /quit\n"
+                        "  /alias name expansion    (use ; between commands, $* for arguments)\n"
+                        "  /unalias name            /aliases\n"
+                        "  /log [file]              start or stop logging\n"
+                        "  /clear                   //text sends \"/text\" to the game")
+        elif cmd == "connect":
+            bits = arg.split()
+            if bits:
+                self.v_host.set(bits[0])
+            if len(bits) > 1:
+                self.v_port.set(bits[1])
+                self.v_tls.set(bits[1] == str(TLS_PORT))
+            if not self.connected:
+                self.toggle_connection()
+        elif cmd == "disconnect":
+            if self.connected or self.connecting:
+                self.toggle_connection()
+        elif cmd == "quit":
+            self.on_quit()
+        elif cmd == "clear":
+            self.clear()
+        elif cmd == "alias":
+            name, _, exp = arg.partition(" ")
+            if not name or not exp.strip():
+                self.system("Usage: /alias name expansion")
+            else:
+                self.cfg["aliases"][name] = exp.strip()
+                self._save_settings()
+                self.system("Alias %s = %s" % (name, exp.strip()))
+        elif cmd == "unalias":
+            if self.cfg["aliases"].pop(arg, None) is not None:
+                self._save_settings()
+                self.system("Removed alias %s." % arg)
+            else:
+                self.system("No such alias.")
+        elif cmd == "aliases":
+            al = self.cfg["aliases"]
+            self.system("\n".join("%s = %s" % kv for kv in sorted(al.items())) if al else "No aliases.")
+        elif cmd == "log":
+            self.toggle_log(arg or None)
+        else:
+            self.system("Unknown local command. /help lists them; //text sends a literal \"/text\".")
+
+    # ---- actions -----------------------------------------------------
+    def _tls_toggled(self):
+        # swap between the two stock ports when the user flips TLS
+        if self.v_port.get() in (str(PLAIN_PORT), str(TLS_PORT)):
+            self.v_port.set(str(TLS_PORT if self.v_tls.get() else PLAIN_PORT))
+
+    def toggle_connection(self):
+        if self.connected or self.connecting:
+            self.conn.close()
+            self.connected = self.connecting = False
+            self.input.configure(show="")
+            self.btn.configure(text="Connect")
+            self.status.configure(text="Disconnected")
+            self.system("Disconnected.")
+            return
+        host = self.v_host.get().strip()
+        try:
+            port = int(self.v_port.get())
+        except ValueError:
+            messagebox.showerror("Port", "Port must be a number.")
+            return
+        self.cfg.update(host=host, port=port, tls=self.v_tls.get())
+        self._save_settings()
+        self.connecting = True
+        self.btn.configure(text="Cancel")
+        self.status.configure(text="Connecting…")
+        self.system("Connecting to %s:%d…" % (host, port))
+        self.conn = Connection(self.q)
+        self.conn.open(host, port, self.v_tls.get(), self.v_verify.get())
+
+    def toggle_log(self, path=None):
+        if self.logfile:
+            self.logfile.close()
+            self.logfile = None
+            self.system("Logging stopped.")
+            return
+        if not path:
+            path = time.strftime("duskholm-%Y%m%d-%H%M%S.log")
+        try:
+            self.logfile = open(path, "a", encoding="utf-8")
+        except OSError as e:
+            self.system("Cannot open log: %s" % e)
+            return
+        self.system("Logging to %s" % os.path.abspath(path))
+
+    def _zoom(self, d):
+        size = max(7, min(28, int(self.cfg["font_size"]) + d))
+        self.cfg["font_size"] = size
+        for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
+            f.configure(size=size)
+        return "break"
+
+    def _zoom_wheel(self, e):
+        return self._zoom(+1 if e.delta > 0 else -1)
+
+    def on_quit(self):
+        self.conn.close()
+        if self.logfile:
+            self.logfile.close()
+        self._save_settings()
+        self.root.destroy()
+
+
+def main():
+    host = sys.argv[1] if len(sys.argv) > 1 else None
+    port = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else None
+    root = tk.Tk()
+    App(root, host, port)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
