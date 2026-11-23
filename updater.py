@@ -213,25 +213,41 @@ def _bat(path):
 
 def write_swap_script(current, new, pid, start=True):
     """A small batch file that waits for this program to end, swaps the new exe in (keeping the old
-    one as Sanctuary.old.exe), and starts it. Returns its path."""
+    one as Sanctuary.old.exe), and starts it. No pipes and no console tricks: every step is a plain
+    command that ends by itself, and it gives up (leaving the old program in place) rather than hang.
+    Returns its path."""
     d = os.path.dirname(current)
     bat = os.path.join(tempfile.mkdtemp(prefix="sanctuary-swap-"), "swap.bat")
     old = _bat(os.path.join(d, "Sanctuary.old.exe"))
     current, new = _bat(current), _bat(new)
+    sysdir = r"%SystemRoot%\System32"
+    pid = int(pid)
     lines = [
         "@echo off",
+        "set /a waits=0",
         ":wait",
-        (r'"%SystemRoot%\System32\tasklist.exe" /FI "PID eq ' + str(int(pid)) + r'" 2>NUL | '
-         r'"%SystemRoot%\System32\find.exe" "' + str(int(pid)) + r'" >NUL'),
-        r'if not errorlevel 1 ("%SystemRoot%\System32\PING.EXE" -n 2 127.0.0.1 >NUL & goto wait)',
+        "set /a waits+=1",
+        "if %waits% gtr 60 goto giveup",
+        # is the old program still running?  (output goes to a file that find reads: no pipe to hang)
+        '"%s\\tasklist.exe" /FI "PID eq %d" /FO CSV /NH > "%%~dp0pid.txt" 2>NUL' % (sysdir, pid),
+        '"%s\\find.exe" """%d""" "%%~dp0pid.txt" >NUL 2>NUL' % (sysdir, pid),
+        'if not errorlevel 1 ("%s\\PING.EXE" -n 2 127.0.0.1 >NUL & goto wait)' % sysdir,
         'if exist "%s" del /f /q "%s"' % (old, old),
-        'move /y "%s" "%s" >NUL' % (current, old),
-        'move /y "%s" "%s" >NUL' % (new, current),
-        'if errorlevel 1 (move /y "%s" "%s" >NUL)' % (old, current),
+        "set /a tries=0",
+        ":swap",
+        "set /a tries+=1",
+        'move /y "%s" "%s" >NUL 2>NUL' % (current, old),
+        'if not errorlevel 1 goto placed',
+        'if %tries% geq 30 goto giveup',
+        '"%s\\PING.EXE" -n 2 127.0.0.1 >NUL' % sysdir,
+        "goto swap",
+        ":placed",
+        'move /y "%s" "%s" >NUL 2>NUL' % (new, current),
+        'if errorlevel 1 (move /y "%s" "%s" >NUL 2>NUL & goto giveup)' % (old, current),
     ]
     if start:
         lines.append('start "" "%s"' % current)
-    lines.append('(goto) 2>NUL & del "%~f0"')
+    lines += [":giveup", '(goto) 2>NUL & del "%~f0"']
     with open(bat, "w", encoding="mbcs", newline="\r\n") as f:
         f.write("\n".join(lines) + "\n")
     return bat
@@ -239,7 +255,8 @@ def write_swap_script(current, new, pid, start=True):
 
 def launch_swap(current, new, start=True):
     bat = write_swap_script(current, new, os.getpid(), start)
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-    subprocess.Popen(["cmd", "/c", bat], creationflags=flags, close_fds=True,
+    # CREATE_NO_WINDOW alone: the helper has a hidden console that its commands share. (Adding
+    # DETACHED_PROCESS gives every command its own visible console window.)
+    subprocess.Popen(["cmd", "/c", bat], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return bat

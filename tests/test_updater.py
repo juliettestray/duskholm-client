@@ -156,22 +156,63 @@ except up.UpdateError as e:
     assert "odd version" in str(e)
 
 # ---------------------------------------------------------------- swapping files in (the batch file, run for real, no start)
+def _find_pids():
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq find.exe", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+    return {l.split(",")[1].strip('"') for l in out.splitlines() if l.startswith('"find.exe"')}
+
+
+FIND_BEFORE = _find_pids() if sys.platform.startswith("win") else set()
+
+
+def run_swap(cur, new, pid, limit=60):
+    """Start the swap exactly as the program does (hidden console), wait for it to finish."""
+    bat = up.write_swap_script(cur, new, pid, start=False)
+    run_swap.text = open(bat, encoding="mbcs").read()                 # (the script deletes itself when done)
+    t0 = time.time()
+    proc = subprocess.Popen(["cmd", "/c", bat], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise AssertionError("the swap helper hung (the old updater left a console window waiting forever)")
+    return bat, time.time() - t0
+
+
 if sys.platform.startswith("win"):
     d = os.path.join(tempfile.mkdtemp(), "50% off (x86)")
     os.makedirs(d)
     cur, new = os.path.join(d, "Sanctuary.exe"), os.path.join(d, "Sanctuary.new.exe")
     open(cur, "wb").write(b"MZold"); open(new, "wb").write(b"MZnew")
-    bat = up.write_swap_script(cur, new, 99999999, start=False)
-    text = open(bat, encoding="mbcs").read()
-    assert "50%% off" in text and "start" not in text
-    subprocess.run(["cmd", "/c", bat], timeout=30)
-    time.sleep(1)
+    bat, secs = run_swap(cur, new, 99999999)
+    assert "50%% off" in run_swap.text
     assert open(cur, "rb").read() == b"MZnew" and open(os.path.join(d, "Sanctuary.old.exe"), "rb").read() == b"MZold"
     assert not os.path.exists(new) and not os.path.exists(bat), "the script cleans up after itself"
+    assert secs < 15, secs
     # a second update replaces the old backup
     open(new, "wb").write(b"MZthird")
-    subprocess.run(["cmd", "/c", up.write_swap_script(cur, new, 99999999, start=False)], timeout=30)
+    run_swap(cur, new, 99999999)
     assert open(cur, "rb").read() == b"MZthird" and open(os.path.join(d, "Sanctuary.old.exe"), "rb").read() == b"MZnew"
+    # the real situation: the old program is still running (and so locked) for a few seconds
+    d2 = tempfile.mkdtemp()
+    cur2, new2 = os.path.join(d2, "Sanctuary.exe"), os.path.join(d2, "Sanctuary.new.exe")
+    import shutil
+    shutil.copy(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "PING.EXE"), cur2)
+    orig = open(cur2, "rb").read()
+    open(new2, "wb").write(b"MZnewest")
+    running = subprocess.Popen([cur2, "-n", "5", "127.0.0.1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    bat, secs = run_swap(cur2, new2, running.pid)
+    running.wait(timeout=20)
+    assert open(cur2, "rb").read() == b"MZnewest", "the new program is in place"
+    assert open(os.path.join(d2, "Sanctuary.old.exe"), "rb").read() == orig, "and the old one is kept beside it"
+    assert secs >= 3, "it waited for the old program to finish (%.1fs)" % secs
+    # nothing is left running from the helper (a stuck find.exe from some earlier broken update is not ours)
+    def find_pids():
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq find.exe", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+        return {l.split(",")[1].strip('"') for l in out.splitlines() if l.startswith('"find.exe"')}
+    assert find_pids() <= FIND_BEFORE, "the helper left a find.exe behind: %s" % (find_pids() - FIND_BEFORE)
+
 assert up.running_exe() is None, "from source there is no exe to replace"
 
 # ---------------------------------------------------------------- in the client
