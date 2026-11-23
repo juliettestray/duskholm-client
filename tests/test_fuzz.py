@@ -685,7 +685,7 @@ def chk_esc_end_then_data():
     e2 = t.feed(b"[31mB")
     txt = "".join(e[1] for e in e1 + e2 if e[0] == "text")
     key = [e for e in e2 if e[0] == "text"][-1][2]
-    if txt != "AB" or key[0] != dc.ANSI16[1]:
+    if txt != "AB" or key[0] != 1:          # colours 0-15 are palette references (red = 1)
         return "ESC | [31mB -> text=%s key=%s" % (rep(txt), key)
 
 

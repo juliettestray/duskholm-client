@@ -121,14 +121,14 @@ assert not app.statbar.winfo_ismapped() and app._last_prompt is None
 
 # ---------------- fonts --------------------------------------------------------------------
 mono = app.mono_families()
-assert mono and app.cfg["font_family"] in mono
+assert mono and app.font_family in mono
 fams = set(tkfont.families())
 assert all(app._is_mono(f) for f in mono)
 for prop in ("Arial", "Times New Roman", "Segoe UI", "Calibri"):
     if prop in fams:
         assert prop not in mono, prop + " is proportional and must not be offered"
 assert not app.apply_font("Arial", 14) or "Arial" in mono, "non-monospace family must be refused"
-other = next((f for f in mono if f != app.cfg["font_family"]), mono[0])
+other = next((f for f in mono if f != app.font_family), mono[0])
 assert app.apply_font(other, 17)
 assert app.f_norm.actual("family") == other or app.f_norm.cget("family") == other
 assert app.f_norm.cget("size") == 17 and app.f_bold.cget("size") == 17
@@ -154,19 +154,19 @@ lb.selection_clear(0, "end"); lb.selection_set(mono.index(target)); lb.event_gen
 sp = next(w for w in walk(top) if isinstance(w, tk.Spinbox))
 sp.delete(0, "end"); sp.insert(0, "19")
 next(w for w in walk(top) if isinstance(w, tk.Button) and w.cget("text") == "OK").invoke(); root.update()
-assert app.cfg["font_family"] == target and app.cfg["font_size"] == 19, app.cfg
+assert app.font_family == target and app.cfg["font_size"] == 19, app.cfg
 # Cancel changes nothing
 top = app.choose_font(); root.update()
 next(w for w in walk(top) if isinstance(w, tk.Button) and w.cget("text") == "Cancel").invoke(); root.update()
-assert app.cfg["font_family"] == target and app.cfg["font_size"] == 19
-root.destroy()
+assert app.font_family == target and app.cfg["font_size"] == 19
+root.update(); root.destroy()
 
 # a saved font that is not monospace (hand-edited file) falls back to the default
 json.dump({"font_family": "Arial" if "Arial" in fams else "No Such Font", "font_size": 12},
           open(dc.SETTINGS_PATH, "w"))
 root2 = tk.Tk(); app2 = dc.App(root2)
-assert app2.cfg["font_family"] == app2._default_family() and app2.f_norm.cget("size") == 12
-root2.destroy()
+assert app2.font_family == app2._default_family() and app2.f_norm.cget("size") == 12
+root2.update(); root2.destroy()
 # layout regression: a big font in a modest window must never push the input line or the
 # stat bar off the bottom (the output pane used to request 24 rows and squeeze them out)
 json.dump({"font_size": dc.MAX_FONT}, open(dc.SETTINGS_PATH, "w"))
@@ -179,5 +179,5 @@ assert app3.statbar.winfo_ismapped()
 assert app3.input.winfo_y() + app3.input.winfo_height() <= H + 1, (app3.input.winfo_y(), H)
 assert app3.statbar.winfo_y() + app3.statbar.winfo_height() <= app3.input.winfo_y() + 1
 assert app3.input.winfo_height() > 5 and app3.out.winfo_height() > 5
-root3.destroy()
+root3.update(); root3.destroy()
 print("statbar + font tests OK")

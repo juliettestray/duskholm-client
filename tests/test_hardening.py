@@ -113,4 +113,4 @@ pump(0.3)
 assert not app.connected and not app.connecting
 
 print("hardening tests OK")
-root.destroy()
+root.update(); root.destroy()

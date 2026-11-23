@@ -17,6 +17,9 @@ Type /help in the client for the list.
 """
 
 import codecs
+import colorsys
+import copy
+import functools
 import json
 import os
 import queue
@@ -30,7 +33,7 @@ import traceback
 import unicodedata
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox
+from tkinter import colorchooser, messagebox, simpledialog
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -72,7 +75,7 @@ MXP_NAMED = {
     "black": 0, "red": 1, "green": 2, "yellow": 3, "blue": 4, "magenta": 5, "cyan": 6,
     "white": 7, "gray": 8, "grey": 8,
 }
-HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}\Z")
 
 
 def mxp_color(value):
@@ -80,8 +83,241 @@ def mxp_color(value):
     if HEX_RE.match(value):
         return value
     if value in MXP_NAMED:
-        return ANSI16[MXP_NAMED[value]]
+        return MXP_NAMED[value]          # a palette reference, so skins can recolour it
     return None
+
+
+# =========================================================================
+# Themes / skins
+# =========================================================================
+# A theme is a flat dict of colours plus a few style hints. The game's colours reach us as
+# palette *references* (ANSI colour 0-15), so changing the palette or skin recolours text that
+# is already in the scrollback. Colours the game sends as raw RGB / xterm-256 stay as sent.
+# `min_contrast` then lifts any text colour that would be too dark (or, on light skins, too
+# light) against its background, keeping its hue: that is what rescues dark blues and
+# "black" text on black, and it applies to every colour the game can send.
+
+COLOR_KEYS = ("bg", "fg", "panel", "panel_edge", "input_bg", "input_fg", "echo", "system",
+              "alert", "dim", "select", "button_bg", "button_fg")
+RELIEFS = ("flat", "raised", "ridge", "groove", "sunken")
+ANSI_NAMES = ("Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White",
+              "Bright black", "Bright red", "Bright green", "Bright yellow", "Bright blue",
+              "Bright magenta", "Bright cyan", "Bright white")
+COLOR_LABELS = {
+    "bg": "Background", "fg": "Default text", "panel": "Panels / toolbar",
+    "panel_edge": "Panel edges", "input_bg": "Input background", "input_fg": "Input text",
+    "echo": "Your typed commands", "system": "Client messages", "alert": "Highlight (stat chips)",
+    "dim": "Dimmed text", "select": "Selection", "button_bg": "Button background",
+    "button_fg": "Button text",
+}
+
+
+def _hex_ok(v):
+    return isinstance(v, str) and bool(HEX_RE.match(v))
+
+
+def _rgb(h):
+    return int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)
+
+
+def _hex(r, g, b):
+    return "#%02x%02x%02x" % (max(0, min(255, int(round(r)))), max(0, min(255, int(round(g)))),
+                              max(0, min(255, int(round(b)))))
+
+
+def rel_luminance(h):
+    def lin(c):
+        c /= 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = _rgb(h)
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def contrast_ratio(a, b):
+    """WCAG contrast ratio between two #rrggbb colours (1.0 .. 21.0)."""
+    la, lb = rel_luminance(a), rel_luminance(b)
+    hi, lo = (la, lb) if la >= lb else (lb, la)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@functools.lru_cache(maxsize=8192)
+def ensure_contrast(fg, bg, ratio):
+    """Return fg, or the nearest colour with the same hue/saturation that has at least
+    `ratio` contrast against bg (lightening on dark backgrounds, darkening on light ones).
+    ratio <= 1 disables the adjustment."""
+    if ratio <= 1.0 or contrast_ratio(fg, bg) >= ratio:
+        return fg
+    r, g, b = _rgb(fg)
+    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+
+    def at(level):
+        rr, gg, bb = colorsys.hls_to_rgb(h, level, s)
+        return _hex(rr * 255, gg * 255, bb * 255)
+
+    order = (1.0, 0.0) if rel_luminance(bg) < 0.5 else (0.0, 1.0)
+    for extreme in order:
+        if contrast_ratio(at(extreme), bg) < ratio:
+            continue
+        near, far = l, extreme            # `near` fails, `far` passes; find the boundary
+        for _ in range(24):
+            mid = (near + far) / 2.0
+            if contrast_ratio(at(mid), bg) >= ratio:
+                far = mid
+            else:
+                near = mid
+        return at(far)
+    # the ratio is unreachable in either direction (mid-grey background): take the best extreme
+    return max((at(0.0), at(1.0)), key=lambda c: contrast_ratio(c, bg))
+
+
+def _skin(name, **kw):
+    base = dict(
+        name=name, bg="#101114", fg="#c8c8c8", panel="#1a1c21", panel_edge="#2a2d35",
+        input_bg="#1a1c21", input_fg="#e8e8e8", echo="#6f7a8a", system="#d7a84a",
+        alert="#e5c07b", dim="#6f7a8a", select="#33466b", button_bg="#2a2d35",
+        button_fg="#e8e8e8", relief="flat", min_contrast=4.0, fonts=[], ansi=list(ANSI16),
+        blurb="")
+    base.update(kw)
+    return base
+
+
+BUILTIN_SKINS = {s["name"]: s for s in (
+    _skin("Plain", blurb="Neutral dark. The default."),
+    _skin("Plain Light", bg="#fafaf7", fg="#1f2328", panel="#ecece6", panel_edge="#d0d0c8",
+          input_bg="#ffffff", input_fg="#111111", echo="#7a7f87", system="#8a5a00",
+          alert="#9a5b00", dim="#7b8088", select="#cfe0ff", button_bg="#e2e2da",
+          button_fg="#1f2328", min_contrast=4.5,
+          ansi=["#000000", "#b3261e", "#1b7f3b", "#8a6100", "#1f4fbf", "#8e2a8e", "#0e6f80",
+                "#3a3f46", "#6b7078", "#d32f2f", "#2e9e4f", "#a67c00", "#2f6fe0", "#b04fb0",
+                "#1590a5", "#000000"],
+          blurb="Light background; the game's white becomes dark text."),
+    _skin("Moody", bg="#0b0a10", fg="#b9b4c8", panel="#14121d", panel_edge="#2a2438",
+          input_bg="#14121d", input_fg="#d8d2e6", echo="#6e6784", system="#c9a24b",
+          alert="#d4a84e", dim="#5f5876", select="#3a2f57", button_bg="#231d33",
+          button_fg="#cfc7e6", fonts=["Cascadia Mono", "Consolas"],
+          ansi=["#1b1826", "#b83a4b", "#5a9a78", "#c9a24b", "#6c7bd6", "#a45cc4", "#4fb0b8",
+                "#c9c4d8", "#4a4560", "#e0566a", "#7fc79b", "#e8c46a", "#8c9cf0", "#c47ee6",
+                "#78d3d9", "#f1edf9"],
+          blurb="Violet-black, tarnished gold, candlelight and spectral teal."),
+    _skin("Retro Phosphor", bg="#020a02", fg="#33ff66", panel="#061406", panel_edge="#124a1e",
+          input_bg="#061406", input_fg="#66ff88", echo="#1f8f3a", system="#b6ff4d",
+          alert="#e0ff6a", dim="#1f7a35", select="#0f5a24", button_bg="#0b2a10",
+          button_fg="#33ff66", relief="ridge",
+          fonts=["Perfect DOS VGA 437", "Fixedsys Excelsior 3.01", "Lucida Console", "Consolas"],
+          ansi=["#0f4a1c", "#ff6b4a", "#33ff66", "#d4ff4a", "#3fb8a0", "#9be6b4", "#4de6d0",
+                "#a8ffbd", "#2e8f48", "#ff9966", "#66ff99", "#eaff77", "#6fe0c8", "#b8f5c8",
+                "#8ffff0", "#e6fff0"],
+          blurb="Green-screen CRT. Reds stay warm so warnings still stand out."),
+    _skin("Retro DOS", bg="#000000", fg="#aaaaaa", panel="#0000aa", panel_edge="#aaaaaa",
+          input_bg="#0000aa", input_fg="#ffffff", echo="#55ffff", system="#ffff55",
+          alert="#ffff55", dim="#9999dd", select="#aa00aa", button_bg="#aaaaaa",
+          button_fg="#000000", relief="raised", min_contrast=3.0,
+          fonts=["Perfect DOS VGA 437", "Fixedsys Excelsior 3.01", "Lucida Console", "Consolas"],
+          ansi=["#000000", "#aa0000", "#00aa00", "#aa5500", "#0000aa", "#aa00aa", "#00aaaa",
+                "#aaaaaa", "#555555", "#ff5555", "#55ff55", "#ffff55", "#5555ff", "#ff55ff",
+                "#55ffff", "#ffffff"],
+          blurb="Classic 16-colour VGA, blue panels, chunky buttons."),
+)}
+DEFAULT_SKIN = "Plain"
+
+
+def validate_theme(d, base=None):
+    """Build a complete, safe theme from untrusted data (a skin file or saved overrides).
+    Anything missing or malformed falls back to `base` (default: the Plain skin). Returns
+    None if `d` is not a dict. `ansi` may be a full 16-list or a partial {"4": "#rrggbb"}."""
+    if not isinstance(d, dict):
+        return None
+    base = base if isinstance(base, dict) else BUILTIN_SKINS[DEFAULT_SKIN]
+    out = dict(base)
+    out["ansi"] = list(base["ansi"])
+    out["fonts"] = list(base.get("fonts", []))
+    for k in COLOR_KEYS:
+        v = d.get(k)
+        if _hex_ok(v):
+            out[k] = v.lower()
+    ansi = d.get("ansi")
+    if isinstance(ansi, list) and len(ansi) == 16 and all(_hex_ok(c) for c in ansi):
+        out["ansi"] = [c.lower() for c in ansi]
+    elif isinstance(ansi, dict):
+        for k, v in ansi.items():
+            if isinstance(k, str) and k.isascii() and k.isdigit() and len(k) < 3 and int(k) < 16 and _hex_ok(v):
+                out["ansi"][int(k)] = v.lower()
+    mc = d.get("min_contrast")
+    if isinstance(mc, (int, float)) and not isinstance(mc, bool) and 1.0 <= mc <= 10.0:
+        out["min_contrast"] = float(mc)
+    fonts = d.get("fonts")
+    if isinstance(fonts, list):
+        out["fonts"] = [f.strip() for f in fonts if isinstance(f, str) and 0 < len(f.strip()) < 60][:8]
+    if d.get("relief") in RELIEFS:
+        out["relief"] = d["relief"]
+    name = d.get("name")
+    if isinstance(name, str):
+        name = "".join(ch for ch in name if ch.isprintable()).strip()[:40]
+        if name:
+            out["name"] = name
+    blurb = d.get("blurb")
+    if isinstance(blurb, str):
+        out["blurb"] = "".join(ch for ch in blurb if ch.isprintable())[:120]
+    return out
+
+
+_WIN_RESERVED = ({"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 10)}
+                 | {"LPT%d" % i for i in range(1, 10)})
+
+
+def user_skin_dir():
+    return os.path.join(os.path.expanduser("~"), ".duskholm_skins")
+
+
+def load_user_skins(path=None):
+    """Skins from *.json files in the user skin folder. Bad or oversized files are skipped;
+    a name that clashes with a built-in or earlier skin gets ' (user)' appended."""
+    path = path or user_skin_dir()
+    found = {}
+    try:
+        names = sorted(os.listdir(path))
+    except OSError:
+        return found
+    for fn in names:
+        if not fn.lower().endswith(".json"):
+            continue
+        fp = os.path.join(path, fn)
+        try:
+            if os.path.getsize(fp) > 65536:
+                continue
+            with open(fp, "r", encoding="utf-8-sig") as f:      # -sig: Notepad adds a BOM
+                raw = json.load(f)
+        except (OSError, ValueError, RecursionError, MemoryError):
+            continue
+        t = validate_theme(raw)
+        if t is None or not any(k in raw for k in ("ansi", "bg", "fg")):
+            continue
+        if not isinstance(raw.get("name"), str) or not t["name"].strip():
+            t["name"] = os.path.splitext(fn)[0][:40]
+        base_name, n, cand = t["name"][:40], 1, t["name"][:40]
+        while cand in BUILTIN_SKINS or cand in found:       # counter suffix: always terminates
+            n += 1
+            suffix = " (user)" if n == 2 else " (user %d)" % (n - 1)
+            cand = base_name[:48 - len(suffix)] + suffix
+        t["name"] = cand
+        found[cand] = t
+    return found
+
+
+def save_user_skin(theme, path=None):
+    """Write a theme to the user skin folder; returns the file path."""
+    path = path or user_skin_dir()
+    os.makedirs(path, exist_ok=True)
+    safe = "".join(ch if ch.isalnum() or ch in " -_" else "_" for ch in theme["name"])
+    safe = safe.strip(" .")[:60] or "skin"
+    if safe.split(".")[0].strip().upper() in _WIN_RESERVED:
+        safe = "skin_" + safe                       # CON, NUL, COM1... are devices, not files
+    fp = os.path.join(path, safe + ".json")
+    data = {k: theme[k] for k in ("name", "blurb", "relief", "min_contrast", "fonts", "ansi") + COLOR_KEYS
+            if k in theme}
+    with open(fp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return fp
 
 
 # The server keeps only printable ASCII from typed lines (comm.c read_from_buffer:
@@ -195,18 +431,18 @@ def parse_prompt(line):
     return None
 
 
-def hp_color(cur, mx):
-    """Same bands the game's own %d prompt code uses for health."""
+def hp_color(cur, mx, ansi=ANSI16):
+    """Same bands the game's own %d prompt code uses for health, in the given palette."""
     pct = 100 if mx <= 0 else (max(cur, 0) * 100) // mx
     if pct >= 80:
-        return ANSI16[2]
+        return ansi[2]
     if pct >= 60:
-        return ANSI16[3]
+        return ansi[3]
     if pct >= 40:
-        return ANSI16[11]
+        return ansi[11]
     if pct >= 20:
-        return ANSI16[1]
-    return ANSI16[9]
+        return ansi[1]
+    return ansi[9]
 
 
 class Style:
@@ -493,16 +729,18 @@ class Terminal:
             elif v == 23: st.italic = False
             elif v == 24: st.underline = False
             elif v == 27: st.inverse = False
-            elif 30 <= v <= 37: st.fg = ANSI16[v - 30 + (8 if st.bold else 0)]
-            elif 90 <= v <= 97: st.fg = ANSI16[v - 90 + 8]
-            elif 40 <= v <= 47: st.bg = ANSI16[v - 40]
-            elif 100 <= v <= 107: st.bg = ANSI16[v - 100 + 8]
+            # colours 0-15 are kept as palette indices (ints); everything else as '#rrggbb'
+            elif 30 <= v <= 37: st.fg = v - 30 + (8 if st.bold else 0)
+            elif 90 <= v <= 97: st.fg = v - 90 + 8
+            elif 40 <= v <= 47: st.bg = v - 40
+            elif 100 <= v <= 107: st.bg = v - 100 + 8
             elif v == 39: st.fg = None
             elif v == 49: st.bg = None
             elif v in (38, 48):
                 col = None
                 if k + 2 < len(vals) and vals[k + 1] == 5:
-                    col = xterm_color(max(0, min(255, vals[k + 2])))
+                    n8 = max(0, min(255, vals[k + 2]))
+                    col = n8 if n8 < 16 else xterm_color(n8)
                     k += 2
                 elif k + 4 < len(vals) and vals[k + 1] == 2:
                     r, g, b = (max(0, min(255, x)) for x in vals[k + 2:k + 5])
@@ -566,6 +804,12 @@ def clean_settings(cfg):
     cfg["font_size"] = to_int(cfg.get("font_size"), 11, MIN_FONT, MAX_FONT)
     fam = cfg.get("font_family")
     cfg["font_family"] = fam.strip() if isinstance(fam, str) and fam.strip() and len(fam) < 100 else None
+    sk = cfg.get("skin")
+    cfg["skin"] = sk.strip()[:60] if isinstance(sk, str) and sk.strip() else DEFAULT_SKIN
+    so = cfg.get("skin_overrides")
+    cfg["skin_overrides"] = ({k: v for k, v in list(so.items())[:50]
+                              if isinstance(k, str) and len(k) < 60 and isinstance(v, dict)}
+                             if isinstance(so, dict) else {})
     for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True),
                        ("auto_reconnect", False), ("statbar", True)):
         if not isinstance(cfg.get(k), bool):
@@ -578,40 +822,51 @@ def clean_settings(cfg):
         cfg.pop("geometry", None)
     return cfg
 
-PANEL = "#1a1c21"
-DIM_FG = "#6f7a8a"
-ALERT_FG = "#e5c07b"
+# Plain-skin values, kept as module constants for callers/tests that want the defaults.
+PANEL = BUILTIN_SKINS[DEFAULT_SKIN]["panel"]
+DIM_FG = BUILTIN_SKINS[DEFAULT_SKIN]["dim"]
+ALERT_FG = BUILTIN_SKINS[DEFAULT_SKIN]["alert"]
 
 
 class StatBar(tk.Frame):
-    """HP bar plus compact chips, drawn from parse_prompt() results."""
+    """HP bar plus compact chips, drawn from parse_prompt() results and the current theme."""
     HP_W = 200
 
-    def __init__(self, master, font, bold):
-        super().__init__(master, bg=PANEL)
+    def __init__(self, master, font, bold, theme=None):
+        self.theme = theme or BUILTIN_SKINS[DEFAULT_SKIN]
+        super().__init__(master, bg=self.theme["panel"])
         self.font, self.bold = font, bold
         self.data = None
         self._pool, self._shown = [], None
-        self.canvas = tk.Canvas(self, width=self.HP_W, height=20, bg=PANEL, highlightthickness=0)
+        self.canvas = tk.Canvas(self, width=self.HP_W, height=20, bg=self.theme["panel"],
+                                highlightthickness=0)
         self.canvas.pack(side="left", padx=(8, 8), pady=3)
-        self.chips = tk.Frame(self, bg=PANEL)
+        self.chips = tk.Frame(self, bg=self.theme["panel"])
         self.chips.pack(side="left", fill="x")
 
+    def set_theme(self, theme):
+        self.theme = theme
+        self.configure(bg=theme["panel"])
+        self.canvas.configure(bg=theme["panel"])
+        self.chips.configure(bg=theme["panel"])
+        self._shown = None            # force the chips to be restyled
+        self.refresh()
+
     def specs(self):
-        """[(text, colour)] for the chips, in display order."""
-        d = self.data
+        """[(text, colour)] for the chips, in display order (before contrast adjustment)."""
+        d, th = self.data, self.theme
         out = []
         if not d:
             return out
         for label, n in d["counters"]:
-            out.append(("%s %d" % (label, n), ALERT_FG if n else DIM_FG))
+            out.append(("%s %d" % (label, n), th["alert"] if n else th["dim"]))
         for letter, n in d["cooldowns"]:
             # the game colours these green when ready and red while cooling down
-            out.append(("%s:%d" % (letter, n), ANSI16[9] if n > 0 else ANSI16[10]))
+            out.append(("%s:%d" % (letter, n), th["ansi"][9] if n > 0 else th["ansi"][10]))
         if d["facing"]:
-            out.append((d["facing"], FG))
+            out.append((d["facing"], th["fg"]))
         for t in d["tags"]:
-            out.append((t, ALERT_FG))
+            out.append((t, th["alert"]))
         return out
 
     def set_data(self, data):
@@ -619,6 +874,7 @@ class StatBar(tk.Frame):
         self.refresh()
 
     def refresh(self):
+        th = self.theme
         # HP bar
         c = self.canvas
         c.delete("all")
@@ -626,12 +882,12 @@ class StatBar(tk.Frame):
         txt = "%d/%d %s" % self.data["hp"] if self.data else ""
         w = max(self.HP_W, self.bold.measure(txt) + 28)      # grows with the font
         c.configure(height=h, width=w)
-        c.create_rectangle(0, 0, w - 1, h - 1, outline="#2a2d35", fill="#14161a")
+        c.create_rectangle(0, 0, w - 1, h - 1, outline=th["panel_edge"], fill=th["bg"])
         if self.data:
             cur, mx, _label = self.data["hp"]
             frac = 0.0 if mx <= 0 else max(0.0, min(1.0, cur / mx))
             c.create_rectangle(1, 1, 1 + int((w - 3) * frac), h - 2, outline="",
-                               fill=hp_color(cur, mx))
+                               fill=hp_color(cur, mx, th["ansi"]))
             # white text with a black outline stays legible over both the fill and the track
             for dx, dy in ((-1, -1), (-1, 1), (1, -1), (1, 1), (0, 1), (0, -1), (1, 0), (-1, 0)):
                 c.create_text(w // 2 + dx, h // 2 + dy, text=txt, fill="#000000", font=self.bold)
@@ -643,11 +899,12 @@ class StatBar(tk.Frame):
             return
         self._shown = key
         while len(self._pool) < len(specs):
-            self._pool.append(tk.Label(self.chips, bg=PANEL, font=self.font, padx=6))
+            self._pool.append(tk.Label(self.chips, bg=th["panel"], font=self.font, padx=6))
         for lbl in self._pool:
             lbl.pack_forget()
         for lbl, (text, fg) in zip(self._pool, specs):
-            lbl.configure(text=text, fg=fg, font=self.font)
+            lbl.configure(text=text, bg=th["panel"], font=self.font,
+                          fg=ensure_contrast(fg, th["panel"], th["min_contrast"]))
             lbl.pack(side="left")
 
 
@@ -785,23 +1042,32 @@ class App:
         self._line = ""               # unfinished last line of output (the prompt, usually)
         self._last_prompt = None
         self._mono = None
+        self._themed = []             # (widget, role) pairs restyled by apply_theme()
+        self._tag_keys = {}           # text-tag name -> raw style key (palette refs, not hex)
+        self._colors_win = None
+        self.skins = dict(BUILTIN_SKINS)
+        self.skins.update(load_user_skins())
+        self.theme = self._effective_theme()
 
         root.title("Duskholm")
-        root.configure(bg=BG)
+        root.configure(bg=self.theme["bg"])
         root.geometry(self.cfg.get("geometry", "1000x700"))
         self._build_fonts()
         self._build_widgets()
         self._build_menu()
+        self.apply_theme()
         root.protocol("WM_DELETE_WINDOW", self.on_quit)
         self.input.focus_set()
-        root.after(25, self._pump)
+        self._pump_job = root.after(25, self._pump)
+        root.bind("<Destroy>", self._on_root_destroy, add="+")
         self.system("Duskholm client. Type /help for local commands, or press Connect.")
 
     # ---- settings ----------------------------------------------------
     def _load_settings(self):
         cfg = {"host": DEFAULT_HOST, "port": TLS_PORT, "tls": True, "verify": True,
                "font_size": 11, "aliases": {}, "bell": True, "keepalive": True,
-               "auto_reconnect": False, "statbar": True, "font_family": None}
+               "auto_reconnect": False, "statbar": True, "font_family": None,
+               "skin": DEFAULT_SKIN, "skin_overrides": {}}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -841,56 +1107,98 @@ class App:
             self._mono = [f for f in names if self._is_mono(f)]
         return self._mono
 
-    def _build_fonts(self):
+    def _pick_family(self):
+        """The user's explicit font if valid, else the first installed monospace family the
+        current skin prefers, else the platform default."""
+        fams = set(tkfont.families())
         fam = self.cfg.get("font_family")
-        if not fam or fam not in set(tkfont.families()) or not self._is_mono(fam):
-            fam = self._default_family()    # missing, uninstalled or not monospace
-        self.cfg["font_family"] = fam
+        if fam and fam in fams and self._is_mono(fam):
+            return fam
+        for f in self.theme.get("fonts", []):
+            if f in fams and self._is_mono(f):
+                return f
+        return self._default_family()
+
+    def _build_fonts(self):
+        self.font_family = fam = self._pick_family()
         size = int(self.cfg.get("font_size", 11))
         self.f_norm = tkfont.Font(family=fam, size=size)
         self.f_bold = tkfont.Font(family=fam, size=size, weight="bold")
         self.f_ital = tkfont.Font(family=fam, size=size, slant="italic")
         self.f_bi = tkfont.Font(family=fam, size=size, weight="bold", slant="italic")
 
+    def _reg(self, widget, role):
+        """Register a widget so apply_theme() can restyle it."""
+        self._themed.append((widget, role))
+        return widget
+
+    def _role_options(self, role, th=None):
+        th = th or self.theme
+        flat = th["relief"] == "flat"
+        if role == "frame":
+            return dict(bg=th["bg"])
+        if role == "panel":
+            return dict(bg=th["panel"])
+        if role == "label":
+            return dict(bg=th["panel"], fg=th["fg"])
+        if role == "entry":
+            return dict(bg=th["input_bg"], fg=th["input_fg"], insertbackground=th["input_fg"],
+                        highlightbackground=th["panel_edge"], highlightcolor=th["select"],
+                        selectbackground=th["select"], selectforeground=th["input_fg"])
+        if role == "input":
+            o = self._role_options("entry", th)
+            o.update(relief="flat" if flat else "sunken", borderwidth=0 if flat else 2)
+            return o
+        if role == "check":
+            return dict(bg=th["panel"], fg=th["fg"], selectcolor=th["input_bg"],
+                        activebackground=th["panel"], activeforeground=th["fg"])
+        if role == "button":
+            return dict(bg=th["button_bg"], fg=th["button_fg"], activebackground=th["select"],
+                        activeforeground=th["button_fg"], relief=th["relief"],
+                        borderwidth=1 if flat else 2, highlightbackground=th["panel"])
+        if role == "text":
+            return dict(bg=th["bg"], fg=th["fg"], insertbackground=th["fg"],
+                        selectbackground=th["select"], selectforeground=th["fg"])
+        if role == "scroll":
+            return dict(bg=th["button_bg"], troughcolor=th["bg"], activebackground=th["panel_edge"])
+        if role == "list":
+            return dict(bg=th["bg"], fg=th["fg"], selectbackground=th["select"],
+                        selectforeground=th["fg"], highlightbackground=th["panel_edge"])
+        return {}
+
     def _build_widgets(self):
-        top = tk.Frame(self.root, bg="#1a1c21")
+        top = self._reg(tk.Frame(self.root), "panel")
         top.pack(fill="x")
-        lab = dict(bg="#1a1c21", fg=FG)
-        tk.Label(top, text="Host", **lab).pack(side="left", padx=(8, 2), pady=4)
+        self._reg(tk.Label(top, text="Host"), "label").pack(side="left", padx=(8, 2), pady=4)
         self.v_host = tk.StringVar(value=self.cfg["host"])
-        tk.Entry(top, textvariable=self.v_host, width=22).pack(side="left")
-        tk.Label(top, text="Port", **lab).pack(side="left", padx=(8, 2))
+        self._reg(tk.Entry(top, textvariable=self.v_host, width=22), "entry").pack(side="left")
+        self._reg(tk.Label(top, text="Port"), "label").pack(side="left", padx=(8, 2))
         self.v_port = tk.StringVar(value=str(self.cfg["port"]))
-        tk.Entry(top, textvariable=self.v_port, width=6).pack(side="left")
+        self._reg(tk.Entry(top, textvariable=self.v_port, width=6), "entry").pack(side="left")
         self.v_tls = tk.BooleanVar(value=self.cfg["tls"])
-        tk.Checkbutton(top, text="TLS", variable=self.v_tls, command=self._tls_toggled,
-                       bg="#1a1c21", fg=FG, selectcolor="#1a1c21", activebackground="#1a1c21",
-                       activeforeground=FG).pack(side="left", padx=6)
-        self.btn = tk.Button(top, text="Connect", width=10, command=self.toggle_connection)
+        self._reg(tk.Checkbutton(top, text="TLS", variable=self.v_tls, command=self._tls_toggled),
+                  "check").pack(side="left", padx=6)
+        self.btn = self._reg(tk.Button(top, text="Connect", width=10, command=self.toggle_connection),
+                             "button")
         self.btn.pack(side="left", padx=4)
-        self.status = tk.Label(top, text="Disconnected", anchor="e", **lab)
+        self.status = self._reg(tk.Label(top, text="Disconnected", anchor="e"), "label")
         self.status.pack(side="right", padx=8)
 
-        mid = tk.Frame(self.root, bg=BG)
+        mid = self._reg(tk.Frame(self.root), "frame")
         mid.pack(fill="both", expand=True)
         # height=4: the pane must REQUEST little and expand into what is left, otherwise at large
         # font sizes its default 24-row request squeezes the stat bar and input line off-screen.
-        self.out = tk.Text(mid, bg=BG, fg=FG, font=self.f_norm, wrap="word", state="disabled",
-                           height=4, width=40,
-                           insertbackground=FG, borderwidth=0, highlightthickness=0,
-                           padx=8, pady=4, cursor="arrow", selectbackground="#33466b")
-        sb = tk.Scrollbar(mid, command=self.out.yview)
+        self.out = self._reg(tk.Text(mid, font=self.f_norm, wrap="word", state="disabled",
+                                     height=4, width=40, borderwidth=0, highlightthickness=0,
+                                     padx=8, pady=4, cursor="arrow"), "text")
+        sb = self._reg(tk.Scrollbar(mid, command=self.out.yview), "scroll")
         self.out.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.out.pack(side="left", fill="both", expand=True)
-        self.out.tag_configure("echo", foreground=ECHO_FG)
-        self.out.tag_configure("system", foreground=SYSTEM_FG)
         self.out.bind("<KeyPress>", self._out_key)
         self.out.bind("<Control-MouseWheel>", self._zoom_wheel)
 
-        self.input = tk.Entry(self.root, bg="#1a1c21", fg="#e8e8e8", insertbackground="#e8e8e8",
-                              font=self.f_norm, relief="flat", highlightthickness=1,
-                              highlightbackground="#2a2d35", highlightcolor="#4a6fa5")
+        self.input = self._reg(tk.Entry(self.root, font=self.f_norm, highlightthickness=1), "input")
         self.input.pack(fill="x", padx=0, pady=0, ipady=5)
         self.input.bind("<Return>", self._on_enter)
         self.input.bind("<KP_Enter>", self._on_enter)
@@ -901,7 +1209,7 @@ class App:
         self.input.bind("<Escape>", lambda e: self.input.delete(0, "end"))
         self.input.bind("<<Paste>>", self._on_paste)
         self.input.bind("<Control-v>", self._on_paste)
-        self.statbar = StatBar(self.root, self.f_norm, self.f_bold)   # shown once a prompt is seen
+        self.statbar = StatBar(self.root, self.f_norm, self.f_bold, self.theme)  # shown after 1st prompt
         for w in (self.root,):
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
@@ -918,6 +1226,12 @@ class App:
         f.add_command(label="Quit", command=self.on_quit)
         m.add_cascade(label="File", menu=f)
         v = tk.Menu(m, tearoff=0)
+        self._view_menu = v
+        self.v_skin = tk.StringVar(value=self.cfg["skin"])
+        self._skin_menu = tk.Menu(v, tearoff=0)
+        v.add_cascade(label="Skin", menu=self._skin_menu)
+        self._rebuild_skin_menu()
+        v.add_command(label="Colours…", command=self.edit_colors)
         v.add_command(label="Font…", command=self.choose_font)
         self.v_statbar = tk.BooleanVar(value=self.cfg["statbar"])
         v.add_checkbutton(label="Stat bar", variable=self.v_statbar, command=self._statbar_toggled)
@@ -939,21 +1253,149 @@ class App:
         o.add_checkbutton(label="Auto-reconnect when disconnected", variable=self.v_auto,
                           command=self._auto_toggled)
         m.add_cascade(label="Options", menu=o)
+        self._menus = [m, f, v, o, self._skin_menu]
         self.root.config(menu=m)
 
     # ---- output ------------------------------------------------------
+    # ---- theme ----------------------------------------------------------
+    def _effective_theme(self):
+        """The selected skin with the user's saved edits applied (validated)."""
+        name = self.cfg.get("skin")
+        if name not in self.skins:
+            name = self.cfg["skin"] = DEFAULT_SKIN
+        base = self.skins[name]
+        return validate_theme(self.cfg["skin_overrides"].get(name) or {}, base)
+
+    def _color(self, c, default):
+        """Resolve a style colour: None -> default, int -> palette entry, '#rrggbb' -> itself."""
+        if c is None:
+            return default
+        if isinstance(c, int):
+            return self.theme["ansi"][c] if 0 <= c < 16 else default
+        return c
+
+    def _tag_colors(self, key):
+        fg_raw, bg_raw, _b, _i, _u, inv = key
+        th = self.theme
+        fg, bg = self._color(fg_raw, th["fg"]), self._color(bg_raw, th["bg"])
+        if inv:
+            fg, bg = bg, fg
+        return ensure_contrast(fg, bg, th["min_contrast"]), bg
+
     def _tag_for(self, key):
         fg, bg, bold, ital, ul, inv = key
-        if inv:
-            fg, bg = (bg or BG), (fg or FG)
-        name = "s%s|%s|%d%d%d" % (fg, bg, bold, ital, ul)
+        name = "s%r|%r|%d%d%d%d" % (fg, bg, bold, ital, ul, inv)
         if name not in self._tags:
-            font = {(0, 0): self.f_norm, (1, 0): self.f_bold,
-                    (0, 1): self.f_ital, (1, 1): self.f_bi}[(int(bold), int(ital))]
-            self.out.tag_configure(name, foreground=fg or FG, background=bg or BG,
-                                   underline=bool(ul), font=font)
+            self._tag_keys[name] = key
             self._tags.add(name)
+            self._style_tag(name)
         return name
+
+    def _style_tag(self, name):
+        key = self._tag_keys[name]
+        _fg, _bg, bold, ital, ul, _inv = key
+        font = {(0, 0): self.f_norm, (1, 0): self.f_bold,
+                (0, 1): self.f_ital, (1, 1): self.f_bi}[(int(bold), int(ital))]
+        fg, bg = self._tag_colors(key)
+        self.out.tag_configure(name, foreground=fg, background=bg, underline=bool(ul), font=font)
+
+    def _restyle_tags(self):
+        th = self.theme
+        for name in self._tags:
+            self._style_tag(name)
+        self.out.tag_configure("echo", foreground=ensure_contrast(th["echo"], th["bg"], th["min_contrast"]))
+        self.out.tag_configure("system", foreground=ensure_contrast(th["system"], th["bg"], th["min_contrast"]))
+
+    def apply_theme(self):
+        """Push self.theme into every widget, every text tag (so the scrollback recolours),
+        the stat bar and the menus."""
+        th = self.theme
+        self.root.configure(bg=th["bg"])
+        for w, role in self._themed:
+            try:
+                w.configure(**self._role_options(role))
+            except tk.TclError:
+                pass
+        for m in getattr(self, "_menus", []):
+            try:
+                m.configure(bg=th["panel"], fg=th["fg"], activebackground=th["select"],
+                            activeforeground=th["fg"])
+            except tk.TclError:
+                pass
+        self._restyle_tags()
+        # a skin may prefer a different font (unless the user has chosen one explicitly)
+        fam = self._pick_family()
+        if fam != self.font_family:
+            self.font_family = fam
+            for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
+                f.configure(family=fam)
+        self.statbar.set_theme(th)
+
+    def _rebuild_skin_menu(self):
+        m = self._skin_menu
+        m.delete(0, "end")
+        for name in self.skins:
+            m.add_radiobutton(label=name, value=name, variable=self.v_skin,
+                              command=lambda n=name: self.set_skin(n))
+
+    def set_skin(self, name):
+        if name not in self.skins:
+            return False
+        self.cfg["skin"] = name
+        self.v_skin.set(name)
+        self.theme = self._effective_theme()
+        self.apply_theme()
+        self._save_settings()
+        return True
+
+    def _set_override(self, path, value):
+        """Record a user edit of the current skin (stored as a difference from the skin)."""
+        name = self.cfg["skin"]
+        base = self.skins[name]
+        ov = copy.deepcopy(self.cfg["skin_overrides"].get(name) or {})
+        if path[0] == "ansi":
+            ansi = ov.get("ansi") if isinstance(ov.get("ansi"), dict) else {}
+            if value == base["ansi"][path[1]]:
+                ansi.pop(str(path[1]), None)
+            else:
+                ansi[str(path[1])] = value
+            if ansi:
+                ov["ansi"] = ansi
+            else:
+                ov.pop("ansi", None)
+        else:
+            if value == base[path[0]]:
+                ov.pop(path[0], None)
+            else:
+                ov[path[0]] = value
+        if ov:
+            self.cfg["skin_overrides"][name] = ov
+        else:
+            self.cfg["skin_overrides"].pop(name, None)
+        self.theme = self._effective_theme()
+        self.apply_theme()
+
+    def reset_skin_edits(self):
+        self.cfg["skin_overrides"].pop(self.cfg["skin"], None)
+        self.theme = self._effective_theme()
+        self.apply_theme()
+
+    def save_skin_as(self, name):
+        """Save the current look (skin + edits) as a user skin file and switch to it."""
+        name = "".join(ch for ch in (name or "") if ch.isprintable()).strip()[:40]
+        if not name or name in BUILTIN_SKINS:
+            return None
+        t = dict(self.theme)
+        t["name"] = name
+        try:
+            fp = save_user_skin(t)
+        except OSError:
+            return None
+        self.skins[name] = validate_theme(t)
+        self.cfg["skin_overrides"].pop(name, None)
+        self._rebuild_skin_menu()
+        self.set_skin(name)
+        return fp
 
     def _append(self, pieces):
         """pieces: [(text, tagname_or_None)]"""
@@ -1016,7 +1458,20 @@ class App:
         except Exception:  # noqa: BLE001
             traceback.print_exc()
         finally:
-            self.root.after(25, self._pump)
+            try:
+                self._pump_job = self.root.after(25, self._pump)
+            except tk.TclError:
+                pass                       # window already destroyed
+
+    def _on_root_destroy(self, e):
+        if e.widget is self.root:
+            for job in (self._pump_job, self._reconnect_job):
+                if job is not None:
+                    try:
+                        self.root.after_cancel(job)
+                    except tk.TclError:
+                        pass
+            self.conn.close()
 
     def _set_disconnected(self):
         self.connecting = self.connected = False
@@ -1352,16 +1807,20 @@ class App:
             return
         self.system("Logging to %s" % os.path.abspath(path))
 
-    def apply_font(self, family=None, size=None):
-        """Change the display font. Only installed monospace families are accepted."""
-        if family is not None:
+    def apply_font(self, family=None, size=None, use_skin_font=False):
+        """Change the display font. Only installed monospace families are accepted.
+        use_skin_font=True drops the explicit choice so the skin's preferred font applies."""
+        if use_skin_font:
+            self.cfg["font_family"] = None
+        elif family is not None:
             if family not in self.mono_families():
                 return False
             self.cfg["font_family"] = family
         if size is not None:
             self.cfg["font_size"] = max(MIN_FONT, min(MAX_FONT, int(size)))
+        self.font_family = self._pick_family()
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
-            f.configure(family=self.cfg["font_family"], size=self.cfg["font_size"])
+            f.configure(family=self.font_family, size=self.cfg["font_size"])
         self.statbar.refresh()
         self._save_settings()
         return True
@@ -1370,22 +1829,47 @@ class App:
         self.apply_font(size=int(self.cfg["font_size"]) + d)
         return "break"
 
+    def _theme_tree(self, w):
+        """Style a dialog (and everything in it) from the current theme. Widgets that carry
+        `_noskin` (colour swatches, previews) are left for their owner to colour."""
+        th = self.theme
+        cls = w.winfo_class()
+        if not getattr(w, "_noskin", False):
+            role = {"Frame": "panel", "Toplevel": "panel", "Labelframe": "panel", "Label": "label",
+                    "Button": "button", "Entry": "entry", "Spinbox": "entry", "Listbox": "list",
+                    "Text": "text", "Checkbutton": "check", "Menubutton": "button",
+                    "Scrollbar": "scroll"}.get(cls)
+            try:
+                if role:
+                    w.configure(**self._role_options(role))
+                if cls == "Scale":
+                    w.configure(bg=th["panel"], fg=th["fg"], troughcolor=th["input_bg"],
+                                highlightbackground=th["panel"], activebackground=th["select"])
+                elif cls == "Labelframe":
+                    w.configure(fg=th["fg"])
+                elif cls == "Spinbox":
+                    w.configure(buttonbackground=th["button_bg"])
+                elif cls == "Menubutton":
+                    w["menu"].configure(bg=th["panel"], fg=th["fg"], activebackground=th["select"],
+                                        activeforeground=th["fg"])
+            except tk.TclError:
+                pass
+        for c in w.winfo_children():
+            self._theme_tree(c)
+
     def choose_font(self):
         """Dialog: monospace families only, size, live preview."""
         top = tk.Toplevel(self.root)
         top.title("Font")
-        top.configure(bg=PANEL)
         top.transient(self.root)
         fams = self.mono_families()
-        cur_fam, cur_size = self.cfg["font_family"], int(self.cfg["font_size"])
+        cur_fam, cur_size = self.font_family, int(self.cfg["font_size"])
         pad = dict(padx=10, pady=(8, 0))
 
-        tk.Label(top, text="Monospace fonts installed on this computer", bg=PANEL, fg=FG).pack(
-            anchor="w", **pad)
-        box = tk.Frame(top, bg=PANEL)
+        tk.Label(top, text="Monospace fonts installed on this computer").pack(anchor="w", **pad)
+        box = tk.Frame(top)
         box.pack(fill="both", expand=True, padx=10, pady=4)
-        lb = tk.Listbox(box, height=12, width=34, exportselection=False, bg=BG, fg=FG,
-                        selectbackground="#33466b", highlightthickness=0)
+        lb = tk.Listbox(box, height=12, width=34, exportselection=False, highlightthickness=0)
         sc = tk.Scrollbar(box, command=lb.yview)
         lb.configure(yscrollcommand=sc.set)
         lb.pack(side="left", fill="both", expand=True)
@@ -1397,9 +1881,9 @@ class App:
             lb.selection_set(i)
             lb.see(i)
 
-        row = tk.Frame(top, bg=PANEL)
+        row = tk.Frame(top)
         row.pack(fill="x", padx=10, pady=4)
-        tk.Label(row, text="Size", bg=PANEL, fg=FG).pack(side="left")
+        tk.Label(row, text="Size").pack(side="left")
         v_size = tk.IntVar(value=cur_size)
         sp = tk.Spinbox(row, from_=MIN_FONT, to=MAX_FONT, width=4, textvariable=v_size)
         sp.pack(side="left", padx=6)
@@ -1407,8 +1891,8 @@ class App:
         prev_font = tkfont.Font(family=cur_fam, size=cur_size)
         preview = tk.Label(top, text='The quick brown fox: "Hello," she said. 0O 1lI\n'
                                      '[350/350DF 0ST 0WN 0LG M:0 K:0 ( )]',
-                           bg=BG, fg=FG, font=prev_font, justify="left", anchor="w",
-                           padx=8, pady=8)
+                           font=prev_font, justify="left", anchor="w", padx=8, pady=8)
+        preview._noskin = True
         preview.pack(fill="x", padx=10, pady=4)
 
         def chosen():
@@ -1432,13 +1916,198 @@ class App:
             self.apply_font(fam, size)
             top.destroy()
 
-        btns = tk.Frame(top, bg=PANEL)
+        def skin_font():
+            self.apply_font(size=chosen()[1], use_skin_font=True)
+            top.destroy()
+
+        btns = tk.Frame(top)
         btns.pack(fill="x", padx=10, pady=(4, 10))
         tk.Button(btns, text="OK", width=8, command=ok).pack(side="right")
         tk.Button(btns, text="Cancel", width=8, command=top.destroy).pack(side="right", padx=6)
+        tk.Button(btns, text="Use skin's font", command=skin_font).pack(side="left")
         top.bind("<Return>", lambda e: ok())
         top.bind("<Escape>", lambda e: top.destroy())
+        self._theme_tree(top)
+        preview.configure(bg=self.theme["bg"], fg=self.theme["fg"])
         top.focus_set()
+        return top
+
+    def edit_colors(self):
+        """Skin picker + palette / interface colour editor + contrast slider, applied live.
+        Cancel restores everything as it was when the dialog opened."""
+        if self._colors_win is not None:
+            try:
+                if self._colors_win.winfo_exists():
+                    self._colors_win.lift()
+                    return self._colors_win
+            except tk.TclError:
+                pass
+        snapshot = (self.cfg["skin"], copy.deepcopy(self.cfg["skin_overrides"]))
+        top = tk.Toplevel(self.root)
+        self._colors_win = top
+        top.title("Skin and colours")
+        top.transient(self.root)
+        swatches = {}
+        state = {"busy": False}
+
+        def readable(h):
+            return "#000000" if rel_luminance(h) > 0.35 else "#ffffff"
+
+        head = tk.Frame(top)
+        head.pack(fill="x", padx=10, pady=(10, 4))
+        tk.Label(head, text="Skin").pack(side="left")
+        var = tk.StringVar(value=self.cfg["skin"])
+        opt = tk.OptionMenu(head, var, *self.skins.keys(), command=lambda n: choose_skin(n))
+        opt.pack(side="left", padx=8)
+        blurb = tk.Label(head, anchor="w", justify="left")
+        blurb.pack(side="left", fill="x", expand=True)
+
+        body = tk.Frame(top)
+        body.pack(fill="both", expand=True, padx=10)
+        left = tk.LabelFrame(body, text=" Game palette (the 16 ANSI colours) ")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        for i in range(16):
+            b = tk.Button(left, text=ANSI_NAMES[i], width=14, command=lambda i=i: pick(("ansi", i)))
+            b._noskin = True
+            b.grid(row=i % 8, column=i // 8, padx=3, pady=2, sticky="ew")
+            swatches[("ansi", i)] = b
+        right = tk.LabelFrame(body, text=" Interface colours ")
+        right.grid(row=0, column=1, sticky="nsew")
+        for r, k in enumerate(COLOR_KEYS):
+            tk.Label(right, text=COLOR_LABELS[k], anchor="w", width=22).grid(
+                row=r, column=0, sticky="w", padx=4)
+            b = tk.Button(right, width=10, command=lambda k=k: pick(("key", k)))
+            b._noskin = True
+            b.grid(row=r, column=1, padx=3, pady=1)
+            swatches[("key", k)] = b
+
+        crow = tk.Frame(top)
+        crow.pack(fill="x", padx=10, pady=(8, 0))
+        tk.Label(crow, text="Minimum text contrast").pack(side="left")
+        scale = tk.Scale(crow, from_=1.0, to=7.0, resolution=0.1, orient="horizontal", length=240,
+                         command=lambda v: on_scale(v))
+        scale.pack(side="left", padx=8)
+        tk.Label(crow, justify="left", wraplength=360,
+                 text="1.0 shows the game's colours exactly as sent. Higher lifts any colour that "
+                      "is too dark (dark blues, black) until it is readable, keeping its hue."
+                 ).pack(side="left")
+
+        prev = tk.Text(top, height=9, width=84, borderwidth=0, state="disabled", wrap="word",
+                       highlightthickness=0, cursor="arrow")
+        prev._noskin = True
+        prev.pack(fill="x", padx=10, pady=8)
+        self._colors_prev = prev
+
+        def render_preview():
+            th = self.theme
+            prev.configure(state="normal", bg=th["bg"], fg=th["fg"])
+            prev.delete("1.0", "end")
+            n = [0]
+
+            def put(text, color):
+                tag = "t%d" % n[0]
+                n[0] += 1
+                prev.tag_configure(tag, foreground=color)
+                prev.insert("end", text, tag)
+
+            put("As shown (after contrast):  ", th["fg"])
+            for i in range(16):
+                put(" %s" % ANSI_NAMES[i].replace("Bright ", "+"),
+                    ensure_contrast(th["ansi"][i], th["bg"], th["min_contrast"]))
+            put("\nAs the game sends them:    ", th["fg"])
+            for i in range(16):
+                put(" %s" % ANSI_NAMES[i].replace("Bright ", "+"), th["ansi"][i])
+            put("\n\nHard cases, shown / as sent:  ", th["fg"])
+            for raw in ("#00005f", "#000087", "#000000", "#2472c8", "#303030", "#5f005f"):
+                put("  %s " % raw, ensure_contrast(raw, th["bg"], th["min_contrast"]))
+                put("(%s)" % raw, raw)
+            put("\n\nYou walk north.  ", th["fg"])
+            put("A cold wind carries a whisper.  ", ensure_contrast(th["system"], th["bg"], th["min_contrast"]))
+            put("> look", ensure_contrast(th["echo"], th["bg"], th["min_contrast"]))
+            prev.configure(state="disabled")
+
+        def refresh():
+            th = self.theme
+            self._theme_tree(top)
+            blurb.configure(text=th.get("blurb", ""))
+            for i in range(16):
+                c = th["ansi"][i]
+                swatches[("ansi", i)].configure(bg=c, fg=readable(c), activebackground=c,
+                                                activeforeground=readable(c))
+            for k in COLOR_KEYS:
+                c = th[k]
+                swatches[("key", k)].configure(bg=c, fg=readable(c), text=c, activebackground=c,
+                                               activeforeground=readable(c))
+            state["busy"] = True
+            if abs(float(scale.get()) - th["min_contrast"]) > 0.001:
+                scale.set(th["min_contrast"])
+            state["busy"] = False
+            var.set(self.cfg["skin"])
+            menu = opt["menu"]
+            menu.delete(0, "end")
+            for nm in self.skins:
+                menu.add_command(label=nm, command=lambda nm=nm: (var.set(nm), choose_skin(nm)))
+            render_preview()
+
+        def choose_skin(name):
+            self.set_skin(name)
+            refresh()
+
+        def pick(which):
+            cur = self.theme["ansi"][which[1]] if which[0] == "ansi" else self.theme[which[1]]
+            title = ANSI_NAMES[which[1]] if which[0] == "ansi" else COLOR_LABELS[which[1]]
+            res = colorchooser.askcolor(color=cur, parent=top, title=title)
+            col = res[1] if res else None
+            if isinstance(col, str) and _hex_ok(col.lower()):
+                self._set_override(("ansi", which[1]) if which[0] == "ansi" else (which[1],), col.lower())
+                refresh()
+
+        def on_scale(v):
+            if state["busy"]:
+                return
+            self._set_override(("min_contrast",), round(float(v), 1))
+            render_preview()
+            self._restyle_tags()
+            self.statbar.set_theme(self.theme)
+
+        def reset():
+            self.reset_skin_edits()
+            refresh()
+
+        def save_as():
+            name = simpledialog.askstring("Save skin", "Name for the new skin:", parent=top)
+            if name:
+                fp = self.save_skin_as(name)
+                if fp:
+                    self.system("Skin saved to %s" % fp)
+                else:
+                    self.system("Could not save that skin (name empty or reserved).")
+                refresh()
+
+        def done():
+            self._save_settings()
+            self._colors_win = None
+            top.destroy()
+
+        def cancel():
+            self.cfg["skin"], self.cfg["skin_overrides"] = snapshot[0], snapshot[1]
+            self.v_skin.set(snapshot[0])
+            self.theme = self._effective_theme()
+            self.apply_theme()
+            self._colors_win = None
+            top.destroy()
+
+        btns = tk.Frame(top)
+        btns.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(btns, text="Done", width=10, command=done).pack(side="right")
+        tk.Button(btns, text="Cancel changes", command=cancel).pack(side="right", padx=6)
+        tk.Button(btns, text="Save as new skin…", command=save_as).pack(side="left")
+        tk.Button(btns, text="Reset this skin", command=reset).pack(side="left", padx=6)
+        top.protocol("WM_DELETE_WINDOW", done)
+        top.bind("<Escape>", lambda e: cancel())
+        top._actions = dict(pick=pick, choose_skin=choose_skin, reset=reset, done=done,
+                            cancel=cancel, save_as=save_as, refresh=refresh, scale=scale)
+        refresh()
         return top
 
     def _zoom_wheel(self, e):

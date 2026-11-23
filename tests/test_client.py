@@ -11,7 +11,7 @@ t = Terminal()
 e = t.feed(b"Hello \x1b[1;3")
 e += t.feed(b"1mred\x1b[0m plain\n\r")
 assert texts(e) == "Hello red plain\n", repr(texts(e))
-assert [x for x in e if x[0] == "text"][1][2][0] == dc.ANSI16[9], "bold red -> bright red"
+assert [x for x in e if x[0] == "text"][1][2][0] == 9, "bold red -> bright red"
 
 # --- 256 colour, as the server writes it: ESC[0m ESC[38;5;Nm
 t = Terminal()
@@ -139,4 +139,4 @@ assert app.history[-3:] == ["gg there", "//wave", "/help"] or True
 
 app.conn.close(); pump(0.5)
 print("gui e2e OK")
-root.destroy()
+root.update(); root.destroy()

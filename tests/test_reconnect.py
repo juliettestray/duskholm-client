@@ -146,4 +146,4 @@ assert not app._retrying and app._reconnect_job is None
 assert dc.clean_settings({"auto_reconnect": "yes"})["auto_reconnect"] is False
 assert dc.clean_settings({"auto_reconnect": True})["auto_reconnect"] is True
 print("reconnect tests OK")
-root.destroy()
+root.update(); root.destroy()

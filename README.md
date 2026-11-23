@@ -42,6 +42,23 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Font** (View > Font…): pick any installed *monospace* family and a size (7–40) with a
   live preview; `Ctrl +/-` and `Ctrl+wheel` still zoom. The choice is saved. The input line
   and stat bar always stay on screen, even at large sizes.
+- **Skins and a user-adjustable palette** (View > Skin, View > Colours…). Five built in:
+  *Plain* (neutral dark, the default), *Plain Light*, *Moody* (violet-black, tarnished gold,
+  spectral teal), *Retro Phosphor* (green-screen CRT) and *Retro DOS* (16-colour VGA, blue
+  panels, chunky buttons). A skin sets every colour, the 16-colour game palette, button
+  style and a preferred monospace font (used unless you've picked a font yourself).
+  - **Edit anything live**: click any of the 16 game colours or 13 interface colours to
+    change it; the whole window, the stat bar and the *existing scrollback* recolour at once.
+    Edits are saved per skin; *Reset this skin* undoes them, *Cancel changes* restores how
+    things were when you opened the dialog.
+  - **Minimum text contrast** (1.0–7.0): any text colour too close to its background (dark
+    blues, "black" on black, near-black 256-colour shades) is lifted until it's readable,
+    keeping its hue. It applies to every colour the game can send, not just the 16. `1.0`
+    shows colours exactly as sent.
+  - **Your own skins**: *Save as new skin…* writes a small JSON file to
+    `~/.duskholm_skins/`; drop in files from others (or hand-write one) and they appear in the
+    Skin menu. Bad or oversized files are ignored.
+  - Windows draws the menu bar and scrollbar itself, so those keep the system look.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -71,6 +88,8 @@ python tests/test_hardening.py    # outgoing cleanup, passwords, cancel, stale e
 python tests/test_fuzz.py         # 41 adversarial parser checks (~10 s)
 python tests/test_reconnect.py    # auto-reconnect against a fake server that goes up and down
 python tests/test_statbar_fonts.py # prompt parsing, stat bar, font choice, layout at big sizes
+python tests/test_skins.py        # skins, palette edits, contrast, persistence, the colour dialog
+python tests/test_theme_pure.py   # adversarial checks on the colour maths and skin-file loading
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 
