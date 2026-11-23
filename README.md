@@ -13,7 +13,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 
 - **TLS or plain** connections, with a checkbox that swaps the stock ports.
 - **Password prompts**: when the server sends `WILL ECHO`, input is masked and
-  never echoed locally, saved to history, or written to the settings file.
+  never echoed locally, saved to history, or written to the settings file. (The game
+  forgets to send `WONT ECHO` after a brand-new account is created, so the mask is also
+  lifted once a real game prompt appears; nothing less certain ever lifts it.)
 - **MXP**: accepts the server's offer and renders `<color fore=#rrggbb>`,
   `</color>`, `<b>`, `<i>`, `<u>` and the `&lt; &gt; &amp;` entities. Other tags
   are ignored (their text still shows).
@@ -30,6 +32,16 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   game's login prompt (passwords are never stored). It does not retry after you disconnect
   yourself, after you send `quit` (the game closes the connection), when you press
   **Cancel retry**, or on a TLS certificate error, which retrying can't fix.
+- **Stat bar** (View menu, on by default). Reads the game's default prompt, e.g.
+  `[350/350DF 0ST 0WN 0LG M:0 K:0 ( )]`, and shows an HP bar (coloured in the game's own
+  80/60/40/20% bands), the labelled counters exactly as the game names them, the `M`/`K`
+  cooldowns (green when ready, red while cooling down), facing while fighting, and any
+  status tags such as `(Sprawled)`. It appears after the first prompt and disappears on
+  disconnect. The prompt line stays in the scrollback too. A prompt in a custom format that
+  doesn't match is simply ignored.
+- **Font** (View > Font…): pick any installed *monospace* family and a size (7–40) with a
+  live preview; `Ctrl +/-` and `Ctrl+wheel` still zoom. The choice is saved. The input line
+  and stat bar always stay on screen, even at large sizes.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -58,6 +70,7 @@ python tests/test_client.py       # parser assertions, then the GUI against a fa
 python tests/test_hardening.py    # outgoing cleanup, passwords, cancel, stale events, settings
 python tests/test_fuzz.py         # 41 adversarial parser checks (~10 s)
 python tests/test_reconnect.py    # auto-reconnect against a fake server that goes up and down
+python tests/test_statbar_fonts.py # prompt parsing, stat bar, font choice, layout at big sizes
 python tests/test_local_server.py # needs the local test server, skips otherwise
 ```
 

@@ -38,6 +38,7 @@ TLS_PORT = 3001
 SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".duskholm_client.json")
 MAX_SCROLLBACK_LINES = 20000
 KEEPALIVE_SECONDS = 120
+MIN_FONT, MAX_FONT = 7, 40
 RECONNECT_SECONDS = 30   # wait between automatic reconnect attempts
 QUIT_GRACE = 15          # a close this soon after the user sent "quit" is intentional
 
@@ -157,6 +158,55 @@ def entity_text(name):
         return "�"
     return chr(cp)
 ATTR_RE = re.compile(r'([A-Za-z]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
+
+
+# ---- prompt / stat bar ---------------------------------------------------------------
+# The game's default prompt template (src/act_info.c do_prompt) renders like
+#   [350/350DF 0ST 0WN 0LG M:0 K:0 ( )] (Sprawled)
+# i.e. current/max HP plus a label, "<n><LABEL>" counters, "<letter>:<n>" cooldowns
+# (M = move timer, K = attack timer), the facing/position in parentheses while fighting
+# (blank otherwise), then optional status tags. The labels are literal text in each
+# player's template, so they are shown exactly as the game prints them.
+_PROMPT_RE = re.compile(
+    r"\[(\d{1,9})/(\d{1,9})([A-Za-z]{1,4})"          # [350/350DF
+    r"((?: -?\d{1,9}[A-Za-z]{1,4})*)"                 #  0ST 0WN 0LG
+    r"((?: [A-Za-z]:-?\d{1,9})*)"                     #  M:0 K:0
+    r"(?: ?\(([^()]{0,40})\))?\]"                     #  ( )]
+    r"(.{0,200})$", re.S)
+_TAG_RE = re.compile(r"\(([^()]+)\)|\[([^\[\]]+)\]")
+
+
+def parse_prompt(line):
+    """Parse the last line of output as a game prompt. Returns None if it isn't one, else
+    {'hp': (cur, max, label), 'counters': [(label, n)], 'cooldowns': [(letter, n)],
+     'facing': str, 'tags': [str]}."""
+    for m in reversed([m.start() for m in re.finditer(r"\[\d", line)]):
+        pm = _PROMPT_RE.match(line, m)
+        if not pm:
+            continue
+        cur, mx, label, counters, cds, facing, tail = pm.groups()
+        return {
+            "hp": (int(cur), int(mx), label),
+            "counters": [(g[1], int(g[0])) for g in re.findall(r"(-?\d+)([A-Za-z]+)", counters)],
+            "cooldowns": [(c[0], int(c[2:])) for c in cds.split()],
+            "facing": (facing or "").strip(),
+            "tags": [(a or b).strip() for a, b in _TAG_RE.findall(tail or "") if (a or b).strip()],
+        }
+    return None
+
+
+def hp_color(cur, mx):
+    """Same bands the game's own %d prompt code uses for health."""
+    pct = 100 if mx <= 0 else (max(cur, 0) * 100) // mx
+    if pct >= 80:
+        return ANSI16[2]
+    if pct >= 60:
+        return ANSI16[3]
+    if pct >= 40:
+        return ANSI16[11]
+    if pct >= 20:
+        return ANSI16[1]
+    return ANSI16[9]
 
 
 class Style:
@@ -513,9 +563,11 @@ def clean_settings(cfg):
     cfg["host"] = cfg["host"].strip() if isinstance(cfg.get("host"), str) and cfg["host"].strip() \
         else DEFAULT_HOST
     cfg["port"] = to_int(cfg.get("port"), TLS_PORT, 1, 65535)
-    cfg["font_size"] = to_int(cfg.get("font_size"), 11, 7, 28)
+    cfg["font_size"] = to_int(cfg.get("font_size"), 11, MIN_FONT, MAX_FONT)
+    fam = cfg.get("font_family")
+    cfg["font_family"] = fam.strip() if isinstance(fam, str) and fam.strip() and len(fam) < 100 else None
     for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True),
-                       ("auto_reconnect", False)):
+                       ("auto_reconnect", False), ("statbar", True)):
         if not isinstance(cfg.get(k), bool):
             cfg[k] = default
     al = cfg.get("aliases")
@@ -525,6 +577,79 @@ def clean_settings(cfg):
                                                                 cfg.get("geometry", "")):
         cfg.pop("geometry", None)
     return cfg
+
+PANEL = "#1a1c21"
+DIM_FG = "#6f7a8a"
+ALERT_FG = "#e5c07b"
+
+
+class StatBar(tk.Frame):
+    """HP bar plus compact chips, drawn from parse_prompt() results."""
+    HP_W = 200
+
+    def __init__(self, master, font, bold):
+        super().__init__(master, bg=PANEL)
+        self.font, self.bold = font, bold
+        self.data = None
+        self._pool, self._shown = [], None
+        self.canvas = tk.Canvas(self, width=self.HP_W, height=20, bg=PANEL, highlightthickness=0)
+        self.canvas.pack(side="left", padx=(8, 8), pady=3)
+        self.chips = tk.Frame(self, bg=PANEL)
+        self.chips.pack(side="left", fill="x")
+
+    def specs(self):
+        """[(text, colour)] for the chips, in display order."""
+        d = self.data
+        out = []
+        if not d:
+            return out
+        for label, n in d["counters"]:
+            out.append(("%s %d" % (label, n), ALERT_FG if n else DIM_FG))
+        for letter, n in d["cooldowns"]:
+            # the game colours these green when ready and red while cooling down
+            out.append(("%s:%d" % (letter, n), ANSI16[9] if n > 0 else ANSI16[10]))
+        if d["facing"]:
+            out.append((d["facing"], FG))
+        for t in d["tags"]:
+            out.append((t, ALERT_FG))
+        return out
+
+    def set_data(self, data):
+        self.data = data
+        self.refresh()
+
+    def refresh(self):
+        # HP bar
+        c = self.canvas
+        c.delete("all")
+        h = self.font.metrics("linespace") + 6
+        txt = "%d/%d %s" % self.data["hp"] if self.data else ""
+        w = max(self.HP_W, self.bold.measure(txt) + 28)      # grows with the font
+        c.configure(height=h, width=w)
+        c.create_rectangle(0, 0, w - 1, h - 1, outline="#2a2d35", fill="#14161a")
+        if self.data:
+            cur, mx, _label = self.data["hp"]
+            frac = 0.0 if mx <= 0 else max(0.0, min(1.0, cur / mx))
+            c.create_rectangle(1, 1, 1 + int((w - 3) * frac), h - 2, outline="",
+                               fill=hp_color(cur, mx))
+            # white text with a black outline stays legible over both the fill and the track
+            for dx, dy in ((-1, -1), (-1, 1), (1, -1), (1, 1), (0, 1), (0, -1), (1, 0), (-1, 0)):
+                c.create_text(w // 2 + dx, h // 2 + dy, text=txt, fill="#000000", font=self.bold)
+            c.create_text(w // 2, h // 2, text=txt, fill="#ffffff", font=self.bold)
+        # chips (re-laid out only when something changed)
+        specs = self.specs()
+        key = (tuple(specs), id(self.font), self.font.actual("size"), self.font.actual("family"))
+        if key == self._shown:
+            return
+        self._shown = key
+        while len(self._pool) < len(specs):
+            self._pool.append(tk.Label(self.chips, bg=PANEL, font=self.font, padx=6))
+        for lbl in self._pool:
+            lbl.pack_forget()
+        for lbl, (text, fg) in zip(self._pool, specs):
+            lbl.configure(text=text, fg=fg, font=self.font)
+            lbl.pack(side="left")
+
 
 class Connection:
     """Socket owner. Reads on a thread, hands events to the GUI through a queue."""
@@ -657,6 +782,9 @@ class App:
         self._reconnect_job = None
         self._reconnect_at = 0.0
         self._quit_sent_at = 0.0      # when the user last sent "quit"
+        self._line = ""               # unfinished last line of output (the prompt, usually)
+        self._last_prompt = None
+        self._mono = None
 
         root.title("Duskholm")
         root.configure(bg=BG)
@@ -673,7 +801,7 @@ class App:
     def _load_settings(self):
         cfg = {"host": DEFAULT_HOST, "port": TLS_PORT, "tls": True, "verify": True,
                "font_size": 11, "aliases": {}, "bell": True, "keepalive": True,
-               "auto_reconnect": False}
+               "auto_reconnect": False, "statbar": True, "font_family": None}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -692,8 +820,32 @@ class App:
             pass
 
     # ---- ui ----------------------------------------------------------
+    def _default_family(self):
+        fams = set(tkfont.families())
+        for f in ("Consolas", "Cascadia Mono", "Courier New"):
+            if f in fams:
+                return f
+        return "Courier"
+
+    def _is_mono(self, fam):
+        try:
+            return bool(tkfont.Font(root=self.root, family=fam, size=10).metrics("fixed"))
+        except tk.TclError:
+            return False
+
+    def mono_families(self):
+        """Installed monospace families only (cached; built on first use)."""
+        if getattr(self, "_mono", None) is None:
+            names = sorted({f for f in tkfont.families(self.root) if not f.startswith("@")},
+                           key=str.lower)
+            self._mono = [f for f in names if self._is_mono(f)]
+        return self._mono
+
     def _build_fonts(self):
-        fam = "Consolas" if "Consolas" in tkfont.families() else "Courier New"
+        fam = self.cfg.get("font_family")
+        if not fam or fam not in set(tkfont.families()) or not self._is_mono(fam):
+            fam = self._default_family()    # missing, uninstalled or not monospace
+        self.cfg["font_family"] = fam
         size = int(self.cfg.get("font_size", 11))
         self.f_norm = tkfont.Font(family=fam, size=size)
         self.f_bold = tkfont.Font(family=fam, size=size, weight="bold")
@@ -721,7 +873,10 @@ class App:
 
         mid = tk.Frame(self.root, bg=BG)
         mid.pack(fill="both", expand=True)
+        # height=4: the pane must REQUEST little and expand into what is left, otherwise at large
+        # font sizes its default 24-row request squeezes the stat bar and input line off-screen.
         self.out = tk.Text(mid, bg=BG, fg=FG, font=self.f_norm, wrap="word", state="disabled",
+                           height=4, width=40,
                            insertbackground=FG, borderwidth=0, highlightthickness=0,
                            padx=8, pady=4, cursor="arrow", selectbackground="#33466b")
         sb = tk.Scrollbar(mid, command=self.out.yview)
@@ -746,6 +901,7 @@ class App:
         self.input.bind("<Escape>", lambda e: self.input.delete(0, "end"))
         self.input.bind("<<Paste>>", self._on_paste)
         self.input.bind("<Control-v>", self._on_paste)
+        self.statbar = StatBar(self.root, self.f_norm, self.f_bold)   # shown once a prompt is seen
         for w in (self.root,):
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
@@ -762,6 +918,10 @@ class App:
         f.add_command(label="Quit", command=self.on_quit)
         m.add_cascade(label="File", menu=f)
         v = tk.Menu(m, tearoff=0)
+        v.add_command(label="Font…", command=self.choose_font)
+        self.v_statbar = tk.BooleanVar(value=self.cfg["statbar"])
+        v.add_checkbutton(label="Stat bar", variable=self.v_statbar, command=self._statbar_toggled)
+        v.add_separator()
         v.add_command(label="Bigger font   Ctrl +", command=lambda: self._zoom(+1))
         v.add_command(label="Smaller font   Ctrl -", command=lambda: self._zoom(-1))
         m.add_cascade(label="View", menu=v)
@@ -860,6 +1020,8 @@ class App:
 
     def _set_disconnected(self):
         self.connecting = self.connected = False
+        self._line, self._last_prompt = "", None     # stale stats must not outlive the session
+        self._statbar_hide()
         self.input.configure(show="")
         self.btn.configure(text="Connect")
         self.status.configure(text="Disconnected")
@@ -895,12 +1057,53 @@ class App:
                 else:
                     self._schedule_reconnect("Disconnected unexpectedly.")
 
+    # ---- stat bar ----------------------------------------------------
+    def _track_prompt(self, text):
+        """Keep the unfinished last line; if it is a game prompt, update the stat bar."""
+        self._line += text
+        if "\n" in self._line:
+            self._line = self._line.rsplit("\n", 1)[1]
+        if len(self._line) > 2000:
+            self._line = self._line[-2000:]
+
+    def _update_statbar(self):
+        p = parse_prompt(self._line)
+        if p is None:
+            return
+        if self.term.echo_off:
+            # A game prompt proves we are in play, not at a password prompt. The server never
+            # sends WONT ECHO after new-account creation (comm.c state_confirm_new_account_password),
+            # which would otherwise leave input masked for the whole session. Only this positive
+            # evidence lifts the mask; guessing could leak a password into the log.
+            self.term.echo_off = False
+            self.input.configure(show="")
+        if p == self._last_prompt:
+            return
+        self._last_prompt = p
+        self.statbar.set_data(p)
+        self._statbar_show()
+
+    def _statbar_show(self):
+        if self.cfg.get("statbar") and self._last_prompt and not self.statbar.winfo_ismapped():
+            self.statbar.pack(fill="x", before=self.input)
+
+    def _statbar_hide(self):
+        self.statbar.pack_forget()
+
+    def _statbar_toggled(self):
+        self.cfg["statbar"] = self.v_statbar.get()
+        if self.cfg["statbar"]:
+            self._statbar_show()
+        else:
+            self._statbar_hide()
+
     def _on_data(self, data):
         pieces = []
         for ev in self.term.feed(data):
             k = ev[0]
             if k == "text":
                 pieces.append((ev[1], self._tag_for(ev[2])))
+                self._track_prompt(ev[1])
             elif k == "send":
                 self.conn.send(ev[1])
             elif k == "echo":
@@ -911,6 +1114,7 @@ class App:
                 self.root.bell()
         if pieces:
             self._append(pieces)
+            self._update_statbar()
 
     # ---- input -------------------------------------------------------
     def _on_enter(self, _e):
@@ -1148,12 +1352,94 @@ class App:
             return
         self.system("Logging to %s" % os.path.abspath(path))
 
-    def _zoom(self, d):
-        size = max(7, min(28, int(self.cfg["font_size"]) + d))
-        self.cfg["font_size"] = size
+    def apply_font(self, family=None, size=None):
+        """Change the display font. Only installed monospace families are accepted."""
+        if family is not None:
+            if family not in self.mono_families():
+                return False
+            self.cfg["font_family"] = family
+        if size is not None:
+            self.cfg["font_size"] = max(MIN_FONT, min(MAX_FONT, int(size)))
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
-            f.configure(size=size)
+            f.configure(family=self.cfg["font_family"], size=self.cfg["font_size"])
+        self.statbar.refresh()
+        self._save_settings()
+        return True
+
+    def _zoom(self, d):
+        self.apply_font(size=int(self.cfg["font_size"]) + d)
         return "break"
+
+    def choose_font(self):
+        """Dialog: monospace families only, size, live preview."""
+        top = tk.Toplevel(self.root)
+        top.title("Font")
+        top.configure(bg=PANEL)
+        top.transient(self.root)
+        fams = self.mono_families()
+        cur_fam, cur_size = self.cfg["font_family"], int(self.cfg["font_size"])
+        pad = dict(padx=10, pady=(8, 0))
+
+        tk.Label(top, text="Monospace fonts installed on this computer", bg=PANEL, fg=FG).pack(
+            anchor="w", **pad)
+        box = tk.Frame(top, bg=PANEL)
+        box.pack(fill="both", expand=True, padx=10, pady=4)
+        lb = tk.Listbox(box, height=12, width=34, exportselection=False, bg=BG, fg=FG,
+                        selectbackground="#33466b", highlightthickness=0)
+        sc = tk.Scrollbar(box, command=lb.yview)
+        lb.configure(yscrollcommand=sc.set)
+        lb.pack(side="left", fill="both", expand=True)
+        sc.pack(side="right", fill="y")
+        for f in fams:
+            lb.insert("end", f)
+        if cur_fam in fams:
+            i = fams.index(cur_fam)
+            lb.selection_set(i)
+            lb.see(i)
+
+        row = tk.Frame(top, bg=PANEL)
+        row.pack(fill="x", padx=10, pady=4)
+        tk.Label(row, text="Size", bg=PANEL, fg=FG).pack(side="left")
+        v_size = tk.IntVar(value=cur_size)
+        sp = tk.Spinbox(row, from_=MIN_FONT, to=MAX_FONT, width=4, textvariable=v_size)
+        sp.pack(side="left", padx=6)
+
+        prev_font = tkfont.Font(family=cur_fam, size=cur_size)
+        preview = tk.Label(top, text='The quick brown fox: "Hello," she said. 0O 1lI\n'
+                                     '[350/350DF 0ST 0WN 0LG M:0 K:0 ( )]',
+                           bg=BG, fg=FG, font=prev_font, justify="left", anchor="w",
+                           padx=8, pady=8)
+        preview.pack(fill="x", padx=10, pady=4)
+
+        def chosen():
+            sel = lb.curselection()
+            fam = fams[sel[0]] if sel else cur_fam
+            try:
+                size = max(MIN_FONT, min(MAX_FONT, int(v_size.get())))
+            except (tk.TclError, ValueError):
+                size = cur_size
+            return fam, size
+
+        def update_preview(*_):
+            fam, size = chosen()
+            prev_font.configure(family=fam, size=size)
+
+        lb.bind("<<ListboxSelect>>", update_preview)
+        v_size.trace_add("write", update_preview)
+
+        def ok():
+            fam, size = chosen()
+            self.apply_font(fam, size)
+            top.destroy()
+
+        btns = tk.Frame(top, bg=PANEL)
+        btns.pack(fill="x", padx=10, pady=(4, 10))
+        tk.Button(btns, text="OK", width=8, command=ok).pack(side="right")
+        tk.Button(btns, text="Cancel", width=8, command=top.destroy).pack(side="right", padx=6)
+        top.bind("<Return>", lambda e: ok())
+        top.bind("<Escape>", lambda e: top.destroy())
+        top.focus_set()
+        return top
 
     def _zoom_wheel(self, e):
         return self._zoom(+1 if e.delta > 0 else -1)

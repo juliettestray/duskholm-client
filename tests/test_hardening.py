@@ -18,7 +18,7 @@ assert all(" " <= c <= "~" for c in dc.sanitize_outgoing("éüñßﬁ")[0])
 # ---- clean_settings -----------------------------------------------------------------
 c = dc.clean_settings({"host": 5, "port": "abc", "font_size": 9999, "tls": "yes",
                        "aliases": {"ok": "look", "bad key": "x", 3: "y", "n": 4}, "geometry": "junk"})
-assert c["host"] == dc.DEFAULT_HOST and c["port"] == dc.TLS_PORT and c["font_size"] == 28
+assert c["host"] == dc.DEFAULT_HOST and c["port"] == dc.TLS_PORT and c["font_size"] == dc.MAX_FONT
 assert c["tls"] is True and c["aliases"] == {"ok": "look"} and "geometry" not in c
 assert dc.clean_settings({"aliases": ["nope"], "port": 99999})["port"] == 65535
 assert dc.clean_settings({"geometry": "800x600+10+20"})["geometry"] == "800x600+10+20"
