@@ -24,11 +24,15 @@ import json
 import os
 import queue
 import re
+import threading
+import urllib.parse
+import urllib.request
+import webbrowser
+import io
 import shutil
 import socket
 import ssl
 import sys
-import threading
 import time
 import traceback
 import unicodedata
@@ -868,6 +872,23 @@ class Terminal:
 # GUI
 # =========================================================================
 
+# Simple on/off options that appear in both Options menus: (key, default, menu label, DOS label, DOS hotkey)
+EXTRA_BOOLS = [
+    ("links", True, "Clickable links", "Clickable links", "L"),
+    ("link_images", True, "Open image links in a pane", "Image links open in a pane", "I"),
+    ("emoji", False, "Emoji: send and show :name: as emoji", "Emoji :name:", "E"),
+    ("connect_boxes", False, "Join ASCII boxes into solid lines", "Join ASCII boxes", "J"),
+    ("scroll_on_send", True, "Jump to the bottom when I send", "Jump to bottom on send", "S"),
+    ("show_echo", True, "Show the commands I send", "Show my commands", "M"),
+]
+# Options with a few named values: (key, default, values, menu label, DOS hotkey)
+EXTRA_CHOICES = [
+    ("bell_new", "off", ("off", "always", "unfocused", "scrolled"), "Beep on new output", "N"),
+]
+CHOICE_WORDS = {"off": "off", "always": "always", "unfocused": "when the window is not in front",
+                "scrolled": "when I am scrolled up or away"}
+
+
 def clean_settings(cfg):
     """A hand-edited or corrupt settings file must never stop the client from starting."""
     def to_int(v, default, lo, hi):
@@ -927,6 +948,12 @@ def clean_settings(cfg):
                        ("auto_reconnect", False), ("statbar", True), ("fullscreen", False),
                        ("dos_autofit", True), ("dos_flourish", True), ("dos_fit", True)):
         if not isinstance(cfg.get(k), bool):
+            cfg[k] = default
+    for k, default, _l, _d, _h in EXTRA_BOOLS:
+        if not isinstance(cfg.get(k), bool):
+            cfg[k] = default
+    for k, default, values, _l, _h in EXTRA_CHOICES:
+        if cfg.get(k) not in values:
             cfg[k] = default
     al = cfg.get("aliases")
     cfg["aliases"] = {k: v for k, v in al.items() if isinstance(k, str) and isinstance(v, str)
@@ -1431,6 +1458,8 @@ class App:
         self._quit_sent_at = 0.0      # when the user last sent "quit"
         self._line = ""               # unfinished last line of output (the prompt, usually)
         self._last_prompt = None
+        self._last_new_bell = 0.0
+        self._img_q = queue.Queue()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
         self._cd_job = None
         self._mono = None
@@ -1655,6 +1684,7 @@ class App:
         self._dosscroll = dosui.DosScrollbar(self._holder, self.out.yview, dosui.dos_colors(self.theme),
                                              self.f_norm)
         self.out.bind("<KeyPress>", self._out_key)
+        self._bind_links(self.out)
         self.out.bind("<Control-MouseWheel>", self._zoom_wheel)
         self._apply_spacing()
 
@@ -1741,8 +1771,22 @@ class App:
         self.v_hideprompt = tk.BooleanVar(value=self.cfg["hide_prompt"])
         o.add_checkbutton(label="Hide the prompt line (show it in the bar only)", variable=self.v_hideprompt,
                           command=lambda: self.cfg.update(hide_prompt=self.v_hideprompt.get()))
+        o.add_separator()
+        self._xvars = {}
+        for key, _d, label, _dl, _h in EXTRA_BOOLS:
+            self._xvars[key] = tk.BooleanVar(value=self.cfg[key])
+            o.add_checkbutton(label=label, variable=self._xvars[key],
+                              command=lambda k=key: self._set_extra(k, self._xvars[k].get()))
+        for key, _d, values, label, _h in EXTRA_CHOICES:
+            sub = tk.Menu(o, tearoff=0)
+            self._xvars[key] = tk.StringVar(value=self.cfg[key])
+            for val in values:
+                sub.add_radiobutton(label=CHOICE_WORDS.get(val, val), value=val, variable=self._xvars[key],
+                                    command=lambda k=key: self._set_extra(k, self._xvars[k].get()))
+            o.add_cascade(label=label, menu=sub)
+            self._extra_menus = getattr(self, "_extra_menus", []) + [sub]
         m.add_cascade(label="Options", menu=o)
-        self._menus = [m, f, v, o, self._skin_menu]
+        self._menus = [m, f, v, o, self._skin_menu] + getattr(self, "_extra_menus", [])
         self._menubar = m
         self.root.config(menu=m)
 
@@ -1791,6 +1835,137 @@ class App:
             self._style_tag(name)
         return name
 
+    # ---- links ---------------------------------------------------------------------------
+    _URL_RE = re.compile(r"https?://[^\s<>\"'`]+")
+    _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
+    @staticmethod
+    def find_urls(text):
+        """[(start, end)] of http(s) links in `text`, without trailing punctuation."""
+        out = []
+        for m in App._URL_RE.finditer(text):
+            url, end = m.group(), m.end()
+            while url and (url[-1] in ".,;:!?'\"" or (url[-1] == ")" and url.count("(") < url.count(")"))
+                           or (url[-1] == "]" and url.count("[") < url.count("]"))):
+                url, end = url[:-1], end - 1
+            if len(url) > len("https://") + 1:
+                out.append((m.start(), end))
+        return out
+
+    def _linkify(self, w, start):
+        """Tag every link in what was just added to a text widget (from index `start`)."""
+        try:
+            chunk = w.get(start, "end-1c")
+            for a, b in self.find_urls(chunk):
+                w.tag_add("link", "%s+%dc" % (start, a), "%s+%dc" % (start, b))
+        except tk.TclError:
+            pass
+
+    def _bind_links(self, w):
+        w.tag_bind("link", "<Enter>", lambda e, w=w: w.configure(cursor="hand2"))
+        w.tag_bind("link", "<Leave>", lambda e, w=w: w.configure(cursor="arrow"))
+        w.tag_bind("link", "<ButtonRelease-1>", lambda e, w=w: self._link_click(w, e))
+
+    def _link_click(self, w, e):
+        if not self.cfg.get("links", True) or w.tag_ranges("sel"):
+            return
+        try:
+            idx = w.index("@%d,%d" % (e.x, e.y))
+            r = w.tag_prevrange("link", idx + "+1c")
+            if not r or not (w.compare(r[0], "<=", idx) and w.compare(idx, "<", r[1])):
+                return
+            url = w.get(r[0], r[1])
+        except tk.TclError:
+            return
+        self.open_link(url)
+        return "break"
+
+    def open_link(self, url):
+        """A link was clicked: pictures open in the Images pane, everything else in the browser."""
+        parts = urllib.parse.urlparse(url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            return
+        if self.cfg.get("link_images", True) and parts.path.lower().endswith(self._IMAGE_EXT):
+            self._fetch_image(url)
+        else:
+            webbrowser.open(url)
+
+    MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+    def _fetch_image(self, url):
+        self.system("Fetching image...")
+        q = self._img_q
+
+        def work():
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Sanctuary-MUD-client"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                    data = r.read(self.MAX_IMAGE_BYTES + 1)
+                if not ctype.startswith("image/") or len(data) > self.MAX_IMAGE_BYTES:
+                    q.put((url, None, "not an image, or bigger than 8 MB"))
+                else:
+                    q.put((url, data, ""))
+            except Exception as e:                       # network trouble of any kind
+                q.put((url, None, type(e).__name__))
+
+        threading.Thread(target=work, daemon=True).start()
+        self._poll_images()
+
+    def _poll_images(self):
+        try:
+            url, data, why = self._img_q.get_nowait()
+        except queue.Empty:
+            if threading.active_count() > 1:
+                try:
+                    self.root.after(200, self._poll_images)
+                except tk.TclError:
+                    pass
+            return
+        if data is None:
+            self.system("Could not open image (%s); opening it in the browser." % why)
+            webbrowser.open(url)
+        elif not self.show_image(url, data):
+            self.system("This client cannot display that picture format; opening it in the browser.")
+            webbrowser.open(url)
+        self._poll_images()
+
+    def show_image(self, url, data):
+        """Display picture bytes in the Images pane. False when it cannot be decoded."""
+        pane = self.pane_ensure("Images")
+        if pane is None:
+            return False
+        text = pane["text"]
+        self.select_pane("images")
+        try:
+            self.root.update_idletasks()
+            maxw = max(160, text.winfo_width() - 24)
+            maxh = max(120, text.winfo_height() - 48)
+            photo = None
+            try:
+                from PIL import Image, ImageTk
+                im = Image.open(io.BytesIO(data))
+                if im.width * im.height > 40_000_000:
+                    return False
+                im.thumbnail((maxw, maxh))
+                photo = ImageTk.PhotoImage(im)
+            except ImportError:
+                import base64
+                photo = tk.PhotoImage(data=base64.b64encode(data))      # PNG / GIF only without Pillow
+                f = max(1, -(-photo.width() // maxw), -(-photo.height() // maxh))
+                if f > 1:
+                    photo = photo.subsample(f)
+        except Exception:
+            return False
+        pane["img"] = photo
+        text.configure(state="normal")
+        text.delete("1.0", "end")
+        text.insert("end", url[:200] + "\n", "system")
+        text.image_create("end", image=photo)
+        text.insert("end", "\n")
+        text.configure(state="disabled")
+        return True
+
     def _text_widgets(self):
         """The main text area and every pane's text area (they share one set of colour tags)."""
         return [self.out] + [p["text"] for p in self._panes.values()]
@@ -1811,6 +1986,9 @@ class App:
         for w in self._text_widgets():
             w.tag_configure("echo", foreground=ensure_contrast(th["echo"], th["bg"], th["min_contrast"]))
             w.tag_configure("system", foreground=ensure_contrast(th["system"], th["bg"], th["min_contrast"]))
+            w.tag_configure("link", underline=True,
+                            foreground=ensure_contrast(th["ansi"][12], th["bg"], th["min_contrast"]))
+            w.tag_raise("link")
         self._style_region_ui()
 
     def apply_theme(self):
@@ -1876,6 +2054,7 @@ class App:
         text.configure(yscrollcommand=lambda a, b, k=key: self._on_pane_scroll(k, a, b))
         text.bind("<Button-1>", lambda e: self.root.after_idle(self.input.focus_set), add="+")
         text.bind("<KeyPress>", self._out_key)
+        self._bind_links(text)
         self._panes[key] = pane
         for w, role in ((text, "text"), (sb, "scroll")):
             try:
@@ -1919,9 +2098,12 @@ class App:
         text = pane["text"]
         at_bottom = text.yview()[1] >= 0.999
         text.configure(state="normal")
+        first = text.index("end-1c")
         for t, k in pieces:
             text.insert("end", t, self._tag_for(k))
         text.insert("end", "\n")
+        if self.cfg.get("links", True):
+            self._linkify(text, first)
         pane["history"].append(pieces)
         over = len(pane["history"]) - d["max_lines"]
         if over > 0:
@@ -2490,6 +2672,10 @@ class App:
         return self._dos_menu("Skin", items, back=after)
 
     def _toggle_option(self, key):
+        if key in {k for k, *_ in EXTRA_BOOLS}:
+            self._set_extra(key, not self.cfg[key])
+            self.root.after_idle(self.dos_options_menu)
+            return
         new = not self.cfg[key]
         self.cfg[key] = new
         var = {"verify": "v_verify", "bell": "v_bell", "keepalive": "v_keep",
@@ -2514,7 +2700,28 @@ class App:
                 ("Dial / connect messages", "D", "dos_flourish")]
         items = [{"label": lbl, "hotkey": hk, "checked": bool(self.cfg[k]),
                   "action": (lambda k=k: self._toggle_option(k))} for lbl, hk, k in rows]
+        items += [{"label": dl, "hotkey": hk, "checked": bool(self.cfg[k]),
+                   "action": (lambda k=k: self._toggle_option(k))} for k, _d, _l, dl, hk in EXTRA_BOOLS]
+        for k, _d, values, label, hk in EXTRA_CHOICES:
+            items.append({"label": "%s: %s" % (label, self.cfg[k]), "hotkey": hk,
+                          "action": (lambda k=k, v=values: self._cycle_choice(k, v))})
         return self._dos_menu("Options", items)
+
+    def _cycle_choice(self, key, values):
+        cur = self.cfg[key]
+        self._set_extra(key, values[(values.index(cur) + 1) % len(values)] if cur in values else values[0])
+        self.root.after_idle(self.dos_options_menu)
+
+    def _set_extra(self, key, value):
+        """One of the EXTRA options changed (from either menu)."""
+        self.cfg[key] = value
+        var = getattr(self, "_xvars", {}).get(key)
+        if var is not None and var.get() != value:
+            var.set(value)
+        if key == "links" and not value:
+            for w in self._text_widgets():
+                w.tag_remove("link", "1.0", "end")
+        self._save_settings()
 
     def dos_connect_dialog(self):
         fields = [{"key": "host", "label": "Host", "type": "text", "value": self.v_host.get(), "width": 30},
@@ -3912,6 +4119,7 @@ class App:
             self._flush_partial()
         at_bottom = self.out.yview()[1] >= 0.999
         self.out.configure(state="normal")
+        first = self.out.index("end-1c")
         for text, tag in pieces:
             if tag:
                 self.out.insert("end", text, tag)
@@ -3922,6 +4130,8 @@ class App:
                     self.logfile.write(text)
                 except OSError:
                     pass
+        if self.cfg.get("links", True):
+            self._linkify(self.out, first)
         lines = int(self.out.index("end-1c").split(".")[0])
         if lines > MAX_SCROLLBACK_LINES:
             self.out.delete("1.0", "%d.0" % (lines - MAX_SCROLLBACK_LINES))
@@ -4143,6 +4353,20 @@ class App:
             self._flush_job = self.root.after(PARTIAL_FLUSH_MS, self._flush_partial)
         if had_text:
             self._update_statbar()
+            self._new_output_bell()
+
+    def _new_output_bell(self):
+        mode = self.cfg.get("bell_new", "off")
+        if mode == "off" or time.time() - self._last_new_bell < 2.0:
+            return
+        try:
+            front = self.root.focus_displayof() is not None
+            scrolled = self.out.yview()[1] < 0.999
+        except tk.TclError:
+            return
+        if mode == "always" or (mode == "unfocused" and not front) or (mode == "scrolled" and (scrolled or not front)):
+            self._last_new_bell = time.time()
+            self.root.bell()
 
     # ---- whole lines: triggers can act on a line before it is shown ----------------------
     def _feed_text(self, text, key):
@@ -4703,13 +4927,15 @@ class App:
                             % (dropped, "" if dropped == 1 else "s", "was" if dropped == 1 else "were"))
             if truncated:
                 self.system("Line cut to %d characters (the game's limit is about 6000)." % MAX_LINE)
-            if echo:
+            if echo and self.cfg.get("show_echo", True):
                 self._append([(clean + "\n", "echo")])
             # clean is printable ASCII, so no IAC (0xFF) can occur and no escaping is needed
             if not self.conn.send(clean.encode("ascii") + b"\r\n"):
                 self.system("Send failed.")
                 return
         self.last_send = time.time()
+        if self.cfg.get("scroll_on_send", True) and not secret:
+            self.out.see("end")
 
     def _expand(self, line):
         """Alias expansion: an alias is a first word that expands to one or more commands
