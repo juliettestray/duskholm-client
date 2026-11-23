@@ -94,6 +94,17 @@ ok, said = app.import_world_file(jp); assert ok and "not usable" in said[0], sai
 assert len(app.cfg["triggers"]) == n_t, "invalid triggers are dropped"
 assert not any(w["host"].startswith("-") for w in app.cfg["worlds"])
 
+# a BOM (Notepad) does not matter
+bom = os.path.join(home, "bom.snc")
+open(bom, "w", encoding="utf-8-sig").write(wf.dumps(wf.build(app.cfg, app._current_world(), ["triggers"])))
+assert app.import_world_file(bom)[0]
+app.cfg["panes_hidden"] = ["r2"]
+bundle2 = {"format": "sanctuary-world", "version": 1, "world": {"name": "L", "host": "l.example", "port": 5},
+           "panes": [{"name": "Z"}], "layout": {"regions": [{"side": "top", "size": 5, "panes": ["Z"]}]}}
+app.cfg["panes"], app.cfg["layout"] = [], {"regions": [], "min_main_cols": 80}
+json.dump(bundle2, open(os.path.join(home, "l.snc"), "w"))
+assert app.import_world_file(os.path.join(home, "l.snc"))[0] and app.cfg["panes_hidden"] == [], "folds are reset with a new layout"
+
 # the dialogs open in both looks; the commands work
 app._local("/export " + os.path.join(home, "viacmd.snc")); assert os.path.exists(os.path.join(home, "viacmd.snc"))
 app._local("/import " + os.path.join(home, "viacmd.snc")); app._local("/import " + os.path.join(home, "nope.snc"))

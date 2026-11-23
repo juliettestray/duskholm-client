@@ -344,7 +344,7 @@ class ToolsMixin:
         if problems:
             return False, problems[0]
         for c in cmds:
-            self.send_line(c)
+            self.send_line(c, expand=False)       # text lines must reach the game's editor untouched
         return True, "Sent %d lines." % len(cmds)
 
     def open_customize(self, values=None):

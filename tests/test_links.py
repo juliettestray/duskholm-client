@@ -96,6 +96,14 @@ app.open_link(base + "/other.png"); assert opened[-1] == base + "/other.png"
 app.open_link("javascript:alert(1)"); app.open_link("file:///c:/x.png"); app.open_link("ftp://a/b.png")
 assert not any(u.startswith(("javascript", "file", "ftp")) for u in opened)
 
+# the image poller stops once nothing is pending (it used to run for the whole session)
+assert app._img_pending == 0 and not app._img_polling
+# a link in colour text keeps its link look
+app._on_data(b"\x1b[31mred https://example.net/z\x1b[0m\n\r"); pump(0.3)
+j = app.out.search("https://example.net/z", "1.0"); names = app.out.tag_names(j)
+st = [n for n in names if n.startswith("s")]
+assert "link" in names and st and names.index("link") > names.index(st[0]), "link outranks the colour tag"
+
 # panes get links too
 app.pane_append("OOC", [("visit https://example.org/q please", (None, None, False, False, False, False))]); pump(0.2)
 assert app._panes["ooc"]["text"].tag_ranges("link")

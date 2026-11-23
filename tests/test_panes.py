@@ -162,6 +162,11 @@ app.toggle_region(rid); pump(0.3); assert rid in app.cfg["panes_hidden"]      # 
 app.toggle_region(rid); pump(0.3); assert rid not in app.cfg["panes_hidden"]
 c = sc.clean_settings({"host": "x", "panes_hidden": ["r1", 5, "x" * 50, None]}); assert c["panes_hidden"] == ["r1"]
 
+# review fixes: odd digits never raise; editing the layout clears folds
+assert app._panes_parse(["right ² OOC"])[0] is None
+app.cfg["panes_hidden"] = ["r2"]; app._panes_save(["top 4 OOC"]); assert app.cfg["panes_hidden"] == []
+app._extras_command("timer", "cancel ²")
+
 # removing every pane restores the plain arrangement
 for d in list(app.cfg["panes"]):
     app.pane_delete(d["name"])

@@ -92,6 +92,13 @@ assert top.winfo_exists()
 top.destroy(); app._cust_win = None
 bk = app._design_book_window(app.root, lambda dd: None); pump(0.2); bk.destroy()
 
+# review fixes: no alias expansion inside the editor text
+app.cfg["alias_rules"] = [{"name": "n", "enabled": True, "body": "north"}]
+sent.clear()
+app.send_customize({"item": "hat", "description": "n is for nothing\nsecond"})
+assert sent == ["customize hat description", "n is for nothing", "second", "@"], sent
+app.cfg["alias_rules"] = []
+
 # ---- settings are cleaned
 c = sc.clean_settings({"host": "x", "gradients": [{"name": "A", "colours": [1]}, "junk"], "designs": [{"name": "B", "type": "game"}, 5]})
 assert [g["name"] for g in c["gradients"]] == ["A"] and [d["name"] for d in c["designs"]] == ["B"]

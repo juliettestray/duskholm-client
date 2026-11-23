@@ -592,7 +592,7 @@ class ExtrasMixin:
                 self.system(self.list_timers())
             elif bits[0].lower() in ("cancel", "clear", "stop"):
                 n = bits[1].strip() if len(bits) > 1 else ""
-                self.system(self.cancel_timer(int(n) if n.isdigit() else None))
+                self.system(self.cancel_timer(int(n) if n.isascii() and n.isdigit() else None))
             else:
                 # '/timer game 21:30 label' / '/timer 10m label' : the label is whatever follows the time
                 m = re.match(r"^((?:game|et|eastern)\s+\S+(?:\s*[ap]m)?|at\s+\S+(?:\s*[ap]m)?|\S+)\s*(.*)$", arg, re.I)

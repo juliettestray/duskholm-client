@@ -1481,6 +1481,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         self._last_prompt = None
         self._last_new_bell = 0.0
         self._img_q = queue.Queue()
+        self._img_pending, self._img_polling = 0, False
         self._extras_init()
         self._tools_init()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
@@ -1956,6 +1957,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             except Exception as e:                       # network trouble of any kind
                 q.put((url, None, type(e).__name__))
 
+        self._img_pending += 1
         threading.Thread(target=work, daemon=True).start()
         self._poll_images()
 
@@ -1963,18 +1965,24 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         try:
             url, data, why = self._img_q.get_nowait()
         except queue.Empty:
-            if threading.active_count() > 1:
+            if self._img_pending > 0 and not self._img_polling:
+                self._img_polling = True
                 try:
-                    self.root.after(200, self._poll_images)
+                    self.root.after(200, self._poll_images_tick)
                 except tk.TclError:
-                    pass
+                    self._img_polling = False
             return
+        self._img_pending = max(0, self._img_pending - 1)
         if data is None:
             self.system("Could not open image (%s); opening it in the browser." % why)
             webbrowser.open(url)
         elif not self.show_image(url, data):
             self.system("This client cannot display that picture format; opening it in the browser.")
             webbrowser.open(url)
+        self._poll_images()
+
+    def _poll_images_tick(self):
+        self._img_polling = False
         self._poll_images()
 
     def show_image(self, url, data):
@@ -2025,6 +2033,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         fg, bg = self._tag_colors(key)
         for w in self._text_widgets():
             w.tag_configure(name, foreground=fg, background=bg, underline=bool(ul), font=font)
+            w.tag_raise("link")
 
     def _restyle_tags(self):
         th = self.theme
@@ -3670,7 +3679,7 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             side = parts[0].lower()
             if side not in layout.SIDES:
                 return None, [], "Line %d: the side must be top, bottom, left or right." % (n + 1)
-            if len(parts) < 2 or not parts[1].isdigit():
+            if len(parts) < 2 or not (parts[1].isascii() and parts[1].isdigit()):
                 return None, [], "Line %d: put a size (a number) after the side." % (n + 1)
             names = []
             for nm in (parts[2].split(",") if len(parts) > 2 else []):
@@ -3703,6 +3712,8 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
             return False, msg
         self.cfg["panes"] = defs
         self.cfg["layout"] = lay
+        self.cfg["panes_hidden"] = []                 # area ids are renumbered, so old folds no longer apply
+        self._region_active = {}
         for d in defs:
             if d["name"].lower() in self._panes or layout.find_region(lay, d["name"]):
                 self.pane_ensure(d["name"])
@@ -4351,6 +4362,10 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
                         self.root.after_cancel(job)
                     except tk.TclError:
                         pass
+            try:
+                self.save_notes()                      # notes typed in the last moments
+            except Exception:
+                pass
             self.conn.close()
 
     def _set_disconnected(self):
@@ -4872,14 +4887,18 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         try:
             if os.path.getsize(path) > worldfile.MAX_BYTES:
                 return False, ["That file is too big to be a world file."]
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8-sig") as f:
                 text = f.read(worldfile.MAX_BYTES + 1)
         except (OSError, UnicodeError) as e:
             return False, ["Could not read that file: %s" % (getattr(e, "strerror", None) or type(e).__name__)]
         bundle, why = worldfile.loads(text)
         if bundle is None:
             return False, [why]
+        old_layout = self.cfg.get("layout")
         said = worldfile.merge(self.cfg, bundle, self._world_tools())
+        if self.cfg.get("layout") != old_layout:
+            self.cfg["panes_hidden"] = []
+            self._region_active = {}
         self._save_settings()
         if layout is not None:
             self.layout_panes()
@@ -5197,13 +5216,13 @@ class App(extras.ExtrasMixin, toolsui.ToolsMixin):
         self.input.insert("insert", clean)
         return "break"
 
-    def send_line(self, line, echo=True, secret=False):
+    def send_line(self, line, echo=True, secret=False, expand=True):
         """secret=True (password prompt): no alias expansion, no local echo, and nothing
         about the content ever appears in a message."""
         if not self.connected:
             self.system("Not connected.")
             return
-        parts = [line] if secret else self._expand(line)
+        parts = [line] if (secret or not expand) else self._expand(line)
         if self.cfg.get("emoji") and emojis is not None and not secret:
             parts = [emojis.shorten(p) for p in parts]
         for part in parts:
