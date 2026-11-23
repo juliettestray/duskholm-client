@@ -152,7 +152,13 @@ conns[-1].close(); pump(0.8)
 
 # ---------------- help and exit ---------------------------------------------------------------------------------
 key(app.input, "F1"); h = overlay(); assert h is not None
-key(h, "Return"); assert overlay() is None
+ht = app.help_text()
+assert "Alt-M" in ht and "The moon" in ht and "F10" in ht and "Main menu" in ht
+assert not any("Alt-M" in l and "enu" in l.split("Alt-M")[1][:14] for l in ht.splitlines()), "Alt-M is the moon, not the menu"
+key(h, "Escape"); pump(0.2); assert overlay() is None, "Esc closes the help"
+app.dos_help(); h = overlay(); key(h, "Return"); pump(0.5)
+h2 = overlay(); assert h2 is not None and h2 is not h, "the first button goes to the commands page"
+key(h2, "Escape"); pump(0.2); assert overlay() is None
 quit_calls = []
 app.on_quit = lambda: quit_calls.append(1)
 key(app.input, "x", state=0x20000)                                    # Alt-x (Windows Alt mask)
@@ -198,6 +204,20 @@ assert int(app.out.cget("width")) * app.f_norm.measure("0") <= app._holder.winfo
 
 # ---------------- restart restores the DOS look --------------------------------------------------------------------------
 app._save_settings()
+# the Options menu keeps your place when you flip a setting (it used to jump back to the top)
+if not app.dos:
+    app.set_dos_mode(True); pump(0.5)
+app.dos_options_menu(); pump(0.3)
+m = overlay(); assert m.selected == 0
+m.select(5); pump(0.1)
+want = m.selected
+key(m, "Return"); pump(0.5)
+m2 = overlay(); assert m2 is not None and m2.selected == want, (m2 and m2.selected, want)
+for _ in range(2):
+    m2.select(len(m2._items) - 3); want = m2.selected; key(m2, "Return"); pump(0.5)
+    m2 = overlay(); assert m2.selected == want, (m2.selected, want)
+key(m2, "Escape"); pump(0.2)
+
 root.update(); root.destroy()
 root = tk.Tk(); app = dc.App(root); pump(0.5)
 assert app.dos and app.theme["name"] == "Retro DOS" and app.cfg["skin"] == "Moody" and app._dos_job is not None

@@ -203,7 +203,7 @@ def wait(cond, secs=10):
 
 
 txt = lambda: app.out.get("1.0", "end")
-assert "1.0.0" in app.about_text() and "Valicene" in app.about_text() and "Claude" in app.about_text()
+assert version.__version__ in app.about_text() and "Valicene" in app.about_text() and "Claude" in app.about_text()
 assert "retro-friendly" in app.about_text()
 app._upd_api, app._upd_local = API, True
 setup(make_zip(None), tag="v0.0.9")

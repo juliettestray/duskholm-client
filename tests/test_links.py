@@ -149,6 +149,19 @@ scrolled_before = len(beeps)
 app.out.yview_moveto(0.0); pump(0.1); app._last_new_bell = 0
 app._on_data(b"w\n\r"); assert len(beeps) == scrolled_before + 1 or app.out.yview()[1] >= 0.99
 
+# beep only when Sanctuary is not the window in front
+assert sc.EXTRA_CHOICES[0][2] == ("off", "unfocused", "scrolled", "always"), "the menu order starts with the useful one"
+app.out.yview_moveto(1.0); pump(0.1)
+app.cfg["bell_new"] = "unfocused"; beeps.clear()
+app._window_active = lambda: True; app._last_new_bell = 0; app._on_data(b"focused\n\r")
+assert beeps == [], "no beep while you are looking at it"
+app._window_active = lambda: False; app._last_new_bell = 0; app._on_data(b"away\n\r")
+assert len(beeps) == 1, "a beep when you are in another program"
+app._window_active = lambda: False; app.cfg["bell_new"] = "off"; app._last_new_bell = 0; app._on_data(b"off\n\r")
+assert len(beeps) == 1
+del app._window_active
+assert isinstance(app._window_active(), bool)
+
 # options are cleaned from a hand-edited file
 c = sc.clean_settings({"host": "x", "links": "yes", "bell_new": "loud", "emoji": 1})
 assert c["links"] is True and c["bell_new"] == "off" and c["emoji"] is False

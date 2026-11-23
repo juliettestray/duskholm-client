@@ -903,7 +903,7 @@ EXTRA_BOOLS = [
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
-    ("bell_new", "off", ("off", "always", "unfocused", "scrolled"), "Beep on new output", "N"),
+    ("bell_new", "off", ("off", "unfocused", "scrolled", "always"), "Beep on new output", "N"),
     ("clock", "off", ("off", "real", "game"), "Clock", "C"),
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
 ]
@@ -1771,6 +1771,7 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
                 w.bind("<Alt-Key-%d>" % n, lambda e, n=n: (self.toggle_pane_area(n), "break")[1])
             w.bind("<Alt-Return>", self.toggle_fullscreen)
             w.bind("<F12>", lambda e: (self.open_about(), "break")[1])
+            w.bind("<F1>", lambda e: (self.open_help(), "break")[1] if not self.dos else None)
             w.bind("<Configure>", self._on_configure, add="+")
             w.bind("<Control-plus>", lambda e: self._zoom(+1))
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
@@ -1798,6 +1799,7 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         f.add_command(label="Export world settings...", command=self.open_export)
         f.add_command(label="Import world settings...", command=self.open_import)
         f.add_command(label="Hotkeys...", command=self.open_hotkeys)
+        f.add_command(label="Help   F1", command=self.open_help)
         f.add_command(label="Check for updates...", command=self.check_for_updates)
         f.add_command(label="About...   F12", command=self.open_about)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
@@ -2821,9 +2823,9 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             return
         try:
             up = self.connected or self.connecting
-            bar.set_hints([("F1", "Help"), ("F2", "Hangup" if up else "Dial"), ("F3", "Log"),
-                           ("F5", "Skin"), ("F6", "Colours"), ("F7", "Font"), ("F10", "Menu"),
-                           ("F11", "Full"), ("F12", "About"), ("^W", "Worlds")],
+            bar.set_hints([("F1", "Help", 8), ("F2", "Hangup" if up else "Dial", 7), ("F3", "Log", 3),
+                           ("F5", "Skin", 4), ("F6", "Colours", 5), ("F7", "Font", 5), ("F10", "Menu", 9),
+                           ("F11", "Full", 6), ("F12", "About", 2), ("^W", "Worlds", 1)],
                            right="Alt-D Normal  Alt-X Exit")
             cw = max(1, self.f_norm.measure("0"))
             cols = int(bar.winfo_width() / cw) if bar.winfo_width() > 100 else int(self.cfg["dos_cols"])
@@ -2930,10 +2932,10 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
                   "action": (lambda n=name: pick(n))} for i, name in enumerate(self.skins)]
         return self._dos_menu("Skin", items, back=after)
 
-    def _toggle_option(self, key):
+    def _toggle_option(self, key, index=0):
         if key in {k for k, *_ in EXTRA_BOOLS}:
             self._set_extra(key, not self.cfg[key])
-            self.root.after_idle(self.dos_options_menu)
+            self.root.after_idle(lambda: self.dos_options_menu(initial=index))
             return
         new = not self.cfg[key]
         self.cfg[key] = new
@@ -2946,9 +2948,9 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
         elif key in ("dos_autofit", "dos_fit"):
             self._fit_font()
         self._save_settings()
-        self.root.after_idle(self.dos_options_menu)     # stay in the menu to flip several
+        self.root.after_idle(lambda: self.dos_options_menu(initial=index))     # stay in the menu to flip several
 
-    def dos_options_menu(self):
+    def dos_options_menu(self, initial=0):
         if not self.dos or self._overlay_open():
             return None
         rows = [("Verify TLS certificate", "V", "verify"), ("Beep on server bell", "B", "bell"),
@@ -2957,19 +2959,25 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
                 ("Hide prompt line (bar only)", "H", "hide_prompt"),
                 ("Screen width follows window", "W", "dos_fit"),
                 ("Dial / connect messages", "D", "dos_flourish")]
-        items = [{"label": lbl, "hotkey": hk, "checked": bool(self.cfg[k]),
-                  "action": (lambda k=k: self._toggle_option(k))} for lbl, hk, k in rows]
-        items += [{"label": dl, "hotkey": hk, "checked": bool(self.cfg[k]),
-                   "action": (lambda k=k: self._toggle_option(k))} for k, _d, _l, dl, hk in EXTRA_BOOLS]
+        items = []
+        for lbl, hk, k in rows:
+            i = len(items)
+            items.append({"label": lbl, "hotkey": hk, "checked": bool(self.cfg[k]),
+                          "action": (lambda k=k, i=i: self._toggle_option(k, i))})
+        for k, _d, _l, dl, hk in EXTRA_BOOLS:
+            i = len(items)
+            items.append({"label": dl, "hotkey": hk, "checked": bool(self.cfg[k]),
+                          "action": (lambda k=k, i=i: self._toggle_option(k, i))})
         for k, _d, values, label, hk in EXTRA_CHOICES:
-            items.append({"label": "%s: %s" % (label, self.cfg[k]), "hotkey": hk,
-                          "action": (lambda k=k, v=values: self._cycle_choice(k, v))})
-        return self._dos_menu("Options", items)
+            i = len(items)
+            items.append({"label": "%s: %s" % (label, CHOICE_WORDS.get(self.cfg[k], self.cfg[k])), "hotkey": hk,
+                          "action": (lambda k=k, v=values, i=i: self._cycle_choice(k, v, i))})
+        return self._dos_menu("Options", items, initial=initial)
 
-    def _cycle_choice(self, key, values):
+    def _cycle_choice(self, key, values, index=0):
         cur = self.cfg[key]
         self._set_extra(key, values[(values.index(cur) + 1) % len(values)] if cur in values else values[0])
-        self.root.after_idle(self.dos_options_menu)
+        self.root.after_idle(lambda: self.dos_options_menu(initial=index))
 
     def _set_extra(self, key, value):
         """One of the EXTRA options changed (from either menu)."""
@@ -3023,16 +3031,82 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
                 self.toggle_connection()
         self.update_dosbar()
 
-    def dos_help(self):
-        text = ("F1   This help              F2   Connect / Disconnect\n"
-                "F3   Log to file            F5   Skins\n"
-                "F6   Colours                F7   Font\n"
-                "F10  Menu (also Alt-M)      F11  Full screen (also Alt-Enter)\n"
-                "Alt-D  Normal look          Alt-X  Exit\n"
-                "PgUp/PgDn  Scroll back      Up/Down  Command history\n"
-                "Ctrl-L  Clear screen        Ctrl +/-  Font size\n"
-                "\n/help lists the client's own commands.")
-        self._overlay = dosui.show_message(self.root, "Help", text, self._dc(), self.f_norm)
+    def help_key_lines(self):
+        """[(keys, what it does)] built from the real key table, so it can never go stale."""
+        fixed = [("F1", "This help"), ("F2", "Connect / disconnect"), ("F3", "Log to file"), ("F5", "Skin"),
+                 ("F6", "Colours"), ("F7", "Font"), ("F10", "Main menu"), ("F11", "Full screen"),
+                 ("F12", "About"), ("Alt-X", "Exit"), ("PgUp / PgDn", "Scroll back"),
+                 ("Up / Down", "Command history"), ("Ctrl-L", "Clear the screen"), ("Ctrl +/-", "Font size"),
+                 ("Ctrl-1..9", "Show a pane's tab"), ("Alt-1..9", "Fold a pane area"), ("Alt-0", "Fold all areas")]
+        titles = {"worlds": "Worlds", "triggers": "Triggers", "aliases": "Aliases", "panes": "Panes",
+                  "moon": "The moon", "notepad": "Notepad", "timers": "Timer", "dos_toggle": "DOS look",
+                  "gradient": "Gradient maker", "hex": "Hex to xterm", "customize": "Customize form"}
+        changeable = [(shown, titles[a]) for a, _t, shown in self.hotkey_table() if a in titles]
+        out = fixed + changeable
+        if self.sr_on():
+            out += [(shown, t) for a, t, shown in self.hotkey_table() if a.startswith("sr_")]
+        return out
+
+    HELP_COMMANDS = (
+        ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
+        ("/triggers  /alias", "triggers and aliases (/alias name body, /unalias, /aliases)"),
+        ("/timer 10m [label]", "a timer; also 21:30, game 21:30, list, cancel [n]"),
+        ("/moon  /notes", "the moon window; the notepad"),
+        ("/hex ff8800", "nearest xterm colour;  /gradient [text]  /customize"),
+        ("/export  /import", "world settings files (.snc)"),
+        ("/update", "check for a newer Sanctuary"),
+        ("/sr on|off|help", "screen reader mode;  /hotkeys changes keys"),
+        ("/log [file]  /clear", "logging; clear the screen"),
+        ("//text", "send '/text' to the game"),
+    )
+
+    def help_text(self):
+        lines = ["Keys"]
+        lines += ["  %-14s %s" % kv for kv in self.help_key_lines()]
+        lines += ["", "Commands (type them in the input line)"]
+        lines += ["  %-22s %s" % kv for kv in self.HELP_COMMANDS]
+        return "\n".join(lines)
+
+    def open_help(self):
+        if self.dos:
+            return self.dos_help()
+        top = tk.Toplevel(self.root)
+        top.title("Help")
+        top.transient(self.root)
+        txt = tk.Text(top, width=88, height=34, wrap="none", font=self.f_norm)
+        sb = tk.Scrollbar(top, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(fill="both", expand=True)
+        txt.insert("1.0", self.help_text())
+        txt.configure(state="disabled")
+        top.bind("<Escape>", lambda e: top.destroy())
+        self._theme_tree(top)
+        txt.focus_set()
+        return top
+
+    def dos_help(self, page=1):
+        if self._overlay_open():
+            return None
+        if page == 1:
+            keys = self.help_key_lines()
+            half = (len(keys) + 1) // 2
+            left, right = keys[:half], keys[half:]
+            rows = []
+            for i in range(half):
+                a = "%-11s %-24s" % left[i] if i < len(left) else ""
+                b = "%-11s %s" % right[i] if i < len(right) else ""
+                rows.append((a + " " + b).rstrip())
+            text, buttons = "\n".join(rows), [("Commands", "more"), ("Close", "close")]
+        else:
+            text = "\n".join("%-22s %s" % kv for kv in self.HELP_COMMANDS)
+            buttons = [("Keys", "more"), ("Close", "close")]
+
+        def result(res, _v):
+            if res == "more":
+                self._reopen(self.dos_help, 2 if page == 1 else 1)
+        self._overlay = dosui.show_message(self.root, "Help: keys" if page == 1 else "Help: commands", text,
+                                           self._dc(), self.f_norm, buttons=buttons, on_result=result)
         return self._overlay
 
     def dos_confirm_quit(self):
@@ -4649,12 +4723,28 @@ class App(updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.A
             self._update_statbar()
             self._new_output_bell()
 
+    def _window_active(self):
+        """True while one of Sanctuary's windows is the one in front. (Tk keeps reporting a focused
+        widget after you switch to another program, so on Windows ask the system instead.)"""
+        if sys.platform.startswith("win"):
+            try:
+                import ctypes
+                from ctypes import wintypes
+                u = ctypes.windll.user32
+                fg = u.GetForegroundWindow()
+                pid = wintypes.DWORD(0)
+                u.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+                return bool(fg) and pid.value == os.getpid()
+            except Exception:
+                pass
+        return self.root.focus_displayof() is not None
+
     def _new_output_bell(self):
         mode = self.cfg.get("bell_new", "off")
         if mode == "off" or time.time() - self._last_new_bell < 2.0:
             return
         try:
-            front = self.root.focus_displayof() is not None
+            front = self._window_active()
             scrolled = self.out.yview()[1] < 0.999
         except tk.TclError:
             return

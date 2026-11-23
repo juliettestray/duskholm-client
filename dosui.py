@@ -816,8 +816,12 @@ class DosDialog(_DosBox):
                 need.append(2 + labw + 1 + f['width'] + 2)
         btn_w = sum(len(b['label']) + 4 for b in buttons) + 2 * max(0, len(buttons) - 1)
         need.append(btn_w + 4)
-        msg_lines_nat = max([len(l) for l in self._message.split('\n')] or [0])
+        paras = self._message.split('\n')
+        msg_lines_nat = max([len(l) for l in paras if not _is_columns(l)] or [0])
         need.append(min(msg_lines_nat + 4, 60))
+        # lines laid out in columns (two or more spaces inside) are never wrapped: the box grows to hold them
+        need.append(max([len(l.rstrip()) for l in paras if _is_columns(l)] or [0]) + 4
+                    if any(map(_is_columns, paras)) else 0)
         if self._width:
             try:
                 total = int(self._width)
@@ -831,7 +835,10 @@ class DosDialog(_DosBox):
         lines = []
         if self._message:
             for para in self._message.split('\n'):
-                lines.extend(textwrap.wrap(para, wrap_w, break_long_words=True) or [''])
+                if _is_columns(para):                      # columns: never wrapped; cut cleanly if still too long
+                    lines.append(_trunc(para.rstrip(), wrap_w))
+                else:
+                    lines.extend(textwrap.wrap(para, wrap_w, break_long_words=True) or [''])
         self._msg_lines = lines
         # rows
         row = 1
@@ -2165,9 +2172,8 @@ class DosStatusBar(tk.Frame):
         self.top.configure(bg=c['dos_bar_bg'])
 
     # -- content ------------------------------------------------------
-    def _rebuild(self):
+    def _hint_runs(self, hints):
         c = self.colors
-        hints, right = self._hints
         left = [(' ', c['dos_bar_fg'], False)]
         for n, h in enumerate(hints):
             try:
@@ -2178,8 +2184,37 @@ class DosStatusBar(tk.Frame):
                 left.append(('  ', c['dos_bar_fg'], False))
             left.append((k, c['dos_key_fg'] if c['dos_key_fg'] != c['dos_bar_bg'] else c['dos_bar_fg'], True))
             left.append((' ' + lab, c['dos_bar_fg'], False))
+        return left
+
+    def _hint_spec(self, cols):
+        """The hint row for `cols` cells: whole hints only. When they do not all fit the last ones are
+        left out (never half a word); the right-hand text goes before any hint does."""
+        c = self.colors
+        hints, right = self._hints
         rr = [(str(right) + ' ', c['dos_bar_fg'], False)] if right not in (None, '') else []
-        self._spec[0] = (left, rr)
+        rlen = sum(len(t) for t, _c, _b in rr)
+        def prio(i):                                  # optional third item of a hint: higher stays longer
+            try:
+                return float(hints[i][2])
+            except Exception:
+                return 5.0
+        for keep_right in ((True, False) if rr else (False,)):
+            extra = rlen + 1 if keep_right else 0
+            shown = list(range(len(hints)))
+            while True:
+                left = self._hint_runs([hints[i] for i in shown])
+                if sum(len(t) for t, _c, _b in left) + extra <= cols:
+                    return left, (rr if keep_right else [])
+                if not shown:
+                    break
+                shown.remove(min(shown, key=lambda i: (prio(i), -i)))     # drop the least important, latest first
+        return [(' ', c['dos_bar_fg'], False)], []
+
+    def _rebuild(self):
+        c = self.colors
+        hints, right = self._hints
+        rr = [(str(right) + ' ', c['dos_bar_fg'], False)] if right not in (None, '') else []
+        self._spec[0] = (self._hint_runs(hints), rr)
         segs, right = self._segs
         left = [(' ', c['dos_bar2_fg'], False)]
         col = {'normal': c['dos_bar2_fg'], 'key': c['dos_key_fg'], 'good': c['good'],
@@ -2219,6 +2254,8 @@ class DosStatusBar(tk.Frame):
                 cols = max(0, wpx // self.cw)
             except tk.TclError:
                 return
+            if n == 0:
+                spec = self._spec[0] = self._hint_spec(cols)
             left, right = self._flat(spec[0]), self._flat(spec[1])
             if right and len(left) + len(right) + 1 <= cols:
                 cells = left + [(' ', left[-1][1] if left else '#000000', False)] * (
@@ -2529,3 +2566,8 @@ def _blend(bg, fg, part):
         return '#%02x%02x%02x' % tuple(int(round(x + (y - x) * part)) for x, y in zip(a, b))
     except Exception:
         return fg
+
+
+def _is_columns(line):
+    """A line laid out in columns (two or more spaces inside some text): it must stay as written."""
+    return '  ' in line.strip()
