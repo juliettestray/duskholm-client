@@ -143,6 +143,7 @@ HOTKEYS = {
     "worlds": ("Worlds", "Ctrl-W"), "triggers": ("Triggers", "Ctrl-T"), "aliases": ("Aliases", "Ctrl-A"),
     "panes": ("Panes / layout", "Ctrl-P"), "moon": ("Moon", "Alt-M"), "notepad": ("Notepad", "Alt-N"),
     "timers": ("Timers", "Alt-T"), "dos_toggle": ("DOS look on/off", "Alt-D"),
+    "gradient": ("Gradient maker", "Alt-G"), "hex": ("Hex to xterm", "Alt-H"), "customize": ("Customize form", "Alt-K"),
 }
 FIXED_KEYS = {"F1": "Help", "F2": "Dial / hang up", "F3": "Log", "F5": "Skin", "F6": "Colours", "F7": "Font",
               "F10": "Menu", "F11": "Full screen", "Alt-X": "Exit", "Ctrl-1..9": "Select pane tab",
@@ -470,7 +471,8 @@ class ExtrasMixin:
         self._hotkey_bound = []
         actions = {"worlds": self.open_worlds, "triggers": self.open_triggers, "aliases": self.open_aliases,
                    "panes": self.open_panes, "moon": self.open_moon, "notepad": self.toggle_notepad,
-                   "timers": self.open_timers, "dos_toggle": self.toggle_dos_mode}
+                   "timers": self.open_timers, "dos_toggle": self.toggle_dos_mode,
+                   "gradient": self.open_gradient, "hex": self.open_hex, "customize": self.open_customize}
         for action, (seq, _shown) in effective_keys(self.cfg.get("keys")).items():
             fn = actions.get(action)
             if fn is None:

@@ -59,6 +59,9 @@ try:
 except ImportError:
     boxes = None
 import extras                       # timers, clock, notepad, moon window, hotkeys
+import toolsui                      # gradient maker, hex converter, customize form
+import colortools
+import custom as customize_data
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -889,6 +892,7 @@ EXTRA_BOOLS = [
     ("connect_boxes", False, "Join ASCII boxes into solid lines", "Join ASCII boxes", "J"),
     ("scroll_on_send", True, "Jump to the bottom when I send", "Jump to bottom on send", "S"),
     ("show_echo", True, "Show the commands I send", "Show my commands", "M"),
+    ("custom_form", True, "Fill-in form when I type 'customize'", "Customize form", "F"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
@@ -936,6 +940,8 @@ def clean_settings(cfg):
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
+    cfg["gradients"] = colortools.validate_saved(cfg.get("gradients"))
+    cfg["designs"] = customize_data.validate_designs(cfg.get("designs"))
     ph = cfg.get("panes_hidden")
     cfg["panes_hidden"] = [x for x in ph[:8] if isinstance(x, str) and len(x) < 20] if isinstance(ph, list) else []
     if triggers is not None:
@@ -1447,7 +1453,7 @@ class Connection:
                 pass
 
 
-class App(extras.ExtrasMixin):
+class App(extras.ExtrasMixin, toolsui.ToolsMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
         self.cfg = self._load_settings()
@@ -1475,6 +1481,7 @@ class App(extras.ExtrasMixin):
         self._last_new_bell = 0.0
         self._img_q = queue.Queue()
         self._extras_init()
+        self._tools_init()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
         self._cd_job = None
         self._mono = None
@@ -1747,6 +1754,9 @@ class App(extras.ExtrasMixin):
         f.add_command(label="Timer...   Alt+T", command=self.open_timers)
         f.add_command(label="Notepad   Alt+N", command=self.toggle_notepad)
         f.add_command(label="Moon   Alt+M", command=self.open_moon)
+        f.add_command(label="Gradient maker...   Alt+G", command=self.open_gradient)
+        f.add_command(label="Hex to xterm...   Alt+H", command=self.open_hex)
+        f.add_command(label="Customize form...   Alt+K", command=self.open_customize)
         f.add_command(label="Hotkeys...", command=self.open_hotkeys)
         f.add_command(label="Start/stop logging…", command=self.toggle_log)
         f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
@@ -2762,6 +2772,9 @@ class App(extras.ExtrasMixin):
             {"label": "Timer...", "hotkey": "I", "shortcut": "Alt-T", "action": self.open_timers},
             {"label": "Notepad", "hotkey": "D", "shortcut": "Alt-N", "action": self.toggle_notepad},
             {"label": "Moon", "hotkey": "M", "shortcut": "Alt-M", "action": self.open_moon},
+            {"label": "Gradient maker...", "hotkey": "G", "shortcut": "Alt-G", "action": self.open_gradient},
+            {"label": "Hex to xterm...", "hotkey": "Y", "shortcut": "Alt-H", "action": self.open_hex},
+            {"label": "Customize form...", "hotkey": "Z", "shortcut": "Alt-K", "action": self.open_customize},
             {"label": "Hotkeys...", "hotkey": "J", "action": self.open_hotkeys},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
@@ -4660,6 +4673,8 @@ class App(extras.ExtrasMixin):
                 return "break"
             if self._dial_command(line):
                 return "break"
+            if self.intercept_line(line):
+                return "break"
             if line.startswith("//"):
                 line = line[1:]
         self.send_line(line, echo=not secret, secret=secret)
@@ -5110,7 +5125,7 @@ class App(extras.ExtrasMixin):
     def _local(self, line):
         cmd, _, arg = line[1:].partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
-        if self._extras_command(cmd, arg):
+        if self._extras_command(cmd, arg) or self._tools_command(cmd, arg):
             return
         if cmd in ("help", "?"):
             self.system("Local commands:\n"
@@ -5120,7 +5135,8 @@ class App(extras.ExtrasMixin):
                         "  /log [file]              start or stop logging\n"
                         "  /clear                   //text sends \"/text\" to the game\n"
                         "  /timer 10m [label]       /timer list | cancel [n]   (also 21:30, game 21:30)\n"
-                        "  /moon   /notes   /hotkeys")
+                        "  /moon   /notes   /hotkeys\n"
+                        "  /hex ff8800              /gradient [text]   /customize")
         elif cmd == "connect":
             bits = arg.split()
             if bits:
@@ -5335,8 +5351,10 @@ class App(extras.ExtrasMixin):
                 elif cls == "Spinbox":
                     w.configure(buttonbackground=th["button_bg"])
                 elif cls == "Menubutton":
-                    w["menu"].configure(bg=th["panel"], fg=th["fg"], activebackground=th["select"],
-                                        activeforeground=th["fg"])
+                    m = str(w.cget("menu"))
+                    if m:
+                        w.nametowidget(m).configure(bg=th["panel"], fg=th["fg"], activebackground=th["select"],
+                                                    activeforeground=th["fg"])
             except tk.TclError:
                 pass
         for c in w.winfo_children():
