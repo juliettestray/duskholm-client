@@ -1495,6 +1495,34 @@ class Connection:
                 pass
 
 
+class Session:
+    """Everything that belongs to ONE world's connection: the socket, the byte parser, the unfinished
+    line, reconnect state, command history. The App keeps one active Session and reads and writes
+    these names through it (see SESSION_FIELDS), so a second world is a second Session."""
+
+    def __init__(self, name="", host="", port=0, tls=True):
+        self.name, self.host, self.port, self.tls = name, host, port, tls
+
+
+# attributes the App forwards to its active Session
+SESSION_FIELDS = (
+    "q", "gen", "conn", "term", "connected", "connecting",
+    "history", "hist_pos", "draft", "logfile", "last_send",
+    "_retrying", "_reconnect_job", "_reconnect_at", "_quit_sent_at",
+    "_line", "_last_prompt", "_pending", "_line_plain", "_line_flushed", "_line_hidden_len",
+    "_flush_job", "_online_since", "_prompt_time", "_dial_mode", "_telnet_cli",
+)
+
+
+def _session_property(name):
+    def get(self):
+        return getattr(self.session, name)
+
+    def set_(self, value):
+        setattr(self.session, name, value)
+    return property(get, set_)
+
+
 class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1504,6 +1532,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         if port:
             self.cfg["port"] = port
             self.cfg["tls"] = (port == TLS_PORT)
+        self.session = Session(host=self.cfg["host"], port=self.cfg["port"], tls=self.cfg["tls"])
         self.q = queue.Queue()
         self.gen = 0
         self.conn = Connection(self.q, self.gen)
@@ -6212,6 +6241,11 @@ def migrate_legacy_files(old_settings, new_settings, old_skins, new_skins):
     except OSError:
         pass
     return done
+
+
+for _n in SESSION_FIELDS:
+    setattr(App, _n, _session_property(_n))
+del _n
 
 
 def main():
