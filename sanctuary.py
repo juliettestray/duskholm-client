@@ -2429,6 +2429,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
         for w in self._text_widgets():
             w.tag_configure(name, foreground=fg, background=bg, underline=bool(ul), font=font)
             w.tag_raise("link")
+            w.tag_raise("sel")                  # every colour tag sets a background; a selection must show over it
 
     def _restyle_tags(self):
         th = self.theme
