@@ -49,7 +49,7 @@ app.cfg["layout"] = {"regions": [], "min_main_cols": 80}; app.cfg["gradients"] =
 app.cfg["worlds"] = [w for w in app.cfg["worlds"] if w["host"] != "example.org"]
 ok, said = app.import_world_file(path); assert ok, said
 text = " ".join(said)
-assert "Added the world" in text and "2 triggers" in text and "1 that send commands is switched off" in text, text
+assert "Added the world" in text and "2 triggers" in text and "1 that sends commands is switched off" in text, text
 assert [t["enabled"] for t in app.cfg["triggers"]] == [True, False], "the trigger that sends commands arrives off"
 assert [(a["name"], a["enabled"]) for a in app.cfg["alias_rules"]] == [("gg", False)]
 assert len(app.cfg["panes"]) == 2 and len(app.cfg["layout"]["regions"]) == 2

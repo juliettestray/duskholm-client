@@ -73,6 +73,7 @@ import panesize                    # drag a pane area's border to resize it (beh
 import emojipick                   # an emoji picker (Windows' own panel cannot reach a Tk entry box)
 import gametime                    # each world's game clock: time zone and IC:OOC ratio
 import stamps                      # optional time stamps, for the main text and per capture pane
+import importui                    # import triggers and aliases from another client's files
 import editmenu                    # right-click Cut / Copy / Paste
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
@@ -1005,13 +1006,13 @@ def clean_settings(cfg):
     cfg["panes_locked"] = cfg.get("panes_locked") is not False        # locked unless it was unlocked on purpose
     if triggers is not None:
         raw = cfg.get("triggers") if isinstance(cfg.get("triggers"), list) else []
-        cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in raw[:1000]) if t is not None][:500]
+        cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in raw[:3000]) if t is not None][:triggers.MAX_TRIGGERS]
         rules = cfg.get("alias_rules")
         if not isinstance(rules, list):
             legacy = cfg.get("aliases") if isinstance(cfg.get("aliases"), dict) else {}
             rules = triggers.migrate_legacy_aliases(
                 {k: v.replace("$*", "%*") for k, v in legacy.items() if isinstance(k, str) and isinstance(v, str)})
-        cfg["alias_rules"] = [a for a in (triggers.validate_alias(x) for x in rules[:400]) if a is not None][:200]
+        cfg["alias_rules"] = [a for a in (triggers.validate_alias(x) for x in rules[:600]) if a is not None][:triggers.MAX_ALIASES]
     else:
         cfg["triggers"], cfg["alias_rules"] = [], []
     if layout is not None:
@@ -1081,7 +1082,7 @@ def trigger_from_values(v):
     actions = []
     if fg is not None or bg is not None or v.get("bold"):
         actions.append({"type": "highlight", "fg": fg, "bg": bg, "bold": bool(v.get("bold")),
-                        "scope": "line" if v.get("whole") else "match"})
+                        "scope": "line" if v.get("whole") else ("all" if v.get("every") else "match")})
     if v.get("hide"):
         actions.append({"type": "gag"})
     if str(v.get("send", "")).strip():
@@ -1152,7 +1153,7 @@ def trigger_presets():
 def values_from_trigger(t):
     """The editors' simple values for an existing trigger (None for a new one)."""
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
-         "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "hide": False, "send": "",
+         "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "every": False, "hide": False, "send": "",
          "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "status": "",
          "speak": "", "speak_int": False, "silence": False, "glob": True, "world": ""}
     if not t:
@@ -1164,7 +1165,7 @@ def values_from_trigger(t):
         k = a["type"]
         if k == "highlight":
             v.update(fg=colour_field_text(a.get("fg")), bg=colour_field_text(a.get("bg")),
-                     bold=bool(a.get("bold")), whole=a.get("scope") == "line")
+                     bold=bool(a.get("bold")), whole=a.get("scope") == "line", every=a.get("scope") == "all")
         elif k == "gag":
             v["hide"] = True
         elif k == "send":
@@ -1559,7 +1560,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -2061,6 +2062,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         f.add_command(label="Customize form...   Alt+K", command=self.open_customize)
         f.add_command(label="Export world settings...", command=self.open_export)
         f.add_command(label="Import world settings...", command=self.open_import)
+        f.add_command(label="Import from another client...", command=self.open_import_client)
         f.add_command(label="Hotkeys...", command=self.open_hotkeys)
         f.add_command(label="Help   F1", command=self.open_help)
         f.add_command(label="Check for updates...", command=self.check_for_updates)
@@ -3285,6 +3287,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
             None,
             {"label": "Export world settings...", "hotkey": "E", "action": self.open_export},
             {"label": "Import world settings...", "hotkey": "I", "action": self.open_import},
+            {"label": "Import from another client...", "hotkey": "R", "action": self.open_import_client},
             {"label": "Hotkeys...", "hotkey": "K", "action": self.open_hotkeys},
             {"label": "Check for updates...", "hotkey": "U", "action": self.check_for_updates},
         ]
@@ -3430,6 +3433,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (keys: /hotkeys);  /newworld [name]  /closeworld"),
+        ("/import [file]", "import triggers and aliases from a MUSHclient file (or a Sanctuary world file)"),
         ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
         ("/gametime", "this world's game clock: zone, IC:OOC ratio (zone, ratio, set, reset)"),
@@ -3747,11 +3751,11 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
 
     # ---- triggers and aliases ---------------------------------------------------------------
     def _save_triggers(self, lst):
-        self.cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in lst) if t is not None][:500]
+        self.cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in lst) if t is not None][:triggers.MAX_TRIGGERS]
         self._save_settings()
 
     def _save_aliases(self, lst):
-        self.cfg["alias_rules"] = [a for a in (triggers.validate_alias(x) for x in lst) if a is not None][:200]
+        self.cfg["alias_rules"] = [a for a in (triggers.validate_alias(x) for x in lst) if a is not None][:triggers.MAX_ALIASES]
         self._save_settings()
 
     def _store_trigger(self, index, trig):
@@ -3759,8 +3763,8 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         if any(t["name"].lower() == trig["name"].lower() and i != index for i, t in enumerate(lst)):
             return False, "There is already a trigger called '%s'." % trig["name"]
         if index is None:
-            if len(lst) >= 500:
-                return False, "Too many triggers (500 maximum)."
+            if len(lst) >= triggers.MAX_TRIGGERS:
+                return False, "Too many triggers (%d maximum)." % triggers.MAX_TRIGGERS
             lst.append(trig)
         else:
             lst[index] = trig
@@ -3772,8 +3776,8 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         if any(a["name"].lower() == alias["name"].lower() and i != index for i, a in enumerate(lst)):
             return False, "There is already an alias called '%s'." % alias["name"]
         if index is None:
-            if len(lst) >= 200:
-                return False, "Too many aliases (200 maximum)."
+            if len(lst) >= triggers.MAX_ALIASES:
+                return False, "Too many aliases (%d maximum)." % triggers.MAX_ALIASES
             lst.append(alias)
         else:
             lst[index] = alias
@@ -3920,7 +3924,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         win.transient(parent)
         v0 = values_from_trigger(existing)
         sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "status", "speak")}
-        bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole",
+        bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole", "every",
                                                            "hide", "echo", "beep", "pane_gag", "speak_int", "silence",
                                                            "glob")}
         r = 0
@@ -3951,6 +3955,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         tk.Entry(hl, textvariable=sv["bg"], width=10).pack(side="left", padx=(4, 10))
         tk.Checkbutton(hl, text="Bold", variable=bv["bold"]).pack(side="left")
         tk.Checkbutton(hl, text="Whole line", variable=bv["whole"]).pack(side="left", padx=6)
+        tk.Checkbutton(hl, text="Every match", variable=bv["every"]).pack(side="left")
         row("Highlight", hl)
         row("Hide from screen", tk.Checkbutton(win, variable=bv["hide"]))
         snd = tk.Frame(win)
@@ -4162,7 +4167,8 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
             msg = "Plain: * is a wildcard. %1-%9 / %0 can be used in commands."
         else:
             fields = [t("fg", "Highlight text", 12), t("bg", "Highlight background", 12), c("bold", "Bold"),
-                      c("whole", "Colour the whole line"), c("hide", "Hide line from screen"),
+                      c("whole", "Colour the whole line"), c("every", "Colour every match on the line"),
+                      c("hide", "Hide line from screen"),
                       t("send", "Send command", 40), c("echo", "Show sent command"), c("beep", "Beep"),
                       t("pane", "Send to pane", 24), c("pane_gag", "...and hide from main window"),
                       t("note", "Client note", 40), t("status", "Status line text", 40)]
@@ -5485,8 +5491,14 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
             for act in trig["actions"]:
                 kind = act["type"]
                 if kind == "highlight" and not flushed:
-                    lo, hi = (0, len(plain)) if act.get("scope") == "line" else (m["start"], m["end"])
-                    pieces = apply_highlight(pieces, lo, hi, act.get("fg"), act.get("bg"), act.get("bold", False))
+                    if act.get("scope") == "line":
+                        spans = [(0, len(plain))]
+                    elif act.get("scope") == "all":                       # every place the pattern matches on the line
+                        spans = triggers.all_spans(trig, plain) or [(m["start"], m["end"])]
+                    else:
+                        spans = [(m["start"], m["end"])]
+                    for lo, hi in spans:
+                        pieces = apply_highlight(pieces, lo, hi, act.get("fg"), act.get("bg"), act.get("bold", False))
                 elif kind == "gag":
                     gag = True
                 elif kind == "route":
@@ -6178,7 +6190,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
                 or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
                 or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg) \
-                or self._stamps_command(cmd, arg):
+                or self._stamps_command(cmd, arg) or self._import_command(cmd, arg):
             return
         if cmd == "export":
             if arg:
@@ -6245,8 +6257,8 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
                 self.system("Usage: /alias name expansion   (use ; between commands, %1-%9 / %* for arguments)")
             else:
                 rules = [r for r in self.cfg["alias_rules"] if r["name"].lower() != a["name"].lower()]
-                if len(rules) >= 200:
-                    self.system("Too many aliases (200 maximum).")
+                if len(rules) >= triggers.MAX_ALIASES:
+                    self.system("Too many aliases (%d maximum)." % triggers.MAX_ALIASES)
                 else:
                     rules.append(a)
                     self.cfg["alias_rules"] = rules

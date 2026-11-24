@@ -63,7 +63,8 @@ MAX_COMMANDS = 20
 MAX_COMMAND = 200
 MAX_ALIAS_NAME = 24
 MAX_ALIAS_BODY = 400
-MAX_ALIASES = 200
+MAX_ALIASES = 300
+MAX_TRIGGERS = 1500
 
 _COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
 _ALIAS_NAME_RE = re.compile(r"[A-Za-z0-9_!?.+\-]{1,24}")
@@ -309,6 +310,24 @@ def match_trigger(trigger, line):
         return None
 
 
+def all_spans(trigger, line, limit=100):
+    """[(start, end)] for every place the trigger's pattern matches in `line`: a regular expression or a plain text
+    without wildcards can match more than once; a pattern with wildcards matches once. Never raises."""
+    try:
+        c = compile_trigger(trigger)
+        if c is None or not isinstance(line, str):
+            return []
+        line = line[:MAX_LINE]
+        if c.kind == "regex":
+            return [(m.start(), m.end()) for m in c.rx.finditer(line) if m.end() > m.start()][:limit]
+        if c.ngroups == 0 and not c.astart and not c.aend:
+            return [(m.start(), m.end()) for m in c.rx[0].finditer(line) if m.end() > m.start()][:limit]
+        r = _plain_match(c, line)
+        return [(r[0], r[1])] if r else []
+    except Exception:
+        return []
+
+
 def _priority(t):
     p = t.get("priority", 0)
     if not _is_int(p):
@@ -464,7 +483,7 @@ def _clean_action(a):
         okb, bg = _color(a.get("bg"))
         bold = a.get("bold", False)
         scope = a.get("scope", "match")
-        if not (okf and okb) or not isinstance(bold, bool) or scope not in ("match", "line"):
+        if not (okf and okb) or not isinstance(bold, bool) or scope not in ("match", "line", "all"):
             return None
         if fg is None and bg is None and not bold:
             return None

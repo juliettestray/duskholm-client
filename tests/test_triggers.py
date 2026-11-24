@@ -594,9 +594,9 @@ def check_alias_migration():
     assert got[0]["body"] == "dup"
     for junk in (None, 5, "x", [], [("a", "b")], {}):
         assert T.migrate_legacy_aliases(junk) == []
-    many = {"a%03d" % i: "x" for i in range(300)}
+    many = {"a%03d" % i: "x" for i in range(T.MAX_ALIASES + 100)}
     r = T.migrate_legacy_aliases(many)
-    assert len(r) == 200 and r[0]["name"] == "a000" and r[-1]["name"] == "a199"
+    assert len(r) == T.MAX_ALIASES and r[0]["name"] == "a000" and r[-1]["name"] == "a%03d" % (T.MAX_ALIASES - 1)
     snap = dict(old)
     T.migrate_legacy_aliases(old)
     assert old == snap

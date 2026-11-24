@@ -6,6 +6,8 @@ never runs anything: every part is re-validated, and anything that could send co
 (triggers with a send action, aliases) arrives switched OFF for the person to look over."""
 import json
 
+from triggers import MAX_TRIGGERS, MAX_ALIASES
+
 FORMAT = "sanctuary-world"
 VERSION = 1
 MAX_BYTES = 1_000_000
@@ -79,9 +81,9 @@ def merge(cfg, bundle, tools):
     if isinstance(bundle.get("triggers"), list):
         have = {(t["name"].lower(), t.get("pattern")) for t in cfg.get("triggers", [])}
         added = off = 0
-        for raw in bundle["triggers"][:500]:
+        for raw in bundle["triggers"][:MAX_TRIGGERS]:
             t = tools["validate_trigger"](raw)
-            if t is None or (t["name"].lower(), t.get("pattern")) in have or len(cfg["triggers"]) >= 500:
+            if t is None or (t["name"].lower(), t.get("pattern")) in have or len(cfg["triggers"]) >= MAX_TRIGGERS:
                 continue
             if _sends(t):
                 t["enabled"] = False
@@ -91,15 +93,16 @@ def merge(cfg, bundle, tools):
             added += 1
         if added:
             said.append("Added %d trigger%s%s." % (added, "" if added == 1 else "s",
-                                                  "; %d that send commands %s switched off until you check %s"
-                                                  % (off, "is" if off == 1 else "are", "it" if off == 1 else "them")
+                                                  "; %d that send%s commands %s switched off until you check %s"
+                                                  % (off, "s" if off == 1 else "", "is" if off == 1 else "are",
+                                                     "it" if off == 1 else "them")
                                                   if off else ""))
     if isinstance(bundle.get("alias_rules"), list):
         have = {a["name"].lower() for a in cfg.get("alias_rules", [])}
         added = 0
-        for raw in bundle["alias_rules"][:200]:
+        for raw in bundle["alias_rules"][:MAX_ALIASES]:
             a = tools["validate_alias"](raw)
-            if a is None or a["name"].lower() in have or len(cfg["alias_rules"]) >= 200:
+            if a is None or a["name"].lower() in have or len(cfg["alias_rules"]) >= MAX_ALIASES:
                 continue
             a["enabled"] = False
             cfg["alias_rules"] = list(cfg["alias_rules"]) + [a]

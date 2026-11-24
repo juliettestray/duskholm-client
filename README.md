@@ -287,6 +287,24 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `.snc` file holds a world and, optionally, its triggers, aliases, pane layout, prompt formats,
   gradients and designs. Importing is careful: triggers that send commands and all aliases arrive
   switched off for you to check; nothing is overwritten.
+- **Import from another client** (File > Import from another client..., or `/import file`). Reads a
+  **MUSHclient** world (`.MCL`), plugin or trigger file and brings across its triggers and aliases. First it
+  tells you in the output window what is in the file: what can be imported, what cannot and why, and what
+  comes across approximately; then it asks which world the rules belong to (the file's own world by
+  default; empty means every world), whether to save the file's world too, and whether you trust the file.
+  Nothing in it is ever run (a file that declares XML entities is refused). Without trust, triggers that
+  send commands and all aliases arrive switched off; colouring and hiding rules are on. What maps:
+  wildcard and regular-expression patterns (MUSHclient's wildcards match the whole line, as they do here),
+  case, priority (`sequence`) and "keep evaluating", the colour change (custom colours 1-16 from the file's
+  own palette, or its "other" colour and background), bold, omit from output, "repeat" (colour every match on
+  the line: a regular-expression trigger can now do that, "Every match" in the trigger editor), sounds (as a
+  beep), and `send` text to the world, output (a note) or the status line, with `%1`-`%9`, `%<name>` and
+  several lines turned into `;` commands. Aliases of one word, optionally followed by anything (`emit *`), come
+  across; MUSHclient's `%0` (everything you typed, the word too) becomes `word %*`, and the report says so. What
+  does not: scripts (Lua, VBScript) and `send to script`, notepad and variable targets, multi-line matching (one
+  line at a time here), italic and underline, timers (use `/timer`), macros and keypad keys, and plugin files
+  that a world file merely names (import each plugin file on its own). The limits are now 1500 triggers and
+  300 aliases. More clients (Mudlet, TinTin++) are planned.
 - **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed (including the world keys
   and `Ctrl+A`, below); F-keys are fixed.
 - **Ctrl+A selects the whole entry line**, as in MUSHclient (rebindable like the rest; Aliases moved to
@@ -340,7 +358,7 @@ Local commands start with `/` (the game has none). `//text` sends `/text`.
 | `/timer 10m [label]`, `/timer list`, `/timer cancel [n]` | timers (also `21:30`, `game 21:30`) |
 | `/moon`, `/notes`, `/hotkeys` | the moon window, notepad, hotkey editor |
 | `/hex ff8800`, `/gradient text`, `/customize` | colour tools and the customize form |
-| `/export [file]`, `/import file` | world settings files (`.snc`) |
+| `/export [file]`, `/import file` | world settings files (`.snc`); `/import` also reads MUSHclient files |
 | `/clear`, `/help` | |
 
 ## License
@@ -390,6 +408,8 @@ python tests/test_colortools.py   # hex to xterm, gradients (fuzzed)
 python tests/test_custom.py       # the customize form's commands and the design book
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
+python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_importui.py    # importing in the app: the question, every-match colouring, both looks
 python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flood control, review
 python tests/test_access.py       # screen reader mode end to end with a fake voice
 python tests/test_updater.py      # update check/install against a fake local GitHub
