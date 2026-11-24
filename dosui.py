@@ -2200,8 +2200,25 @@ class DosStatusBar(tk.Frame):
         self._measure()
         self._hints = ([], None)
         self._segs = ([], None)
+        self._on_hint = None            # called with the hint (key, label, ...) that was clicked
+        self._hint_cells = []           # (first cell, end cell, index in the hints) of the hints on show
+        self._last_spans = []
+        self._rows[0].bind('<Button-1>', self._hint_click)
         self._apply_style()
         self._rebuild()
+
+    def _hint_click(self, e):
+        cb = self._on_hint
+        if cb is None:
+            return
+        col = int(e.x) // max(1, self.cw)
+        for a, b, i in self._hint_cells:
+            if a <= col < b:
+                try:
+                    cb(self._hints[0][i])
+                except Exception:
+                    pass
+                return
 
     def _measure(self):
         try:
@@ -2221,6 +2238,7 @@ class DosStatusBar(tk.Frame):
     def _hint_runs(self, hints):
         c = self.colors
         left = [(' ', c['dos_bar_fg'], False)]
+        spans, pos = [], 1
         for n, h in enumerate(hints):
             try:
                 k, lab = str(h[0]), str(h[1])
@@ -2228,8 +2246,13 @@ class DosStatusBar(tk.Frame):
                 k, lab = str(h), ''
             if n:
                 left.append(('  ', c['dos_bar_fg'], False))
+                pos += 2
+            start = pos
             left.append((k, c['dos_key_fg'] if c['dos_key_fg'] != c['dos_bar_bg'] else c['dos_bar_fg'], True))
             left.append((' ' + lab, c['dos_bar_fg'], False))
+            pos += len(k) + 1 + len(lab)
+            spans.append((start, pos, n))
+        self._last_spans = spans
         return left
 
     def _hint_spec(self, cols):
@@ -2250,10 +2273,12 @@ class DosStatusBar(tk.Frame):
             while True:
                 left = self._hint_runs([hints[i] for i in shown])
                 if sum(len(t) for t, _c, _b in left) + extra <= cols:
+                    self._hint_cells = [(a, b, shown[j]) for a, b, j in self._last_spans]
                     return left, (rr if keep_right else [])
                 if not shown:
                     break
                 shown.remove(min(shown, key=lambda i: (prio(i), -i)))     # drop the least important, latest first
+        self._hint_cells = []
         return [(' ', c['dos_bar_fg'], False)], []
 
     def _rebuild(self):
@@ -2261,6 +2286,7 @@ class DosStatusBar(tk.Frame):
         hints, right = self._hints
         rr = [(str(right) + ' ', c['dos_bar_fg'], False)] if right not in (None, '') else []
         self._spec[0] = (self._hint_runs(hints), rr)
+        self._hint_cells = list(self._last_spans)
         segs, right = self._segs
         left = [(' ', c['dos_bar2_fg'], False)]
         col = {'normal': c['dos_bar2_fg'], 'key': c['dos_key_fg'], 'good': c['good'],
@@ -2341,12 +2367,13 @@ class DosStatusBar(tk.Frame):
                 i = j
 
     # -- public -------------------------------------------------------
-    def set_hints(self, hints, right=None):
+    def set_hints(self, hints, right=None, on_click=None):
         try:
             hints = list(hints or [])
         except Exception:
             hints = []
         self._hints = (hints, right)
+        self._on_hint = on_click
         self._rebuild()
 
     def set_segments(self, segments, right=None):

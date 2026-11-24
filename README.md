@@ -119,8 +119,12 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   the 1st .. 12th world, `Ctrl+PageDown` / `Ctrl+PageUp` the next and previous one, `/world [n|name]`,
   `/newworld [name]` and `/closeworld` do the same by command (all of these keys can be changed under
   `/hotkeys`: one row sets the prefix for all twelve, e.g. `Ctrl-Alt-F`; world 1-12 can also be set
-  one by one in the settings file). **Close this world** (main menu, or `Ctrl+Shift+W`) hangs up, after asking, and closes the tab. The tabs sit in the top bar (DOS look) or the toolbar (normal look): the world on screen
-  is in brackets and a world with new text while hidden gets a `*` and one beep. Each world has its
+  one by one in the settings file). **Close this world** (main menu, or `Ctrl+Shift+W`) hangs up, after asking, and closes the tab. In the normal look the worlds are a row of **clickable tabs**, centred under the toolbar (click one to
+  switch, right-click for Close, `+` opens the Worlds list; the shown tab is highlighted, and a world with new
+  text while hidden gets a yellow dot and one beep). Options > World tabs: always (the default, so you can see
+  there is room for more), only with two or more worlds, or off (the old label in the toolbar). In the DOS look
+  the worlds are key hints in the top row, `[bracketed]` when on screen and `*` when there is news, and **every key
+  hint in that row can be clicked** (`^F2` switches to world 2, `F1` opens help, and so on). Each world has its
   own scrollback, connection, command history and half-typed line; the stat bar, status line and
   screen reader follow only the world you are looking at.
   Pane areas are kept per world and saved as you change them. Triggers and aliases have a
@@ -439,6 +443,7 @@ python tests/test_custom.py       # the customize form's commands and the design
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_worldtabs_ui.py  # the row of world tabs, and clickable key hints in the DOS look
 python tests/test_entrybox.py     # the growing entry box: lines, Shift+Enter, history, passwords, both looks
 python tests/test_mudlet.py      # Mudlet package import (pure): pattern types, folders, the send() Lua shape, zips
 python tests/test_importui.py    # importing in the app: the question, every-match colouring, both looks

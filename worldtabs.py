@@ -5,11 +5,13 @@ their own scrollback. Things that belong to the screen (the stat bar, the status
 reader) only follow the shown world; a world that gets new text while hidden is marked instead.
 """
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox
 
 import dosui
 
 MAX_WORLDS = 12                     # Ctrl+F1 .. Ctrl+F12
+TAB_FONT_MAX = 13                   # the tab row never grows past this text size
 EMPTY_LAYOUT = {"regions": [], "min_main_cols": 80}
 
 
@@ -172,12 +174,106 @@ class WorldTabsMixin:
         finally:
             self.session = prev
 
+    # ---- the row of world tabs (normal look) ---------------------------------------------
+    def _build_tabbar(self):
+        """A row of clickable tabs, one per world, centred under the toolbar."""
+        self._tabbar = self._reg(tk.Frame(self.root), "panel")
+        self._tabs_inner = tk.Frame(self._tabbar)
+        self._tabs_inner.pack(pady=(6, 0))
+        self._tabs_sig = None
+
+    def tab_bar_wanted(self):
+        mode = self.cfg.get("world_tabs", "always")
+        return (not self.dos) and (mode == "always" or (mode == "two+" and len(self.sessions) > 1))
+
+    def _tab_close(self, s):
+        if s is not self._shown:
+            self.switch_session(s)
+        self.close_world_ask()
+
+    def _tab_menu(self, e, s):
+        m = tk.Menu(self.root, tearoff=0)
+        m.add_command(label="Switch to %s" % self._world_name(s), command=lambda: self.switch_session(s),
+                      state="disabled" if s is self._shown else "normal")
+        m.add_command(label="Close %s" % self._world_name(s), command=lambda: self._tab_close(s),
+                      state="normal" if len(self.sessions) > 1 else "disabled")
+        m.add_separator()
+        m.add_command(label="Worlds...", command=self.open_worlds)
+        self._popup_menu(m, e.x_root, e.y_root)
+
+    def _refresh_tabbar(self, force=False):
+        """Rebuild the tabs when something about them changed (a name, which one is shown, news in a hidden world)."""
+        bar = getattr(self, "_tabbar", None)
+        if bar is None:
+            return
+        try:
+            if not self.tab_bar_wanted():
+                if bar.winfo_manager():
+                    bar.pack_forget()
+                self._tabs_sig = None
+                return
+            th = self.theme
+            size = max(8, min(TAB_FONT_MAX, int(self.cfg.get("font_size", 11))))      # a huge text font must not make a huge tab row
+            fkey = (self.font_family, size)
+            if fkey != getattr(self, "_tab_font_key", None):
+                self._tab_font_key = fkey
+                self._tab_fonts = (tkfont.Font(family=fkey[0], size=size), tkfont.Font(family=fkey[0], size=size, weight="bold"))
+            f_plain, f_bold = self._tab_fonts
+            sig = (tuple((self._world_name(s), s is self._shown, bool(s.unread) and s is not self._shown)
+                         for s in self.sessions), th["bg"], th["panel"], th["select"], fkey)
+            if not bar.winfo_manager():
+                bar.pack(fill="x", after=self._top)
+            if sig == self._tabs_sig and not force:
+                return
+            self._tabs_sig = sig
+            for w in self._tabs_inner.winfo_children():
+                w.destroy()
+            self._tabs_inner.configure(bg=th["panel"])
+            for i, s in enumerate(self.sessions, 1):
+                shown = s is self._shown
+                news = bool(s.unread) and not shown
+                bg = th["bg"] if shown else th["button_bg"]
+                fg = th["fg"] if shown else th["button_fg"]
+                tab = tk.Frame(self._tabs_inner, bg=bg, cursor="hand2")
+                tab.pack(side="left", padx=(0, 2))
+                text = "%s%d  %s" % ("\u25cf " if news else "", i, self._world_name(s))
+                lab = tk.Label(tab, text=text, bg=bg, fg=th["ansi"][11] if news else fg, padx=16, pady=5,
+                               font=f_bold if (shown or news) else f_plain, cursor="hand2")
+                lab.pack(side="top")
+                tk.Frame(tab, height=3, bg=th["select"] if shown else bg).pack(side="top", fill="x")
+                for w in (tab, lab):
+                    w.bind("<Button-1>", lambda e, s=s: self.switch_session(s))
+                    w.bind("<Button-3>", lambda e, s=s: self._tab_menu(e, s))
+            if len(self.sessions) < MAX_WORLDS:
+                plus = tk.Label(self._tabs_inner, text="+", bg=th["panel"], fg=th["fg"], padx=12, pady=5,
+                                font=f_bold, cursor="hand2")
+                plus.pack(side="left")
+                plus.bind("<Button-1>", lambda e: self.open_worlds())
+        except tk.TclError:
+            pass
+
+    def _dos_hint_click(self, hint):
+        """A click on a key hint in the DOS top row does what pressing the key does."""
+        import re
+        key = str(hint[0])
+        m = re.fullmatch(r"\^F(\d+)", key)
+        if m:
+            self.goto_world(int(m.group(1)))
+        elif key == "^W":
+            self.open_worlds()
+        elif re.fullmatch(r"F\d+", key):
+            self.root.event_generate("<%s>" % key)
+
     def _refresh_world_label(self):
         lab = self._world_label
         if lab is None:
             return
+        self._refresh_tabbar()
         try:
-            if len(self.sessions) > 1:
+            if self.tab_bar_wanted():
+                if lab.winfo_ismapped():
+                    lab.pack_forget()
+            elif len(self.sessions) > 1:
                 lab.configure(text=self.world_tabs_text())
                 if not lab.winfo_ismapped():
                     lab.pack(side="right", padx=8)

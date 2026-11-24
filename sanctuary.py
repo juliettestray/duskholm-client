@@ -945,12 +945,14 @@ EXTRA_CHOICES = [
     ("timestamps", "off", ("off", "hh:mm", "hh:mm:ss"), "Time stamps (main text)", "X"),
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
     ("entry_grow", "off", ("off", "2", "3", "5", "8"), "Entry box grows to (lines)", "K"),
+    ("world_tabs", "always", ("always", "two+", "off"), "World tabs", "W"),
 ]
 CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always": "always", "unfocused": "when the window is not in front",
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
                 "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
                 "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice",
-                "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines"}
+                "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
+                "two+": "only with two or more worlds"}
 
 
 def clean_settings(cfg):
@@ -1991,6 +1993,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         self._world_label = self._reg(tk.Label(top, text="", anchor="e", cursor="hand2"), "label")
         self._world_label.bind("<Button-1>", lambda e: self.goto_world(
             self.sessions.index(self._shown) % len(self.sessions) + 1))
+        self._build_tabbar()
 
         # holder = the coloured "overscan" border; in the DOS look the 80-column screen is
         # centred inside it, in the normal look the screen simply fills it
@@ -2475,6 +2478,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
             self._font_changed()
         self.statbar.set_theme(th)
         self._restyle_dosbar()
+        self._refresh_tabbar(True)
         if self.dos and self._panes_active:
             self.schedule_layout(5)
 
@@ -3066,7 +3070,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         """Arrange the window for the current look. Normal: toolbar, text, stat bar, input.
         DOS: no toolbar/menu bar/scrollbar; a centred N-column screen on a coloured border,
         the input line and the DOS status bar underneath."""
-        for w in (self._top, self._holder, self.statbar, self._inbox, self.dosbar,
+        for w in (self._top, self._tabbar, self._holder, self.statbar, self._inbox, self.dosbar,
                   getattr(self.dosbar, "top", None)):
             if w is not None:
                 w.pack_forget()
@@ -3094,6 +3098,8 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
             self._panes_active = False
             self.root.config(menu=self._menubar)
             self._top.pack(fill="x")
+            self._tabs_sig = None
+            self._refresh_tabbar()
             self._holder.pack(fill="both", expand=True)
             self._mid.pack(fill="both", expand=True)
             self.out.configure(yscrollcommand=self._sb.set)
@@ -3223,7 +3229,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
                           [("F1", "Help", 8), ("F2", "Hangup" if up else "Dial", 7), ("F3", "Log", 3),
                            ("F5", "Skin", 4), ("F6", "Colours", 5), ("F7", "Font", 5), ("F10", "Menu", 9),
                            ("F11", "Full", 6), ("F12", "About", 2), ("^W", "Worlds", 1)],
-                           right="Alt-D Normal  Alt-X Exit")
+                           right="Alt-D Normal  Alt-X Exit", on_click=self._dos_hint_click)
             cw = max(1, self.f_norm.measure("0"))
             cols = int(bar.winfo_width() / cw) if bar.winfo_width() > 100 else int(self.cfg["dos_cols"])
             segs, tail = self._dos_segments(max(20, cols - 2))
@@ -3412,6 +3418,9 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
             self._emoji_refresh()
         if key == "entry_grow":
             self._apply_entry_mode()
+        if key == "world_tabs":
+            self._refresh_tabbar(True)
+            self._refresh_world_label()
         self._save_settings()
 
     def dos_connect_dialog(self):
