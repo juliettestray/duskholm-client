@@ -66,7 +66,14 @@ def check(name):
     app.dos_close_overlay(); pump(0.1)
 
 
+def _palette():
+    ed = app.open_gradient(); pump(0.3); ed._open_palette(); app._overlay = ed._palette
+    return ed._palette
+
+
 cases = [
+    ("gradient palette", _palette),
+    ("gradient text only", lambda: app._dos_text_gradient(dict(app._grad_state), "Description", "text", None, lambda r: None)),
     ("main menu", app.dos_main_menu), ("tools menu", app.dos_tools_menu), ("options", app.dos_options_menu),
     ("skin menu", app.dos_skin_menu), ("colours", app.dos_colors_menu), ("palette", app.dos_palette_menu),
     ("ui colours", lambda: app.dos_key_menu("ui")), ("dos colours", lambda: app.dos_key_menu("dos")),

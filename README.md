@@ -200,6 +200,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   the list (the patterns have colour swatches, and *Create new...* and *Import a shared one...* are
   in it). Patterns can be shared as one line of text, `sgrad1:Fire:196,202,208,214,220,226`
   (*Share* copies it, `/gradient share [name]`, `/gradient import <line>`).
+  The colours are a row of swatches you can see and click: click one to select it, click it again
+  (or press `Enter`) to change it, `[+]` / `[-]` (or `Ins` / `Del`) add and remove colours,
+  `Ctrl`+arrows move one, and a live bar shows how they blend. Changing a colour opens a picker:
+  in the normal look a saturation square, a hue slider, a hex box and the 256 colours grouped by
+  hue; in the DOS look the colours grouped by hue plus a hex box (everything snaps to the nearest
+  xterm colour, which is what the game can show). Both work with the mouse or the keyboard alone.
+  *Reverse* turns the colours round and *Save* keeps them as a named pattern.
 - **Hex to xterm** (`Alt+H`, `/hex ff8800`): the closest xterm colour and its code (`` `208 ``).
 - **Customize form** (`Alt+K`, or just type `customize`): fill in an item's fields and send them
   all at once. Two ways to send: as `customize <item> ...` command lines for an item you have, or

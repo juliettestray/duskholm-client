@@ -8,6 +8,7 @@ import time
 
 import colortools as ct
 import custom
+import dosgrad
 import dosui
 
 MODE_SHORT = {"cli": "Command line", "interface": "Game item editor"}
@@ -89,30 +90,71 @@ class DosFormsMixin:
         return ed
 
     # ---- gradients -----------------------------------------------------------------------
+    def _grad_stops(self, st):
+        """The colours of the pattern in `st` (a name, or the colours typed out)."""
+        try:
+            return list(self._pattern_colours(st["pattern"])) or [196, 226]
+        except ValueError:
+            return [196, 226]
+
+    def _grad_label(self, st, stops):
+        """What the Pattern field shows: its name while the colours are still that pattern's, else 'custom'."""
+        named = ct.find_pattern(st["pattern"], self.cfg.get("gradients", []))
+        return st["pattern"] if named is not None and list(named) == list(stops) else "custom"
+
+    @staticmethod
+    def _grad_from_editor(st, es):
+        """The gradient state after the editor: keeps a pattern's name, otherwise the colours as typed text."""
+        pat = es["pattern"] if es["pattern"] != "custom" else ct.stops_text(es["stops"])
+        return dict(st, pattern=pat, mode=es["mode"], smooth=es["smooth"], text=es.get("text", st.get("text", "")),
+                    prefix=es.get("prefix", st.get("prefix", "")))
+
+    def _grad_mode_list(self, new, again):
+        self._reopen(lambda: self.dos_choose(
+            "Apply", [("%-8s %s" % (m, ct.MODE_HELP[m]), m) for m in ct.MODES], new["mode"],
+            lambda m: self._reopen(again, dict(new, mode=m)), back=lambda: again(new)))
+
+    def _dos_save_pattern(self, st, back):
+        """Ask for a name and keep the colours as a pattern."""
+        stops = self._grad_stops(st)
+
+        def result(res, v):
+            if res != "ok":
+                self._reopen(back, st)
+                return
+            ok, msg = self.save_pattern(v.get("name", ""), ct.stops_text(stops))
+            self.system(msg)
+            if ok:
+                self._reopen(back, dict(st, pattern=" ".join(v["name"].split())[:30]))
+            else:
+                self._reopen(self._dos_save_pattern, st, back)
+        self._dos_dialog("Save pattern", [{"key": "name", "label": "Name", "type": "text", "value": "", "width": 28}],
+                         [("Save", "ok"), ("Cancel", "cancel")], result, width=52,
+                         message="Keeps these %d colours under a name you can pick again." % len(stops))
+
     def _dos_gradient(self, st):
         st = dict(st)
         self._grad_state = st
-        shown = st["pattern"] if ct.find_pattern(st["pattern"], self.cfg.get("gradients", [])) else (
-            "custom: " + st["pattern"][:24] if st["pattern"].strip() else "(choose)")
-        fields = [{"key": "pattern", "label": "Pattern", "type": "pick", "value": shown, "width": 34},
-                  {"key": "mode", "label": "Apply", "type": "pick", "value": st["mode"], "width": 12},
-                  {"key": "text", "label": "Text", "type": "text", "value": st["text"], "width": 56},
-                  {"key": "prefix", "label": "Start with", "type": "text", "value": st["prefix"], "width": 20},
-                  {"key": "smooth", "label": "Blend between colours", "type": "check", "value": st["smooth"]}]
+        stops = self._grad_stops(st)
+        state = {"stops": stops, "mode": st["mode"], "smooth": st["smooth"], "text": st["text"],
+                 "prefix": st["prefix"], "pattern": self._grad_label(st, stops)}
 
-        def result(res, vals):
-            new = dict(st, text=vals.get("text", ""), prefix=vals.get("prefix", ""), smooth=bool(vals.get("smooth")))
+        def result(res, es):
+            new = self._grad_from_editor(st, es)
             self._grad_state = new
             if isinstance(res, tuple):
                 if res[1] == "pattern":
                     self._reopen(self._dos_pick_pattern, new)
-                elif res[1] == "mode":
-                    self._reopen(lambda: self.dos_choose(
-                        "Apply", [("%-8s %s" % (m, ct.MODE_HELP[m]), m) for m in ct.MODES], new["mode"],
-                        lambda m: self._reopen(self.open_gradient, dict(new, mode=m)),
-                        back=lambda: self.open_gradient(new)))
+                else:
+                    self._grad_mode_list(new, self.open_gradient)
                 return
             if res == "cancel":
+                return
+            if res == "reverse":
+                self._reopen(self.open_gradient, dict(new, pattern=ct.stops_text(es["stops"][::-1])))
+                return
+            if res == "save":
+                self._reopen(self._dos_save_pattern, new, self.open_gradient)
                 return
             if res == "share":
                 try:
@@ -142,32 +184,32 @@ class DosFormsMixin:
                     self.system("Several lines: copied to the clipboard.")
                 else:
                     self.put_in_input(coded)
-        return self._dos_dialog("Gradient", fields, [("Preview", "preview"), ("To input", "send"), ("Share", "share"),
-                                                     ("Cancel", "cancel")],
-                                result, width=76,
-                                message="Enter on Pattern or Apply opens the list. Use \\n for new lines in the text.")
+        ed = dosgrad.DosGradientEditor(
+            self.root, "Gradient", state,
+            [("Preview", "preview"), ("To input", "send"), ("Reverse", "reverse", "v"), ("Save", "save"),
+             ("Share", "share", "h"), ("Cancel", "cancel")],
+            self._dc(), self.f_norm, result, text=True,
+            message="Use \\n for new lines in the text.")
+        self._overlay = ed
+        ed.open()
+        return ed
 
     def _dos_text_gradient(self, st, title, cur, rng, on_done, note=None):
-        """Pick a gradient and how to apply it, then go back to the editor with the text coloured."""
+        """Pick colours and how to apply them, then go back to the editor with the text coloured."""
         st = dict(st)
         self._grad_state = dict(self._grad_state, **{k: st[k] for k in ("pattern", "mode", "smooth")})
-        saved = self.cfg.get("gradients", [])
-        shown = st["pattern"] if ct.find_pattern(st["pattern"], saved) else "(choose)"
-        fields = [{"key": "pattern", "label": "Pattern", "type": "pick", "value": shown, "width": 34},
-                  {"key": "mode", "label": "Apply", "type": "pick", "value": st["mode"], "width": 12},
-                  {"key": "smooth", "label": "Blend between colours", "type": "check", "value": st["smooth"]}]
+        stops = self._grad_stops(st)
+        state = {"stops": stops, "mode": st["mode"], "smooth": st["smooth"], "pattern": self._grad_label(st, stops)}
         again = lambda s: self._dos_text_gradient(s, title, cur, rng, on_done)
         what = "the selected text" if rng else "all of the text"
 
-        def result(res, vals):
-            new = dict(st, smooth=bool(vals.get("smooth")))
+        def result(res, es):
+            new = self._grad_from_editor(st, es)
             if isinstance(res, tuple):
                 if res[1] == "pattern":
                     self._reopen(self._dos_pick_pattern, new, again)
                 else:
-                    self._reopen(lambda: self.dos_choose(
-                        "Apply", [("%-8s %s" % (m, ct.MODE_HELP[m]), m) for m in ct.MODES], new["mode"],
-                        lambda m: self._reopen(again, dict(new, mode=m)), back=lambda: again(new)))
+                    self._grad_mode_list(new, again)
                 return
             if res == "apply":
                 try:
@@ -179,8 +221,13 @@ class DosFormsMixin:
                 self._reopen(self.dos_edit_text, title, out, on_done)
             else:
                 self._reopen(self.dos_edit_text, title, cur, on_done)
-        return self._dos_dialog("Colour the text", fields, [("Apply", "apply"), ("Cancel", "cancel")], result, width=70,
-                                message=note or "This colours %s. Colours already in it are replaced." % what)
+        ed = dosgrad.DosGradientEditor(
+            self.root, "Colour the text", state, [("Apply", "apply"), ("Cancel", "cancel")],
+            self._dc(), self.f_norm, result, text=False,
+            message=note or "This colours %s. Colours already in it are replaced." % what)
+        self._overlay = ed
+        ed.open()
+        return ed
 
     def _dos_pick_pattern(self, st, cont=None):
         cont = cont or self.open_gradient

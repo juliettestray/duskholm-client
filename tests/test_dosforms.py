@@ -6,6 +6,7 @@ import sanctuary as sc
 import colortools as ct
 import custom
 import dosui
+import dosgrad
 import tkinter as tk
 
 home = tempfile.mkdtemp()
@@ -35,6 +36,10 @@ def overlay():
 def focus_field(d, k):
     i = [f["key"] for f in d._fields].index(k)
     d._set_focus(d._stops.index(("field", i))); pump(0.1)
+
+
+def focus_ed(d, kind, what=None):
+    d._set_focus(d._order.index((kind, what))); pump(0.1)
 
 
 def menu_pick(label):
@@ -81,11 +86,11 @@ ed = app.dos_edit_text("x", "", lambda t: done.append(t)); pump(0.2)
 app.input.focus_force(); pump(0.2); app.input.event_generate("<Escape>"); pump(0.3)
 assert not app._overlay_open(), "Esc closes it even when focus strayed"
 
-# ---- gradient maker: Enter opens lists
+# ---- gradient maker: swatches you can see, lists behind Enter
 app._grad_state = {"pattern": "Fire", "mode": "stretch", "text": "", "prefix": "", "smooth": True}
 d = app.open_gradient(); pump(0.4)
-assert [f["type"] for f in d._fields] == ["pick", "pick", "text", "text", "check"]
-focus_field(d, "pattern"); key(d, "Return")
+assert isinstance(d, dosgrad.DosGradientEditor) and d._stops_list == ct.PRESETS["Fire"] and d._pattern == "Fire"
+focus_ed(d, "pick", "pattern"); key(d, "Return")
 m = overlay(); assert isinstance(m, dosui.DosMenu)
 labels = [it["label"] for it in m._items if it]
 assert "Fire" in labels and "Rainbow" in labels and "Create new..." in labels and "Import a shared one..." in labels
@@ -93,41 +98,89 @@ assert "Delete one of mine..." not in labels, "nothing of mine to delete yet"
 assert m._items[labels.index("Fire")].get("swatch"), "each pattern shows a colour swatch"
 menu_pick("Ocean"); pump(0.4)
 assert app._grad_state["pattern"] == "Ocean"
-d = overlay(); assert d._fields[0]["shown"] == "Ocean"
-focus_field(d, "mode"); key(d, "Return")
+d = overlay(); assert d._pattern == "Ocean" and d._stops_list == ct.PRESETS["Ocean"]
+focus_ed(d, "pick", "mode"); key(d, "Return")
 m = overlay(); labels = [it["label"] for it in m._items if it]
 assert any(l.startswith("edges") and "middle" in l for l in labels), labels
 menu_pick("edges"); pump(0.4)
-assert app._grad_state["mode"] == "edges" and overlay()._fields[1]["shown"] == "edges"
-# create a pattern
-d = overlay(); focus_field(d, "pattern"); key(d, "Return"); menu_pick("Create new"); pump(0.4)
+assert app._grad_state["mode"] == "edges" and overlay()._mode == "edges"
+# create a pattern by typing colours
+d = overlay(); focus_ed(d, "pick", "pattern"); key(d, "Return"); menu_pick("Create new"); pump(0.4)
 d = overlay(); assert isinstance(d, dosui.DosDialog)
 d._fields[0]["entry"].insert(0, "My Blues"); d._fields[1]["entry"].insert(0, "17 21 27 #00ccff")
 d._press(0); pump(0.5)
 assert [g["name"] for g in app.cfg["gradients"]] == ["My Blues"] and len(app.cfg["gradients"][0]["colours"]) == 4
-assert app._grad_state["pattern"] == "My Blues" and overlay()._fields[0]["shown"] == "My Blues"
+assert app._grad_state["pattern"] == "My Blues" and overlay()._pattern == "My Blues"
 # a bad one keeps the dialog open with the reason
-d = overlay(); focus_field(d, "pattern"); key(d, "Return"); menu_pick("Create new"); pump(0.4)
+d = overlay(); focus_ed(d, "pick", "pattern"); key(d, "Return"); menu_pick("Create new"); pump(0.4)
 d = overlay(); d._fields[0]["entry"].insert(0, "Bad"); d._fields[1]["entry"].insert(0, "999 nonsense")
 d._press(0); pump(0.5)
 d = overlay(); assert isinstance(d, dosui.DosDialog) and "Colours" in [f["label"] for f in d._fields] and len(app.cfg["gradients"]) == 1
 d._press(1); pump(0.4)                                     # Cancel goes back to the gradient maker
 # share and import
-d = overlay(); assert d is not None and d._title == "Gradient"
+d = overlay(); assert isinstance(d, dosgrad.DosGradientEditor) and d._title == "Gradient"
 d._press([b["result"] for b in d._buttons].index("share")); pump(0.5)
 assert app.root.clipboard_get().startswith("sgrad1:My Blues:17,21,27,"), app.root.clipboard_get()
 line = app.root.clipboard_get()
 app.delete_pattern("My Blues"); assert app.cfg["gradients"] == []
-d = overlay(); focus_field(d, "pattern"); key(d, "Return"); menu_pick("Import a shared"); pump(0.4)
+d = overlay(); focus_ed(d, "pick", "pattern"); key(d, "Return"); menu_pick("Import a shared"); pump(0.4)
 d = overlay(); d._fields[0]["entry"].insert(0, "garbage"); d._press(0); pump(0.5)
 d = overlay(); assert "not a shared gradient" in d._message and app.cfg["gradients"] == []
 d._fields[0]["entry"].delete(0, "end"); d._fields[0]["entry"].insert(0, "here: " + line); d._press(0); pump(0.5)
 assert [g["name"] for g in app.cfg["gradients"]] == ["My Blues"] and app._grad_state["pattern"] == "My Blues"
-d = overlay(); focus_field(d, "pattern"); key(d, "Return")
+d = overlay(); focus_ed(d, "pick", "pattern"); key(d, "Return")
 assert "Delete one of mine..." in [it["label"] for it in overlay()._items if it]
 menu_pick("Delete one"); pump(0.4); menu_pick("My Blues"); pump(0.5)
 assert app.cfg["gradients"] == []
 app.dos_close_overlay(); pump(0.2)
+
+# ---- editing the colours: keyboard
+app._grad_state = {"pattern": "Fire", "mode": "stretch", "text": "hello world", "prefix": "", "smooth": True}
+d = app.open_gradient(); pump(0.4); d._cv.focus_force(); pump(0.1)
+n0 = len(d._stops_list); assert d._sel == 0 and d._focus_is("stops")
+key(d, "Right"); assert d._sel == 1
+key(d, "End"); assert d._sel == n0 - 1
+key(d, "Insert"); assert len(d._stops_list) == n0 + 1 and d._pattern == "custom" and d._sel == n0
+key(d, "Delete"); assert len(d._stops_list) == n0 and d._stops_list == ct.PRESETS["Fire"], "an added stop between neighbours can be removed again"
+d._stops_list[:] = [196, 226, 46]; d._sel = 0
+d._cv.event_generate("<Control-Right>"); pump(0.3); assert d._stops_list == [226, 196, 46] and d._sel == 1
+# the palette: Enter on a swatch
+key(d, "Return"); pal = d._palette
+assert isinstance(pal, dosgrad.DosPalette) and pal.is_open() and pal._current == 196
+key(pal, "Right"); key(pal, "Return")
+assert not pal.is_open() and d._stops_list[1] != 196 and d._stops_list[0] == 226 and d._stops_list[2] == 46 and d._pattern == "custom"
+changed = d._stops_list[1]
+key(d, "Return"); pal = d._palette; key(pal, "Escape")
+assert d._stops_list[1] == changed, "Esc in the palette keeps the colour"
+# typing a hex colour snaps to the nearest xterm colour
+key(d, "Return"); pal = d._palette
+pal._var.set("#ff8800"); pal._hex_typed(apply=True); pump(0.3)
+assert d._stops_list[1] == ct.from_hex("#ff8800")[0] == 208
+# the mouse: a swatch, then the same swatch again opens the palette; [+] and [-]
+d._cv.focus_force(); pump(0.1)
+def click(w, kind, what=None):
+    hit = next(h for h in w._hits if h[0] == kind and (what is None or h[1] == what))
+    ev = type("E", (), {"x": hit[2] * w.cw + 2, "y": hit[4] * w.lh + 2})()
+    w._on_click(ev); pump(0.4)
+click(d, "stop", 2); assert d._sel == 2 and d._palette is None
+n1 = len(d._stops_list); click(d, "add"); assert len(d._stops_list) == n1 + 1
+click(d, "del"); assert len(d._stops_list) == n1
+click(d, "stop", 2); pal = d._palette; assert isinstance(pal, dosgrad.DosPalette), "clicking the selected one opens the palette"
+hit = next(h for h in pal._hits if h[0] == "cell" and h[1] == (4, 3))
+pal._on_click(type("E", (), {"x": hit[2] * pal.cw + 2, "y": hit[4] * pal.lh + 2})()); pump(0.4)
+assert d._stops_list[2] == pal._index((4, 3)) and not pal.is_open(), "a click on a palette colour chooses it"
+# the live bar and preview are drawn, and the whole editor fits
+assert d._stops_list and d._wpx <= app._holder.winfo_width() and d._hpx <= app._holder.winfo_height()
+# Reverse and Save
+st0 = list(d._stops_list)
+d._press([b["result"] for b in d._buttons].index("reverse")); pump(0.5)
+d = overlay(); assert d._stops_list == st0[::-1], "reverse turns the colours round"
+d._press([b["result"] for b in d._buttons].index("save")); pump(0.5)
+sv = overlay(); assert isinstance(sv, dosui.DosDialog) and sv._title == "Save pattern"
+sv._fields[0]["entry"].insert(0, "Mine"); sv._press(0); pump(0.6)
+assert [g["name"] for g in app.cfg["gradients"]] == ["Mine"] and app.cfg["gradients"][0]["colours"] == st0[::-1]
+d = overlay(); assert d._pattern == "Mine"
+app.delete_pattern("Mine"); app.dos_close_overlay(); pump(0.2)
 
 # ---- the customize form
 app._cust_mode, app._cust_type, app._cust_values = "cli", "clothing", custom.blank()
@@ -298,10 +351,11 @@ app._grad_state = {"pattern": "Fire", "mode": "stretch", "text": "", "prefix": "
 kept = []
 ed = app.dos_edit_text("Description", "Soft silk.\nIt smells of rain.", lambda t: kept.append(t)); pump(0.4)
 ed._cv.event_generate("<Control-g>"); pump(0.6)
-dlg = overlay(); assert isinstance(dlg, dosui.DosDialog) and dlg._title == "Colour the text" and "all of the text" in dlg._message
-focus_field(dlg, "pattern"); key(dlg, "Return"); menu_pick("Ocean"); pump(0.5)
-dlg = overlay(); assert dlg._fields[0]["shown"] == "Ocean" and "all of the text" in dlg._message, "the choice comes back to this dialog, not the gradient maker"
-focus_field(dlg, "mode"); key(dlg, "Return"); menu_pick("cycle"); pump(0.5)
+dlg = overlay(); assert isinstance(dlg, dosgrad.DosGradientEditor) and dlg._title == "Colour the text" and "all of the text" in dlg._message
+assert not dlg._entry_keys, "no text boxes when the text is being edited elsewhere"
+focus_ed(dlg, "pick", "pattern"); key(dlg, "Return"); menu_pick("Ocean"); pump(0.5)
+dlg = overlay(); assert dlg._pattern == "Ocean" and "all of the text" in dlg._message, "the choice comes back to this editor, not the gradient maker"
+focus_ed(dlg, "pick", "mode"); key(dlg, "Return"); menu_pick("cycle"); pump(0.5)
 dlg = overlay(); dlg._press(0); pump(0.6)
 ed = overlay(); assert isinstance(ed, dosui.DosTextEditor), "back in the editor"
 txt = ed.text()

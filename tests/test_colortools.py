@@ -118,4 +118,23 @@ for bad in ([], [300]):
         ct.colour_text("x", bad); assert False
     except ValueError:
         pass
+
+# ---- the stop list as a picker edits it
+flat = [i for r in ct.palette_rows() for i in r]
+assert sorted(flat) == list(range(256)) and max(len(r) for r in ct.palette_rows()) == 18
+assert ct.from_hex("#ff0000") == (196, "#ff0000", True) and ct.from_hex("ff8800")[0] == 208 and not ct.from_hex("ff8800")[2]
+try:
+    ct.from_hex("nonsense"); assert False
+except ValueError:
+    pass
+assert ct.from_hsv(120, 1, 1)[0] == 46 and ct.from_hsv(480, 1, 1)[0] == 46, "hue wraps"
+assert ct.hsv_of(196) == (0.0, 1.0, 1.0) and ct.describe(196) == "196  #ff0000"
+assert ct.add_stop([196, 226], 0) == ([196, 208, 226], 1), "a new stop sits between its neighbours"
+assert ct.add_stop([196, 226]) == ([196, 226, 226], 2) and ct.add_stop([], None)[0] == [196]
+full = list(range(ct.MAX_STOPS)); assert ct.add_stop(full, 3)[0] == full, "capped"
+assert ct.remove_stop([1, 2, 3], 2) == ([1, 2], 1) and ct.remove_stop([5], 0) == ([5], 0), "the last one stays"
+assert ct.move_stop([1, 2, 3], 0, 1) == ([2, 1, 3], 1) and ct.move_stop([1, 2, 3], 0, -1) == ([1, 2, 3], 0)
+bar = ct.preview_bar([196, 226], 5)
+assert len(bar) == 5 and bar[0] == 196 and bar[-1] == 226 and ct.preview_bar([21], 3) == [21, 21, 21] and ct.preview_bar([], 2) == [7, 7]
+assert ct.stops_text([196, 202]) == "196,202" and ct.parse_colours(ct.stops_text([196, 202])) == [196, 202]
 print("colortools tests OK")

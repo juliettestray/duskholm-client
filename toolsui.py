@@ -6,6 +6,7 @@ import tkinter as tk
 
 import colortools as ct
 import custom
+import gradwin
 
 try:
     import dosui
@@ -161,53 +162,38 @@ class ToolsMixin:
         top = self._grad_win = tk.Toplevel(self.root)
         top.title("Gradient")
         top.transient(self.root)
-        v = {"pattern": tk.StringVar(value=st["pattern"]), "mode": tk.StringVar(value=st["mode"]),
-             "prefix": tk.StringVar(value=st["prefix"]), "smooth": tk.BooleanVar(value=st["smooth"])}
-        r = 0
+        stops0 = self._grad_stops(st)
+        panel = gradwin.GradientPanel(top, self, {"stops": stops0, "mode": st["mode"], "smooth": st["smooth"],
+                                                  "pattern": self._grad_label(st, stops0)},
+                                      lambda: refresh(), self.theme)
+        panel.grid(row=0, column=0, columnspan=2, sticky="we", padx=10, pady=(8, 2))
+        top.columnconfigure(1, weight=1)
+        prefix = tk.StringVar(value=st["prefix"])
+        r = 1
 
-        def row(label, w):
+        def row(label, w, sticky="w"):
             nonlocal r
             tk.Label(top, text=label).grid(row=r, column=0, sticky="nw", padx=(10, 6), pady=3)
-            w.grid(row=r, column=1, sticky="w", pady=3, padx=(0, 10))
+            w.grid(row=r, column=1, sticky=sticky, pady=3, padx=(0, 10))
             r += 1
-        pat = tk.Frame(top)
-        tk.Entry(pat, textvariable=v["pattern"], width=34).pack(side="left")
-        mb = tk.Menubutton(pat, text="Patterns ▾", relief="raised")
-        menu = tk.Menu(mb, tearoff=0)
-        mb.configure(menu=menu)
-        mb.pack(side="left", padx=6)
-        row("Pattern", pat)
-
-        def fill_menu():
-            menu.delete(0, "end")
-            for n in ct.all_pattern_names(self.cfg.get("gradients", [])):
-                menu.add_command(label=n, command=lambda n=n: v["pattern"].set(n))
-        fill_menu()
-        modes = tk.Frame(top)
-        tk.OptionMenu(modes, v["mode"], *ct.MODES).pack(side="left")
-        helpl = tk.Label(modes, text="", anchor="w")
-        helpl.pack(side="left", padx=8)
-        row("Apply", modes)
-        opt = tk.Frame(top)
-        tk.Checkbutton(opt, text="Blend between colours", variable=v["smooth"]).pack(side="left")
-        row("", opt)
         text = tk.Text(top, width=56, height=4, wrap="word", font=self.f_norm)
         text.insert("1.0", st["text"].replace("\\n", "\n"))
-        row("Text", text)
-        row("Start with", tk.Entry(top, textvariable=v["prefix"], width=24))
+        row("Text", text, "we")
+        row("Start with", tk.Entry(top, textvariable=prefix, width=24))
         pv = tk.Text(top, width=56, height=5, wrap="word", font=self.f_norm, state="disabled")
-        row("Preview", pv)
+        row("Preview", pv, "we")
         msg = tk.Label(top, text="", anchor="w", justify="left", wraplength=420, fg="#c04040")
         msg.grid(row=r, column=0, columnspan=2, sticky="we", padx=10)
         r += 1
 
         def state_now():
-            return {"pattern": v["pattern"].get(), "mode": v["mode"].get(), "prefix": v["prefix"].get(),
-                    "smooth": v["smooth"].get(), "text": text.get("1.0", "end-1c")}
+            g = panel.get()
+            pat = g["pattern"] if g["pattern"] != "custom" else ct.stops_text(g["stops"])
+            return {"pattern": pat, "mode": g["mode"], "prefix": prefix.get(), "smooth": g["smooth"],
+                    "text": text.get("1.0", "end-1c")}
 
         def refresh(*_):
             self._grad_state = state_now()
-            helpl.configure(text=ct.MODE_HELP.get(v["mode"].get(), ""))
             coded, why = self.make_gradient(self._grad_state)
             pv.configure(state="normal")
             pv.delete("1.0", "end")
@@ -220,8 +206,7 @@ class ToolsMixin:
             else:
                 msg.configure(text=why, fg="#c04040")
             pv.configure(state="disabled")
-        for var in v.values():
-            var.trace_add("write", refresh)
+        prefix.trace_add("write", refresh)
         text.bind("<KeyRelease>", refresh)
 
         def to_input():
@@ -250,15 +235,17 @@ class ToolsMixin:
             from tkinter import simpledialog
             name = simpledialog.askstring("Save pattern", "Name for this pattern:", parent=top)
             if name:
-                ok, m = self.save_pattern(name, v["pattern"].get())
+                ok, m = self.save_pattern(name, ct.stops_text(panel.stops))
                 msg.configure(text=m)
-                fill_menu()
+                panel.refresh_patterns()
+                if ok:
+                    panel.pattern.set(" ".join(name.split())[:30])
 
         def share():
             try:
-                cols = self._pattern_colours(v["pattern"].get())
-                name = v["pattern"].get() if ct.find_pattern(v["pattern"].get(), self.cfg.get("gradients", [])) else "Pattern"
-                line = ct.share_string(name, cols)
+                label = panel.pattern.get()
+                name = label if label != "custom" else "Pattern"
+                line = ct.share_string(name, panel.stops)
             except ValueError as e:
                 msg.configure(text=str(e))
                 return
@@ -279,13 +266,14 @@ class ToolsMixin:
             ok, m = self.save_pattern(name, ",".join(str(c) for c in cols))
             msg.configure(text=m)
             if ok:
-                v["pattern"].set(name)
-                fill_menu()
+                panel.refresh_patterns()
+                panel.set_stops(cols, name)
 
         def delete():
-            if self.delete_pattern(v["pattern"].get()):
+            if self.delete_pattern(panel.pattern.get()):
                 msg.configure(text="Deleted.")
-                fill_menu()
+                panel.refresh_patterns()
+                panel.pattern.set("custom")
             else:
                 msg.configure(text="Only your own saved patterns can be deleted.")
 
@@ -295,14 +283,16 @@ class ToolsMixin:
             top.destroy()
         bf = tk.Frame(top)
         bf.grid(row=r, column=0, columnspan=2, pady=8)
-        for label, fn in (("To input", to_input), ("Copy", copy), ("Again", refresh), ("Save pattern...", save),
-                          ("Share", share), ("Import...", import_shared), ("Delete pattern", delete), ("Close", close)):
+        for label, fn in (("To input", to_input), ("Copy", copy), ("Reverse", lambda: panel.set_stops(panel.stops[::-1])),
+                          ("Save pattern...", save), ("Share", share), ("Import...", import_shared),
+                          ("Delete pattern", delete), ("Close", close)):
             tk.Button(bf, text=label, command=fn).pack(side="left", padx=3)
         top.protocol("WM_DELETE_WINDOW", close)
         top.bind("<Escape>", lambda e: close())
+        top._panel = panel
         refresh()
         self._theme_tree(top)
-        text.focus_set()
+        panel._cv.focus_set()
         return top
 
     # ---- customize -----------------------------------------------------------------------
@@ -455,17 +445,13 @@ class ToolsMixin:
         top = tk.Toplevel(parent)
         top.title("Colour the text")
         top.transient(parent)
-        saved = self.cfg.get("gradients", [])
-        pat = tk.StringVar(value=self._grad_state["pattern"] if ct.find_pattern(self._grad_state["pattern"], saved) else "Fire")
-        mode = tk.StringVar(value=self._grad_state["mode"])
-        blend = tk.BooleanVar(value=self._grad_state["smooth"])
-        tk.Label(top, text="Pattern").grid(row=0, column=0, sticky="w", padx=10, pady=4)
-        tk.OptionMenu(top, pat, *ct.all_pattern_names(saved)).grid(row=0, column=1, sticky="w")
-        tk.Label(top, text="Apply").grid(row=1, column=0, sticky="w", padx=10, pady=4)
-        tk.OptionMenu(top, mode, *ct.MODES).grid(row=1, column=1, sticky="w")
-        tk.Checkbutton(top, text="Blend between colours", variable=blend).grid(row=2, column=1, sticky="w")
-        note = tk.Label(top, text="", fg="#c04040", anchor="w", wraplength=320, justify="left")
-        note.grid(row=3, column=0, columnspan=2, sticky="we", padx=10)
+        st = {k: self._grad_state[k] for k in ("pattern", "mode", "smooth")}
+        stops0 = self._grad_stops(st)
+        panel = gradwin.GradientPanel(top, self, {"stops": stops0, "mode": st["mode"], "smooth": st["smooth"],
+                                                  "pattern": self._grad_label(st, stops0)}, lambda: None, self.theme)
+        panel.grid(row=0, column=0, sticky="we", padx=10, pady=(8, 2))
+        note = tk.Label(top, text="", fg="#c04040", anchor="w", wraplength=420, justify="left")
+        note.grid(row=1, column=0, sticky="we", padx=10)
 
         def apply():
             text = widget.get("1.0", "end-1c")
@@ -475,22 +461,25 @@ class ToolsMixin:
                 rng = (a, b) if b > a else None
             except (tk.TclError, TypeError, IndexError):
                 rng = None
+            g = panel.get()
             try:
-                out = ct.colour_text(text, self._pattern_colours(pat.get()), mode.get(), blend.get(), rng)
+                out = ct.colour_text(text, g["stops"], g["mode"], g["smooth"], rng)
             except ValueError as e:
                 note.configure(text=str(e))
                 return
             widget.delete("1.0", "end")
             widget.insert("1.0", out)
-            self._grad_state = dict(self._grad_state, pattern=pat.get(), mode=mode.get(), smooth=blend.get())
+            pat = g["pattern"] if g["pattern"] != "custom" else ct.stops_text(g["stops"])
+            self._grad_state = dict(self._grad_state, pattern=pat, mode=g["mode"], smooth=g["smooth"])
             if done:
                 done()
             top.destroy()
         bf = tk.Frame(top)
-        bf.grid(row=4, column=0, columnspan=2, pady=8)
+        bf.grid(row=2, column=0, pady=8)
         tk.Button(bf, text="Apply", width=9, command=apply).pack(side="left", padx=4)
         tk.Button(bf, text="Cancel", width=9, command=top.destroy).pack(side="left", padx=4)
         top.bind("<Escape>", lambda e: top.destroy())
+        top._panel = panel
         self._theme_tree(top)
         return top
 

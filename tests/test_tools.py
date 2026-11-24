@@ -52,9 +52,67 @@ app._local("/gradient Hello there"); pump(0.2)
 assert app.input.get().startswith("`196H") and app.input.get().endswith("`x")
 assert "Hello there" in txt(), "the coloured line is shown on screen"
 win = app.open_gradient(); pump(0.4); assert win.winfo_exists()
+import gradwin
+panel = win._panel
+assert isinstance(panel, gradwin.GradientPanel) and len(panel.stops) >= 2
+n0 = len(panel.stops)
+
+
+def click(widget, x, y):
+    widget.event_generate("<ButtonPress-1>", x=x, y=y); pump(0.2)
+
+
+def hit(kind, what=None):
+    return next(h for h in panel._hits if h[4] == kind and (what is None or h[5] == what))
+
+
+h = hit("stop", 1); click(panel._cv, h[0] + 3, h[1] + 3)
+assert panel.sel == 1 and panel._picker is None, "one click selects"
+h = hit("add"); click(panel._cv, h[0] + 3, h[1] + 3)
+assert len(panel.stops) == n0 + 1 and panel.pattern.get() == "custom", "[+] adds a colour and it is now a custom pattern"
+h = hit("del"); click(panel._cv, h[0] + 3, h[1] + 3)
+assert len(panel.stops) == n0
+panel._select(0); panel._move(1); assert panel.sel == 1
+panel.set_stops([196, 226, 46], "Mine"); panel._select(1)
+assert panel.get()["stops"] == [196, 226, 46] and panel.get()["pattern"] == "Mine"
+# the picker: a click on a selected swatch opens it; changes show on the swatch straight away
+h = hit("stop", 1); click(panel._cv, h[0] + 3, h[1] + 3)
+pk = panel._picker; assert isinstance(pk, gradwin.ColourPicker) and pk.winfo_exists() and pk._index == 226
+cell = pk._cells[46]
+pk._pal_click(type("E", (), {"x": cell[0] + 2, "y": cell[1] + 2})()); pump(0.2)
+assert panel.stops[1] == 46 and pk._index == 46, "a palette swatch is picked exactly"
+pk._var.set("#ff8800"); pump(0.2); assert panel.stops[1] == 208, "typed hex snaps to the nearest colour"
+pk._sq_click(type("E", (), {"x": pk.SQ - 1, "y": 0})()); pump(0.2)
+assert panel.stops[1] == ct.from_hsv(pk._h, 1.0, 1.0)[0], "the square sets saturation and brightness"
+old_sq = pk._h
+pk._hue_click(type("E", (), {"x": 5, "y": 5})()); pump(0.2)
+assert pk._h != old_sq and panel.stops[1] == ct.from_hsv(pk._h, pk._s, pk._v)[0]
+pk._cancel(); pump(0.2)
+assert panel.stops == [196, 226, 46] and panel._picker is None, "Cancel puts the colour back"
+panel._pick(); pk = panel._picker; pk._pal_click(type("E", (), {"x": pk._cells[21][0] + 2, "y": pk._cells[21][1] + 2})()); pk._ok(); pump(0.2)
+assert panel.stops == [196, 21, 46] and panel._picker is None, "OK keeps it"
+# keys on the swatch row
+panel._cv.focus_force(); pump(0.1)
+panel._cv.event_generate("<Right>"); pump(0.1); assert panel.sel == 2
+panel._cv.event_generate("<Insert>"); pump(0.1); assert len(panel.stops) == 4
+panel._cv.event_generate("<Delete>"); pump(0.1); assert len(panel.stops) == 3
+# the rest of the window follows
+panel._load("Ocean"); pump(0.2)
+assert panel.stops == ct.PRESETS["Ocean"] and panel.pattern.get() == "Ocean" and app._grad_state["pattern"] == "Ocean"
+panel.set_stops([196, 21]); pump(0.2); assert app._grad_state["pattern"] == "196,21", app._grad_state["pattern"]
+assert app.make_gradient(dict(app._grad_state, text="ab", mode="stretch", smooth=False))[0] == "`196a`021b`x"
 win.destroy(); app._grad_win = None
+# colour the selected text (paragraph box): the same panel
+tw = tk.Text(root); tw.insert("1.0", "plain text here")
+done_calls = []
+tg = app._text_gradient_window(root, tw, lambda: done_calls.append(1)); pump(0.3)
+tg._panel.set_stops([196, 226])
+apply_btn = [b for w in tg.winfo_children() if isinstance(w, tk.Frame) and not isinstance(w, gradwin.GradientPanel)
+             for b in w.winfo_children() if isinstance(b, tk.Button) and b.cget("text") == "Apply"][0]
+apply_btn.invoke(); pump(0.3)
+assert done_calls == [1] and ct.strip_codes(tw.get("1.0", "end-1c")) == "plain text here" and "`196" in tw.get("1.0", "end-1c")
 app.set_dos_mode(True); pump(0.4)
-box = app.open_gradient(); pump(0.3); assert isinstance(box, dosui.DosDialog)
+box = app.open_gradient(); pump(0.3); assert type(box).__name__ == "DosGradientEditor"
 app.dos_close_overlay(); pump(0.2)
 app._grad_state = dict(app._grad_state, text="Shiny")
 app.show_coloured(app.make_gradient(app._grad_state)[0]); pump(0.2)

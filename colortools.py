@@ -414,3 +414,114 @@ def strip_colour(text, rng=None):
     text = str(text if text is not None else "")
     a, b = (rng if rng and 0 <= rng[0] < rng[1] <= len(text) else (0, len(text)))
     return text[:a] + strip_codes(text[a:b]) + text[b:]
+
+
+# ---- the stop list as something you can edit with a picker -----------------------------------
+MAX_STOPS = 32
+
+
+def hsv_of(index):
+    """(hue 0-360, saturation 0-1, value 0-1) of an xterm colour."""
+    import colorsys
+    r, g, b = (v / 255.0 for v in _rgb(int(index)))
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    return h * 360.0, s, v
+
+
+def from_hsv(h, s, v, system=False):
+    """The xterm colour (index, hex) nearest to a picked hue/saturation/value."""
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v)))
+    i, hexv, _d = nearest_xterm((r * 255, g * 255, b * 255), system=system)
+    return i, hexv
+
+
+def from_hex(text, system=False):
+    """The xterm colour (index, hex, exact) nearest to typed hex; `exact` when it needed no rounding.
+    Raises ValueError for text that is not a hex colour."""
+    rgb = parse_hex(text)
+    i, hexv, d = nearest_xterm(rgb, system=system)
+    return i, hexv, d < 0.5
+
+
+def describe(index):
+    """'45  #00d7ff' for showing next to a swatch."""
+    return "%d  %s" % (int(index), XTERM[int(index)])
+
+
+def palette_rows():
+    """The 256 colours laid out for a picker: the 16 system colours (2 rows of 8), the 216-colour cube
+    (12 rows of 18) and the 24 greys (2 rows of 12). Every index appears exactly once."""
+    rows = [list(range(0, 8)), list(range(8, 16))]
+    rows += [list(range(16 + 18 * r, 34 + 18 * r)) for r in range(12)]
+    rows += [list(range(232, 244)), list(range(244, 256))]
+    return rows
+
+
+def preview_bar(stops, width, smooth=True):
+    """`width` xterm colours showing how the pattern blends from end to end (for a gradient bar)."""
+    stops = [int(s) for s in stops] or [7]
+    width = max(1, int(width))
+    return [sample(stops, (i / (width - 1.0)) if width > 1 else 0.0, smooth) for i in range(width)]
+
+
+def add_stop(stops, at=None, colour=None):
+    """New list with a stop added after position `at` (default: the end). Without a colour it takes the
+    blend of its neighbours, so adding one does not change how the gradient looks."""
+    stops = [int(s) for s in stops]
+    if len(stops) >= MAX_STOPS:
+        return stops, len(stops) - 1
+    at = len(stops) - 1 if at is None else max(0, min(len(stops) - 1, int(at)))
+    if colour is None:
+        if not stops:
+            colour = 196
+        elif at + 1 < len(stops):
+            colour = sample([stops[at], stops[at + 1]], 0.5)
+        else:
+            colour = stops[at]
+    stops.insert(at + 1, int(colour))
+    return stops, at + 1
+
+
+def remove_stop(stops, at):
+    """New list without stop `at` (the last one cannot be removed) and the position to select next."""
+    stops = [int(s) for s in stops]
+    if len(stops) <= 1 or not 0 <= at < len(stops):
+        return stops, max(0, min(at, len(stops) - 1))
+    del stops[at]
+    return stops, min(at, len(stops) - 1)
+
+
+def move_stop(stops, at, step):
+    """New list with stop `at` moved one place left (-1) or right (+1), and its new position."""
+    stops = [int(s) for s in stops]
+    to = at + (1 if step > 0 else -1)
+    if not (0 <= at < len(stops) and 0 <= to < len(stops)):
+        return stops, at
+    stops[at], stops[to] = stops[to], stops[at]
+    return stops, to
+
+
+def stops_text(stops):
+    """The stop list as the text form patterns have always used ('196,202,208')."""
+    return ",".join(str(int(s)) for s in stops)
+
+
+_FAMILIES = ("Red", "Orange", "Yellow", "Lime", "Green", "Mint", "Cyan", "Sky", "Blue", "Violet", "Magenta", "Rose")
+
+
+def hue_families():
+    """The palette grouped for finding a colour by eye: [(name, [xterm indices light to dark])]. The 16 system
+    colours (their look depends on the player's terminal) come first, then the greys, then twelve hue families.
+    Every index appears exactly once."""
+    fams = [("System", list(range(16))), ("Grey", [])]
+    buckets = {n: [] for n in _FAMILIES}
+    for i in range(16, 256):
+        h, s, v = hsv_of(i)
+        if s < 0.12:
+            fams[1][1].append(i)
+        else:
+            buckets[_FAMILIES[int(((h + 15) % 360) // 30)]].append(i)
+    key = lambda i: -(0.2126 * _rgb(i)[0] + 0.7152 * _rgb(i)[1] + 0.0722 * _rgb(i)[2])
+    fams[1][1].sort(key=key)
+    return fams + [(n, sorted(buckets[n], key=key)) for n in _FAMILIES]
