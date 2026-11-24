@@ -67,6 +67,8 @@ def validate_pane(d):
         w = {}
         if isinstance(win.get('out'), bool):
             w['out'] = win['out']
+        if isinstance(win.get('top'), bool):
+            w['top'] = win['top']
         g = win.get('geometry')
         if isinstance(g, str) and len(g) <= 40 and re.match(r'^\d+x\d+([+-]-?\d+){0,2}$', g):
             w['geometry'] = g

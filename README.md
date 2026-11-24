@@ -178,6 +178,11 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   tab leaves the main window while it is out, and an area whose panes are all out goes away (the main text gets the
   room). A pane belongs to a world and keeps updating while that world is not on screen; closing the world closes its
   windows. Where the window was, and whether it was out, is remembered per world and comes back next time.
+  **Tear-off:** while the pane sizes are unlocked (`/panelock off`), drag a pane's tab out of its area and let go
+  anywhere outside the header: it becomes a window right there (the pointer changes while you are far enough out;
+  letting go over the header is just a click, and while locked the status line says how to unlock). **On top:** the
+  "On top" box in the window, or `/ontop <pane> [on|off]`, keeps it above other windows; it is remembered with the
+  pane.
   **Resize with the mouse:** unlock with File > Lock pane sizes (or `/panelock off`), then drag the
   border between the main text and an area, or the divider between two areas stacked on one side (in
   the DOS look these are the frame lines, a whole cell thick, and the scrollbars step aside while it is

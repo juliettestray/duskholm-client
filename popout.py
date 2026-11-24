@@ -8,13 +8,15 @@ whose panes are all out disappears, giving the room back to the main text. Colou
 world is not on screen, which is what a second monitor is for. Where the window was, and whether it was out, is
 remembered with the pane (per world) and comes back next time.
 
-Ways in: the arrow at the right of a pane area's header, `/popout <pane>`; back: the Dock button, closing the window, or
-`/dock <pane>`."""
+Ways in: the arrow at the right of a pane area's header, `/popout <pane>`, or dragging a pane's tab out of its area
+(tear-off; only while the pane sizes are unlocked, /panelock off); back: the Dock button, closing the window, or
+`/dock <pane>`. The "On top" box in the window (or `/ontop <pane>`) keeps it above other windows."""
 import re
 import tkinter as tk
 
 DEFAULT_SIZE = "520x420"
 SAVE_AFTER_MS = 600
+TEAR_OUTSIDE = 14                  # how far outside its header a dragged tab must be let go to become a window
 _GEOMETRY = re.compile(r"^\d+x\d+([+-]-?\d+){0,2}$")
 
 
@@ -37,6 +39,8 @@ class PopOutMixin:
     # ---- commands ---------------------------------------------------------------------------------------------------
     def _popout_command(self, cmd, arg):
         """/popout <pane>   /dock <pane>   (with no name: which panes there are)"""
+        if cmd == "ontop":
+            return self._ontop_command(arg)
         if cmd not in ("popout", "dock"):
             return False
         name = (arg or "").strip()
@@ -52,6 +56,39 @@ class PopOutMixin:
             self.pop_out_pane(d["name"])
         elif not self.dock_pane(d["name"]):
             self.system("%s is not in its own window." % d["name"])
+        return True
+
+    def _ontop_command(self, arg):
+        """/ontop <pane> [on|off]: keep a pane's window above other windows (no on/off: flip it)."""
+        words = (arg or "").split()
+        d = self._find_pane_def(words[0]) if words else None
+        if d is None:
+            self.system("Say which pane: /ontop <pane> [on|off]." if not words else "No pane called '%s'." % words[0])
+            return True
+        now = bool((d.get("window") or {}).get("top"))
+        want = (words[1].lower() in ("on", "yes", "1")) if len(words) > 1 and words[1].lower() in (
+            "on", "off", "yes", "no", "1", "0") else (not now)
+        self.set_popout_top(d["name"], want)
+        self.system("%s stays on top of other windows: %s%s." % (d["name"], "on" if want else "off",
+                                                                  "" if self._popped(d["name"]) else " (when it is in its own window)"))
+        return True
+
+    def set_popout_top(self, name, on):
+        """Keep the pane's window above all other windows (remembered with the pane)."""
+        key = str(name).strip().lower()
+        d = self._find_pane_def(key)
+        if d is None:
+            return False
+        d["window"] = dict(d.get("window") or {}, top=bool(on))
+        pane = self._panes.get(key)
+        view = pane.get("popout") if pane else None
+        if view:
+            try:
+                view["win"].attributes("-topmost", bool(on))
+                view["top_var"].set(bool(on))
+            except tk.TclError:
+                pass
+        self._save_settings()
         return True
 
     def _popout_region_active(self, rid):
@@ -86,6 +123,14 @@ class PopOutMixin:
         bar.pack(side="top", fill="x")
         tk.Button(bar, text="Dock", width=7, command=lambda: self.dock_pane(key)).pack(side="left", padx=(6, 3), pady=4)
         tk.Button(bar, text="Clear", width=7, command=lambda: self.pane_clear(key)).pack(side="left", padx=3, pady=4)
+        top = bool((d.get("window") or {}).get("top"))
+        top_var = tk.BooleanVar(value=top)
+        tk.Checkbutton(bar, text="On top", variable=top_var,
+                       command=lambda: self.set_popout_top(key, top_var.get())).pack(side="left", padx=(10, 3))
+        try:
+            win.attributes("-topmost", top)
+        except tk.TclError:
+            pass
         box = tk.Frame(win)
         box.pack(side="top", fill="both", expand=True)
         sb = tk.Scrollbar(box)
@@ -96,7 +141,7 @@ class PopOutMixin:
         sb.configure(command=text.yview)
         text.configure(yscrollcommand=sb.set)
         view = {"key": key, "session": self.session, "win": win, "text": text, "sb": sb, "follow": True,
-                "settling": False, "unread": 0, "save_job": None}
+                "settling": False, "unread": 0, "save_job": None, "top_var": top_var}
         pane["popout"] = view                                # (from here the text counts among the text areas)
         for w, role in ((win, "panel"), (bar, "panel"), (box, "frame"), (text, "text"), (sb, "scroll")):
             self._reg(w, role)
@@ -129,7 +174,7 @@ class PopOutMixin:
         win.bind("<Configure>", lambda e, v=view: self._popout_moved(v) if e.widget is v["win"] else None)
         self._popout_clamp(win)
         pane["unread"] = 0
-        d["window"] = {"out": True, "geometry": win.geometry()}
+        d["window"] = dict(d.get("window") or {}, out=True, geometry=win.geometry(), top=top)
         self._save_settings()
         self.schedule_layout(5)
         self._style_region_ui()
@@ -174,7 +219,7 @@ class PopOutMixin:
                 geo = view["win"].geometry()
             except tk.TclError:
                 geo = (d.get("window") or {}).get("geometry")
-            d["window"] = {"out": False, "geometry": geo} if geo else {"out": False}
+            d["window"] = dict(d.get("window") or {}, out=False, **({"geometry": geo} if geo else {}))
         self._popout_destroy(pane)
         self._save_settings()
         self.schedule_layout(5)
@@ -224,7 +269,7 @@ class PopOutMixin:
         def store():
             d = self._find_pane_def(view["key"])
             if d is not None and (d.get("window") or {}).get("geometry") != geo:
-                d["window"] = {"out": True, "geometry": geo}
+                d["window"] = dict(d.get("window") or {}, out=True, geometry=geo)
                 self._save_settings()
         prev, self.session = self.session, view["session"]
         try:
@@ -269,6 +314,65 @@ class PopOutMixin:
             except tk.TclError:
                 pass
             view["follow"] = True
+
+    # ---- tear-off: drag a pane's tab out of its area ---------------------------------------------------------------------------
+    def _tab_press(self, key, e):
+        self._tab_drag = {"key": key, "x": e.x_root, "y": e.y_root, "far": False}
+        self.select_pane(key)
+
+    def _tab_outside(self, key, e):
+        """Is the pointer clear of the header the tab sits in?"""
+        reg = self._pane_region(key)
+        ui = self._region_ui.get(reg["id"]) if reg else None
+        if not ui:
+            return False
+        f = ui["frame"]
+        x0, y0 = f.winfo_rootx(), f.winfo_rooty()
+        x1, y1 = x0 + f.winfo_width(), y0 + f.winfo_height()
+        return (e.x_root < x0 - TEAR_OUTSIDE or e.x_root > x1 + TEAR_OUTSIDE or
+                e.y_root < y0 - TEAR_OUTSIDE or e.y_root > y1 + TEAR_OUTSIDE)
+
+    def _tab_motion(self, key, e):
+        drag = getattr(self, "_tab_drag", None)
+        if not drag or drag["key"] != key:
+            return
+        far = self._tab_outside(key, e)
+        if far != drag["far"]:
+            drag["far"] = far
+            reg = self._pane_region(key)
+            ui = self._region_ui.get(reg["id"]) if reg else None
+            lbl = ui["labels"].get(key) if ui else None
+            if lbl is not None:
+                try:
+                    lbl.configure(cursor="fleur" if (far and not self.panes_locked()) else "hand2")
+                except tk.TclError:
+                    pass
+
+    def _tab_release(self, key, e):
+        drag, self._tab_drag = getattr(self, "_tab_drag", None), None
+        if not drag or drag["key"] != key:
+            return
+        reg = self._pane_region(key)
+        ui = self._region_ui.get(reg["id"]) if reg else None
+        lbl = ui["labels"].get(key) if ui else None
+        if lbl is not None:
+            try:
+                lbl.configure(cursor="hand2")
+            except tk.TclError:
+                pass
+        if not self._tab_outside(key, e):
+            return                                                    # let go over the header: just a click or a nudge
+        if self.panes_locked():
+            self.set_notice("Pane sizes are locked, so tabs stay put: /panelock off lets you drag one out", 5)
+            return
+        view = self.pop_out_pane(key)
+        if view:
+            try:
+                view["win"].update_idletasks()
+                view["win"].geometry("+%d+%d" % (e.x_root - 60, e.y_root - 14))   # where it was let go, by its title bar
+                self._popout_clamp(view["win"])
+            except tk.TclError:
+                pass
 
     # ---- coming back after a restart ------------------------------------------------------------------------------------------
     def _restore_popouts(self):

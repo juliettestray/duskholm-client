@@ -238,5 +238,99 @@ assert not win2.winfo_exists() and first._panes["tells"]["popout"]["win"].winfo_
 assert app.session is first
 app.dock_pane("tells"); pump(0.3)
 
+# ---- always on top ----------------------------------------------------------------------------------------------------------------
+assert layout.validate_pane({"name": "OOC", "window": {"top": True}})["window"] == {"top": True}
+assert "window" not in layout.validate_pane({"name": "OOC", "window": {"top": "yes"}})
+v = app.pop_out_pane("Tells"); pump(0.5)
+w = v["win"]
+assert int(w.attributes("-topmost")) == 0 and v["top_var"].get() is False, "off unless asked"
+cb = [c for f in w.winfo_children() if isinstance(f, tk.Frame) for c in f.winfo_children() if isinstance(c, tk.Checkbutton)][0]
+cb.invoke(); pump(0.3)
+assert int(w.attributes("-topmost")) == 1 and app._find_pane_def("tells")["window"]["top"] is True
+saved = json.load(open(sc.SETTINGS_PATH, encoding="utf-8"))
+assert [p["window"] for p in saved["panes"] if p["name"] == "Tells"][0]["top"] is True, "saved"
+app.dock_pane("tells"); pump(0.3)
+assert app._find_pane_def("tells")["window"]["top"] is True and app._find_pane_def("tells")["window"]["out"] is False
+v = app.pop_out_pane("Tells"); pump(0.5)
+assert int(v["win"].attributes("-topmost")) == 1 and v["top_var"].get() is True, "it is remembered"
+d = app._find_pane_def("tells")["window"]
+assert d["out"] is True and d["top"] is True and d["geometry"], "the other remembered parts are kept with it"
+app._local("/ontop tells off"); pump(0.2)
+assert int(v["win"].attributes("-topmost")) == 0 and v["top_var"].get() is False
+app._local("/ontop tells"); pump(0.2)
+assert int(v["win"].attributes("-topmost")) == 1, "no on/off: it flips"
+n = len(app.out.get("1.0", "end"))
+app._local("/ontop nosuch"); app._local("/ontop"); pump(0.2)
+msg = app.out.get("1.0", "end")[n:]
+assert "No pane called 'nosuch'" in msg and "Say which pane" in msg
+app._local("/ontop ooc on"); pump(0.2)
+assert app._find_pane_def("ooc")["window"]["top"] is True and "when it is in its own window" in app.out.get("1.0", "end")
+app._local("/ontop ooc off")
+app.dock_pane("tells"); pump(0.3)
+
+# ---- tear-off: drag a tab out of its area, only while the pane sizes are unlocked --------------------------------------------------
+assert app.panes_locked(), "locked unless it was unlocked on purpose"
+
+
+def tab(key):
+    reg = app._pane_region(key)
+    ui = app._region_ui[reg["id"]]
+    return ui["labels"][key], ui["frame"]
+
+
+def drag(key, to, via=None):
+    lbl, frame = tab(key)
+    px, py = lbl.winfo_rootx() + 4, lbl.winfo_rooty() + 4
+    lbl.event_generate("<ButtonPress-1>", x=4, y=4, rootx=px, rooty=py)
+    for pt in ([via] if via else []) + [to]:
+        lbl.event_generate("<B1-Motion>", x=pt[0] - lbl.winfo_rootx(), y=pt[1] - lbl.winfo_rooty(), rootx=pt[0], rooty=pt[1], state=256)
+        pump(0.05)
+    cur = str(lbl.cget("cursor"))
+    lbl.event_generate("<ButtonRelease-1>", x=to[0] - lbl.winfo_rootx(), y=to[1] - lbl.winfo_rooty(), rootx=to[0], rooty=to[1])
+    pump(0.6)
+    return cur
+
+
+lbl, frame = tab("tells")
+fx, fy, fw, fh = frame.winfo_rootx(), frame.winfo_rooty(), frame.winfo_width(), frame.winfo_height()
+outside = (fx - 260, fy + 170)
+# locked: nothing happens, and it says why
+drag("tells", outside)
+assert not app._popped("tells") and "locked" in app._notice_text, app._notice_text
+# a click selects a tab, as always; a nudge that stays over the header is only a click
+reg = app._pane_region("tells")
+drag("ooc", (fx + 20, fy + 3))
+assert app._active_pane_key(reg) == "ooc" and not app._popped("ooc")
+# unlocked: let go outside the area and it becomes a window there
+app.set_panes_locked(False); pump(0.4)
+lbl, frame = tab("tells")
+fx, fy, fw, fh = frame.winfo_rootx(), frame.winfo_rooty(), frame.winfo_width(), frame.winfo_height()
+outside = (fx - 260, fy + 170)
+assert drag("tells", outside, via=(fx - 40, fy + 60)) == "fleur", "the pointer says it will tear off"
+assert app._popped("tells") and not app._popped("ooc"), "the tab became a window"
+m = re.match(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$", view("tells")["win"].geometry())
+assert abs(int(m.group(3)) - (outside[0] - 60)) <= 3 and abs(int(m.group(4)) - (outside[1] - 14)) <= 3, \
+    (view("tells")["win"].geometry(), outside)
+assert win_text("tells") == pane_text("tells") and app._find_pane_def("tells")["window"]["out"] is True
+app.dock_pane("tells"); pump(0.5)
+# letting go back over the header does nothing, even after a trip out
+lbl, frame = tab("tells")
+fx, fy = frame.winfo_rootx(), frame.winfo_rooty()
+drag("tells", (fx + 30, fy + 4), via=(fx - 300, fy + 200))
+assert not app._popped("tells")
+# the same in the DOS look
+app.set_dos_mode(True); pump(0.7)
+lbl, frame = tab("ooc")
+fx, fy = frame.winfo_rootx(), frame.winfo_rooty()
+drag("ooc", (fx - 200, fy + 150))
+assert app._popped("ooc"), "tear-off in the DOS look"
+app.dock_pane("ooc"); pump(0.4)
+app.set_dos_mode(False); pump(0.5)
+# locked again: no tear-off
+app.set_panes_locked(True); pump(0.3)
+lbl, frame = tab("tells")
+drag("tells", (frame.winfo_rootx() - 260, frame.winfo_rooty() + 170))
+assert not app._popped("tells")
+
 root.update(); root.destroy()
 print("pop-out pane tests OK")

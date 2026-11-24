@@ -2989,7 +2989,9 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
             key = name.lower()
             if key not in ui["labels"]:
                 lbl = tk.Label(ui["frame"], padx=6, cursor="hand2")
-                lbl.bind("<Button-1>", lambda e, k=key: self.select_pane(k))
+                lbl.bind("<ButtonPress-1>", lambda e, k=key: self._tab_press(k, e))       # a click selects it; dragging it
+                lbl.bind("<B1-Motion>", lambda e, k=key: self._tab_motion(k, e))          # out of the area tears it off
+                lbl.bind("<ButtonRelease-1>", lambda e, k=key: self._tab_release(k, e))
                 ui["labels"][key] = lbl
         if "hide" not in ui:
             hb = tk.Label(ui["frame"], text=" \u25bc " if not self.dos else " - ", padx=2, cursor="hand2")
@@ -3464,7 +3466,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (keys: /hotkeys);  /newworld [name]  /closeworld"),
-        ("/popout <pane>", "put a capture pane in a window of its own;  /dock <pane> brings it back"),
+        ("/popout <pane>", "put a capture pane in a window of its own;  /dock <pane> brings it back;  /ontop <pane>"),
         ("/import [file]", "import triggers and aliases from a MUSHclient file (or a Sanctuary world file)"),
         ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
