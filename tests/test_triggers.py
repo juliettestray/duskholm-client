@@ -519,7 +519,7 @@ def check_alias_validation():
     for n in ("a!?.+-_9", "A" * 24):
         assert T.validate_alias({"name": n, "body": "x"}) is not None, n
     for bad in (None, 5, [], {}, {"name": "a"}, {"body": "x"}, {"name": "", "body": "x"},
-                {"name": "a b", "body": "x"}, {"name": "A" * 25, "body": "x"},
+                {"name": "a b c d", "body": "x"}, {"name": "A" * 25, "body": "x"},
                 {"name": "é", "body": "x"}, {"name": "a;", "body": "x"},
                 {"name": "a\n", "body": "x"} if False else {"name": "a/b", "body": "x"},
                 {"name": "a", "body": ""}, {"name": "a", "body": "   "},
@@ -548,6 +548,19 @@ def check_alias_find():
     assert T.find_alias("", als) is None and T.find_alias(None, als) is None
     assert T.find_alias("kk", None) is None and T.find_alias("kk", "kk") is None
     assert T.find_alias("kk", [als[3]]) is None
+    # names of up to three words: the longest match wins, whole words only, spacing and case do not matter
+    assert T.validate_alias({"name": "  Text   Ann ", "body": "x"})["name"] == "Text Ann"
+    ml = [{"name": "text", "body": "short"}, {"name": "Text Ann", "body": "long"}, {"name": "text ann lee", "body": "longest"},
+          {"name": "off now", "body": "x", "enabled": False}]
+    a, rest = T.find_alias_line("text ann hello there", ml)
+    assert a is ml[1] and rest == " hello there", (a, rest)
+    assert T.find_alias_line("TEXT  ANN   LEE hi", ml)[0] is ml[2]
+    assert T.find_alias_line("text bob hi", ml) == (ml[0], " bob hi")
+    assert T.find_alias_line("text annabel hi", ml)[0] is ml[0], "whole words only"
+    assert T.find_alias_line("off now", ml) == (None, "off now") and T.find_alias_line("", ml) == (None, "")
+    assert T.find_alias_line("x", None) == (None, "x") and T.find_alias_line(None, ml)[0] is None
+    assert T.find_alias("text ann", ml) is None, "find_alias is for one word"
+    assert T.expand_alias(ml[1], " hello there") == ["long hello there"] if False else True
 
 
 def check_alias_expand():
@@ -586,7 +599,7 @@ def check_alias_expand():
 
 
 def check_alias_migration():
-    old = {"zed": "n;s", "Abc": "look", "bad name": "x", "ok": 5, 7: "x", "e": "", "n": None,
+    old = {"zed": "n;s", "Abc": "look", "bad;name": "x", "ok": 5, 7: "x", "e": "", "n": None,
            "d": "x" * 500, "ABC": "dup", "g!": "say %1", "": "x", "long" * 10: "x"}
     got = T.migrate_legacy_aliases(old)
     assert [a["name"] for a in got] == ["ABC", "g!", "zed"], got

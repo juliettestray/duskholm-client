@@ -105,8 +105,12 @@ r = MU.parse(doc(trig([("a", 0)], script='send("a" .. matches[1])')))
 assert r["triggers"][0]["actions"][0]["text"] == "a%0"
 
 # ---- alias shapes ---------------------------------------------------------------------------------------------------------------
-r = MU.parse(doc(a=als("^text ywellia (.+)", command="x") + als("^a b$", command="x") + als("^(\\w+) go", command="x")))
-assert not r["aliases"] and len(r["skipped"]) == 3 and all("more than a word" in s[2] for s in r["skipped"])
+r = MU.parse(doc(a=als("^text ywellia (.+)", script='send("text yoinkyraccoonmaskedthief " .. matches[2])') +
+                   als("^a b$", command="x") + als("^(\\w+) go", command="x") + als("^a b c d$", command="x")))
+assert [(a["name"], a["body"]) for a in r["aliases"]] == [("text ywellia", "text yoinkyraccoonmaskedthief %*"), ("a b", "x")], r["aliases"]
+assert len(r["skipped"]) == 2 and all("more than" in s[2] for s in r["skipped"]), r["skipped"]
+assert T.find_alias_line("text ywellia hi there", r["aliases"])[0] is r["aliases"][0]
+assert T.expand_alias(r["aliases"][0], " hi there") == ["text yoinkyraccoonmaskedthief hi there"]
 r = MU.parse(doc(a=als("^go$", command="a") + als("^Go$", command="b")))
 assert len(r["aliases"]) == 1 and "same name" in r["skipped"][0][2]
 r = MU.parse(doc(a=als("^go$", command="a", active="no")))

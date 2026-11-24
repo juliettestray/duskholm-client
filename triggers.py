@@ -48,7 +48,7 @@ import prompts
 
 __all__ = ["validate_trigger", "compile_trigger", "match_trigger", "match_line", "expand",
            "split_commands", "expand_commands", "plain_to_regex", "LoopGuard",
-           "validate_alias", "find_alias", "expand_alias", "migrate_legacy_aliases",
+           "validate_alias", "find_alias", "find_alias_line", "expand_alias", "migrate_legacy_aliases",
            "check_trigger", "describe_actions", "PRESETS", "get_presets"]
 
 MAX_LINE = 600
@@ -67,7 +67,8 @@ MAX_ALIASES = 300
 MAX_TRIGGERS = 1500
 
 _COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
-_ALIAS_NAME_RE = re.compile(r"[A-Za-z0-9_!?.+\-]{1,24}")
+_ALIAS_WORD = r"[A-Za-z0-9_!?.+\-]{1,24}"
+_ALIAS_NAME_RE = re.compile(r"%s(?: %s){0,2}" % (_ALIAS_WORD, _ALIAS_WORD))     # one to three words: "text ywellia"
 _CAP_NAME_RE = re.compile(r"[A-Za-z0-9_]{1,32}")
 _STARS_RE = re.compile(r"\*+")
 _ALIAS_TOKEN_RE = re.compile(r"%[0-9*%]")
@@ -644,7 +645,7 @@ def _validate_alias(d):
     name = d.get("name")
     if not isinstance(name, str) or len(name) > 64:
         return None
-    name = name.strip()
+    name = " ".join(name.split())
     if not _ALIAS_NAME_RE.fullmatch(name):
         return None
     body = _clean_text(d.get("body"), MAX_ALIAS_BODY)
@@ -664,13 +665,13 @@ def validate_alias(d):
 
 
 def find_alias(word, aliases):
-    """First ENABLED alias whose name equals `word` case-insensitively (the original list
-    entry), else None.  Invalid entries are skipped."""
+    """First ENABLED one-word alias whose name equals `word` case-insensitively (the
+    original list entry), else None.  Invalid entries are skipped."""
     try:
         if not isinstance(word, str) or not isinstance(aliases, (list, tuple)):
             return None
         w = word.strip().lower()
-        if not w:
+        if not w or " " in w:
             return None
         for a in aliases:
             v = validate_alias(a)
@@ -679,6 +680,34 @@ def find_alias(word, aliases):
         return None
     except Exception:
         return None
+
+
+def find_alias_line(line, aliases):
+    """(alias, rest of the line) for the ENABLED alias whose name is the first word(s) of
+    `line` (case-insensitive, whole words); the alias with the most words wins, then the
+    first in the list.  (None, line) when there is none.  Names of up to three words work:
+    'text ywellia' beats 'text'."""
+    try:
+        if not isinstance(line, str) or not isinstance(aliases, (list, tuple)):
+            return None, line
+        words = [m for m in re.finditer(r"\S+", line[:MAX_LINE])][:3]
+        if not words:
+            return None, line
+        low = [m.group().lower() for m in words]
+        best, best_n = None, 0
+        for a in aliases:
+            v = validate_alias(a)
+            if v is None or not v["enabled"]:
+                continue
+            parts = v["name"].lower().split(" ")
+            n = len(parts)
+            if n > best_n and n <= len(low) and low[:n] == parts:
+                best, best_n = a, n
+        if best is None:
+            return None, line
+        return best, line[words[best_n - 1].end():]
+    except Exception:
+        return None, line
 
 
 def _alias_sub(piece, words, args):

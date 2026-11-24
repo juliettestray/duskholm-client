@@ -157,7 +157,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Aliases** (`Alt+A`, or `/alias name body`, `/unalias`, `/aliases`). An alias is a first word
   that expands to commands: `;` separates them and `%1`-`%9` / `%*` are your arguments. With no `%`
   in the body, what you type after the alias is added to the last command. Old aliases written
-  with `$*` are converted to `%*` automatically.
+  with `$*` are converted to `%*` automatically. An alias name can be up to **three words**
+  (`text ann` as well as `text`): the longest name that matches the start of what you typed wins, whole
+  words only, so `text ann hello` can send to someone's long name while `text bob hi` still uses a plain
+  `text` alias. In `/alias` a name of two or three words goes in quotes: `/alias "text ann" text annabelle %*`.
 - **Capture panes** (`Ctrl+P`, File > Panes / layout). Lines can be copied into small in-client
   panes (OOC, Tells, Guide ...) docked to the top, bottom, left or right of the main text. In the
   DOS look they are plain regions of the screen with a tab row, not windows. A trigger's *Send to
@@ -320,7 +323,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   start-of-line, exact-line and regular-expression patterns (several patterns on one trigger become one rule
   each; Mudlet is case-sensitive, so they are too), the colour of a highlight trigger, the command box (`;;` and
   new lines become `;`), sounds (as a beep), folders (a switched-off folder switches off what is in it), and
-  aliases of one word, optionally followed by one capture (`^mn (.+)`). The only Lua read is a script made
+  aliases of up to three words, optionally followed by one capture (`^mn (.+)`, `^text ann (.+)`). The only Lua read is a script made
   of `send("text" .. matches[2])` lines, which becomes the same commands with `%*`/`%1` (triggers: `%1`...);
   any other script is not run and the report says so. Not read: multi-line triggers, Lua-function, line-spacer,
   colour and prompt patterns, timers, keys, scripts and buttons. More clients (TinTin++) are planned.
@@ -371,7 +374,7 @@ Local commands start with `/` (the game has none). `//text` sends `/text`.
 | Command | Does |
 | --- | --- |
 | `/connect [host [port]]`, `/disconnect`, `/reconnect`, `/quit` | connection control |
-| `/alias name a;b $*` | define an alias; `;` separates commands, `$*` is the arguments (otherwise they are appended to the last command) |
+| `/alias name a;b %*` | define an alias (`/alias "two words" ...` for a longer name); `;` separates commands, `$*` is the arguments (otherwise they are appended to the last command) |
 | `/unalias name`, `/aliases` | remove / list aliases |
 | `/log [file]` | start or stop logging |
 | `/timer 10m [label]`, `/timer list`, `/timer cancel [n]` | timers (also `21:30`, `game 21:30`) |

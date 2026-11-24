@@ -6193,8 +6193,8 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
         simply appended to the last command)."""
         if triggers is None:
             return [line]
-        word, _, rest = line.partition(" ")
-        alias = triggers.find_alias(word, triggers.for_world(self.cfg["alias_rules"], self._world_name(self.session)))
+        alias, rest = triggers.find_alias_line(
+            line, triggers.for_world(self.cfg["alias_rules"], self._world_name(self.session)))
         if alias is None:
             return [line]
         return triggers.expand_alias(alias, rest)
@@ -6286,10 +6286,14 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
         elif cmd == "clear":
             self.clear()
         elif cmd == "alias":
-            name, _, exp = arg.partition(" ")
+            if arg.startswith('"') and '"' in arg[1:]:                  # /alias "two words" expansion
+                name, _, exp = arg[1:].partition('"')
+            else:
+                name, _, exp = arg.partition(" ")
             a = triggers.validate_alias({"name": name, "body": exp.strip(), "enabled": True}) if triggers else None
             if a is None:
-                self.system("Usage: /alias name expansion   (use ; between commands, %1-%9 / %* for arguments)")
+                self.system('Usage: /alias name expansion   (use ; between commands, %1-%9 / %* for arguments; '
+                            'a name of two or three words goes in quotes: /alias "text ann" text annabelle %*)')
             else:
                 rules = [r for r in self.cfg["alias_rules"] if r["name"].lower() != a["name"].lower()]
                 if len(rules) >= triggers.MAX_ALIASES:
@@ -6300,11 +6304,12 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
                     self._save_settings()
                     self.system("Alias %s = %s" % (a["name"], a["body"]))
         elif cmd == "unalias":
-            rules = [r for r in self.cfg["alias_rules"] if r["name"].lower() != arg.strip().lower()]
+            want = " ".join(arg.strip().strip('"').split()).lower()
+            rules = [r for r in self.cfg["alias_rules"] if r["name"].lower() != want]
             if len(rules) < len(self.cfg["alias_rules"]):
                 self.cfg["alias_rules"] = rules
                 self._save_settings()
-                self.system("Removed alias %s." % arg.strip())
+                self.system("Removed alias %s." % want)
             else:
                 self.system("No such alias.")
         elif cmd == "aliases":

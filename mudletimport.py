@@ -250,7 +250,9 @@ def _convert_trigger(el, world_name, used_names, active):
 _W = r"[A-Za-z0-9_!?.+\-]{1,24}"
 _TEXT_CAP = r"\((?:\.\*|\.\+|\.\*\?|\.\+\?)\)"
 _WORD_CAP = r"\((?:\\S\+|\\w\+|\\d\+|\[\^ \]\+)\)"
-_ALIAS_RX = re.compile(r"^\^?(?P<w>%s)(?:(?:\\s\+|\\s\*|\\s| )(?P<c>%s|%s))?\$?$" % (_W, _TEXT_CAP, _WORD_CAP))
+_SEP = r"(?:\\s\+|\\s| )"
+_ALIAS_RX = re.compile(r"^\^?(?P<w>%s(?:%s%s){0,2})(?:(?:\\s\+|\\s\*|\\s| )(?P<c>%s|%s))?\$?$"
+                       % (_W, _SEP, _W, _TEXT_CAP, _WORD_CAP))
 
 
 def _alias_shape(rx):
@@ -259,7 +261,7 @@ def _alias_shape(rx):
     if not m:
         return None
     cap = m.group("c")
-    return m.group("w"), bool(cap), bool(cap and re.fullmatch(_WORD_CAP, cap))
+    return " ".join(re.split(_SEP, m.group("w"))), bool(cap), bool(cap and re.fullmatch(_WORD_CAP, cap))
 
 
 def _convert_alias(el, world_name, used, active):
