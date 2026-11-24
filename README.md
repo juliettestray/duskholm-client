@@ -344,6 +344,10 @@ python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flo
 python tests/test_access.py       # screen reader mode end to end with a fake voice
 python tests/test_updater.py      # update check/install against a fake local GitHub
 python tests/test_dosforms.py     # DOS pick lists, the text page, gradient maker and customize form (both modes)
+python tests/test_session.py      # several worlds: tabs, keys, per-world panes and rules, closing
+python tests/test_multiworld_net.py   # two worlds against two local fake servers (drops, reconnects, logging)
+python tests/test_multiworld_fuzz.py  # random world operations with the invariants checked
+python tests/test_echo_line.py    # Enter ends an unfinished game line but not a prompt
 python tests/test_dos_fit.py      # every DOS screen: nothing wrapped out of place or cut off
 python tests/test_combatfilter.py # skipping other people's fights for the voice
 python tests/test_local_server.py # needs the local test server, skips otherwise

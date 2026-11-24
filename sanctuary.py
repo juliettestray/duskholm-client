@@ -1509,6 +1509,8 @@ class Session:
         self.name, self.host, self.port, self.tls = name, host, port, tls
         self.unread = False                    # text arrived while another world was on screen
         self._view = None                      # scroll position when it was left (None: at the latest line)
+        self.char_name = ""                    # your character here, learned from the game
+        self._notice = None                    # (text, expiry time) the status line should show when it is on screen
 
 
 # attributes the App forwards to its active Session
@@ -1650,8 +1652,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         return clean_settings(cfg)
 
     def _save_settings(self):
-        if getattr(self, "_shown", None) is not None:
-            self._stash_world_panes(self._shown)          # pane settings are kept per world, automatically
+        if getattr(self, "_cfg_owner", None) is not None:
+            self._stash_world_panes(self._cfg_owner)      # pane settings are kept per world, automatically
         self.cfg["geometry"] = self.root.geometry()
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
@@ -1807,6 +1809,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         except ValueError:
             pass
         old.draft = self.input.get()
+        old._notice = (self._notice_text, self._notice_until) if getattr(self, "_notice_text", "") else None
         try:
             top, bottom = old.out.yview()
             old._view = None if bottom >= 0.999 else top           # None: it was at the latest line
@@ -1820,6 +1823,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             w.place_forget()
         self.session = self._shown = s
         self._load_world_panes(s)
+        self._cfg_owner = s
         s.unread = False
         self._dosscroll._cmd = s.out.yview
         self.apply_layout()
@@ -1828,6 +1832,11 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         self.input.delete(0, "end")
         self.input.insert(0, s.draft or "")
         self._sync_session_ui()
+        now = time.time()
+        if s._notice and s._notice[1] > now:
+            self.set_notice(s._notice[0], max(1, int(s._notice[1] - now)))
+        else:
+            self.set_notice("", 0)
         self._restore_view(s)
         for ms in (30, 150, 400):                      # the layout settles over a few redraws; keep the spot
             self.root.after(ms, lambda s=s: self._restore_view(s) if s is self._shown else None)
@@ -2413,6 +2422,9 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
                                                         known_panes=[p["name"] for p in self.cfg["panes"]])
 
     def pane_append(self, name, pieces):
+        return self._in_world_cfg(lambda: self._pane_append(name, pieces))
+
+    def _pane_append(self, name, pieces):
         """Add one line (styled pieces) to a pane; it keeps a history, trims to its limit and counts
         unread lines while its tab is not showing."""
         pane = self.pane_ensure(name)
@@ -4816,14 +4828,14 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             self._note_world_called()
             mode, self._dial_mode = self._dial_mode, None
             if mode == "modem":
-                self._say("CONNECT%s" % (" (TLS)" if self.v_tls.get() else ""))
+                self._say("CONNECT%s" % (" (TLS)" if self.session.tls else ""))
             elif mode == "telnet":
-                self._say("Connected to %s.\nEscape character is '^]'." % self.v_host.get())
+                self._say("Connected to %s.\nEscape character is '^]'." % self.session.host)
             elif self.dos and self.cfg["dos_flourish"]:
-                self.system("CONNECT%s" % (" (TLS)" if self.v_tls.get() else ""))
+                self.system("CONNECT%s" % (" (TLS)" if self.session.tls else ""))
             else:
-                self.system("Connected to %s:%s%s." % (self.v_host.get(), self.v_port.get(),
-                                                        " (TLS)" if self.v_tls.get() else ""))
+                self.system("Connected to %s:%s%s." % (self.session.host, self.session.port,
+                                                        " (TLS)" if self.session.tls else ""))
             self.update_dosbar()
         elif kind == "failed":
             self._set_disconnected()
@@ -5050,6 +5062,10 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             except OSError:
                 pass
 
+    def _char_name(self):
+        """Your character's name in the world being handled (learned from the game), else the remembered one."""
+        return getattr(self.session, "char_name", "") or self.cfg.get("char_name") or ""
+
     def _close_open_line(self):
         """You pressed Enter. A terminal would move to a new line, ending whatever unfinished line the game
         left on screen (a tell that arrives without its newline, say), so your command and the game's reply
@@ -5143,7 +5159,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             m = self._WALK_RE.match(rest)
             if m:
                 label, walk = m.group(1), m.group(2)
-                who = self.cfg.get("char_name") or "Someone"
+                who = self._char_name() or "Someone"
                 form = "" if label.lower() in ("credit", "ego form", "ego") else " (%s)" % label
                 self.set_notice("Preview%s: %s %s in from the north" % (form, who, walk), 90)
                 return
@@ -5164,8 +5180,10 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
                     pass
         elif plain.startswith("[Name"):
             m = self._NAME_RE.match(plain)
-            if m and m.group(1) != self.cfg.get("char_name"):
-                self.cfg["char_name"] = m.group(1)
+            if m and m.group(1) != self._char_name():
+                self.session.char_name = m.group(1)           # each world has its own character
+                if self._here():
+                    self.cfg["char_name"] = m.group(1)        # and the one on screen is what is remembered
                 self._save_settings()
 
     def _finish_line(self, key):
@@ -5222,7 +5240,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
                     effects.append(("note", triggers.expand(act["text"], m["captures"])))
                 elif kind == "status":
                     effects.append(("status", triggers.expand(act["text"], m["captures"]).replace(
-                        "{name}", self.cfg.get("char_name") or "Someone")))
+                        "{name}", self._char_name() or "Someone")))
                 elif kind == "speak":
                     effects.append(("speak", triggers.expand(act["text"], m["captures"]), bool(act.get("interrupt"))))
                 elif kind == "silence":
@@ -5238,7 +5256,12 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
     def set_notice(self, text, secs=60):
         """Show a short message on the status line (the toolbar, or the DOS bar) for a while."""
         text = " ".join(str(text).split())[:120]
+        if not self._here():
+            # a hidden world's status text waits for that world to come on screen
+            self.session._notice = (text, time.time() + secs) if text else None
+            return
         self._notice_text = text
+        self._notice_until = time.time() + secs if text else 0.0
         try:
             self.notice.configure(text=text)
             if self._notice_job is not None:
@@ -5427,8 +5450,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
     def _note_world_called(self):
         """Remember when a saved world was last connected."""
         try:
-            host, port = self.v_host.get().strip().lower(), int(self.v_port.get())
-        except ValueError:
+            host, port = str(self.session.host).strip().lower(), int(self.session.port)   # this world's, not the one on screen
+        except (TypeError, ValueError):
             return
         changed = False
         for w in self.cfg["worlds"]:

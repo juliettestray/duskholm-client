@@ -93,7 +93,7 @@ app.input.insert(0, "half a comm"); app.goto_world(2); pump(0.2)
 assert app.input.get() == ""; app.goto_world(1); pump(0.2); assert app.input.get() == "half a comm"
 app.input.delete(0, "end")
 # a saved world opens in its own tab when this one is busy; a busy world is reused
-app.cfg["worlds"] = [{"name": "Alpha", "host": "127.0.0.1", "port": 9, "tls": False, "note": ""}]
+app.cfg["worlds"] = [{"name": "Alpha", "host": "127.0.0.1", "port": 9, "tls": False, "note": "", "last": 0}]
 first.connected = True
 n = len(app.sessions)
 sc_start = app._start_connect
@@ -223,18 +223,68 @@ labels = [it["label"] for it in app._overlay._items if it]
 assert "Close this world" in labels, labels
 app.dos_close_overlay(); pump(0.2)
 extra.connected = True
-app.root.event_generate("<Control-Shift-W>"); pump(0.4)
+app.root.focus_force(); pump(0.15); app.root.event_generate("<Control-Shift-W>"); pump(0.4)
 cf = app._overlay; assert isinstance(cf, dosui.DosDialog) and "Hang up and close Delta" in cf._message and extra in app.sessions
 cf._press([b["result"] for b in cf._buttons].index("no")); pump(0.4)
 assert extra in app.sessions, "No keeps it"
-app.root.event_generate("<Control-Shift-W>"); pump(0.4)
+app.root.focus_force(); pump(0.15); app.root.event_generate("<Control-Shift-W>"); pump(0.4)
 cf = app._overlay; cf._press([b["result"] for b in cf._buttons].index("yes")); pump(0.4)
 assert extra not in app.sessions and app._shown is only, "Yes hangs up and closes it"
 extra2 = app.open_new_world("Echo"); pump(0.3)
-app.root.event_generate("<Control-Shift-W>"); pump(0.4)
+app.root.focus_force(); pump(0.15); app.root.event_generate("<Control-Shift-W>"); pump(0.4)
 assert extra2 not in app.sessions and not app._overlay_open(), "a disconnected world closes without asking"
 app.dos_main_menu(); pump(0.3)
 assert "Close this world" not in [it["label"] for it in app._overlay._items if it], "no entry when there is only one"
 app.dos_close_overlay(); app.set_dos_mode(False); pump(0.3)
+
+# ---- a capture trigger firing in a hidden world must not touch the visible world's panes
+import triggers, worldtabs
+vis = app.sessions[0]; app.goto_world(1); pump(0.3)
+app.cfg["panes"], app.cfg["layout"], app.cfg["panes_hidden"] = [], {"regions": [], "min_main_cols": 80}, []
+hid = app.open_new_world("Hidden"); pump(0.3)
+app.goto_world(1); pump(0.4)
+app.cfg["triggers"] = [triggers.validate_trigger({"name": "r", "mode": "plain", "pattern": "tellme*",
+                                                  "actions": [{"type": "route", "pane": "Tells"}]})]
+assert app.cfg["triggers"][0] is not None
+hid.connected = True
+hid.q.put((hid.conn.gen, "data", ("tellme hello" + CR).encode())); pump(0.9)
+assert app._shown is vis and app._cfg_owner is vis
+assert app.cfg["panes"] == [] and app.cfg["layout"]["regions"] == [], "the visible world's panes are untouched"
+assert "tells" in hid._panes and "tells" not in vis._panes, ("the pane belongs to the world it came from", sorted(hid._panes), sorted(vis._panes), app.cfg["panes"], hid.out.get("1.0","end")[-80:])
+assert [d["name"] for d in app.cfg["world_panes"]["hidden"]["panes"]] == ["Tells"] and app.cfg["world_panes"]["hidden"]["layout"]["regions"]
+app._save_settings()
+assert app.cfg["panes"] == [] and [d["name"] for d in app.cfg["world_panes"]["hidden"]["panes"]] == ["Tells"], "saving does not mix them up"
+app.goto_world(2); pump(0.9)
+assert [d["name"] for d in app.cfg["panes"]] == ["Tells"] and hid._panes["tells"]["text"].winfo_ismapped()
+assert "hello" in hid._panes["tells"]["text"].get("1.0", "end")
+app.cfg["triggers"] = []
+hid.connected = False
+app.goto_world(1); app.close_world(hid)
+
+# ---- each world has its own character name (the game tells us with the display command)
+c1 = app.sessions[0]; app.goto_world(1); pump(0.3)
+c2 = app.open_new_world("Chars"); pump(0.3)
+app.goto_world(1); pump(0.3)
+c1.q.put((c1.conn.gen, "data", ("[Name        ] - Alice" + CR).encode()))
+c2.q.put((c2.conn.gen, "data", ("[Name        ] - Bobby" + CR).encode()))
+pump(0.9)
+assert c1.char_name == "Alice" and c2.char_name == "Bobby", (c1.char_name, c2.char_name)
+assert app.cfg["char_name"] == "Alice", "only the world on screen is what gets remembered"
+app.session = c2; assert app._char_name() == "Bobby"; app.session = c1; assert app._char_name() == "Alice"
+app.goto_world(1); app.close_world(c2)
+
+# ---- a hidden world's status-line text waits for that world
+n1 = app.sessions[0]; app.goto_world(1); pump(0.3)
+n2 = app.open_new_world("Notes"); pump(0.3)
+app.goto_world(1); pump(0.3)
+app.set_notice("mine", 60); assert app._notice_text == "mine"
+app.session = n2; app.set_notice("from the hidden one", 60); app.session = n1
+assert app._notice_text == "mine", "a hidden world does not overwrite the status line"
+app.goto_world(2); pump(0.3)
+assert app._notice_text == "from the hidden one" and app.notice.cget("text") == "from the hidden one"
+app.goto_world(1); pump(0.3)
+assert app._notice_text == "mine", "and your own comes back when you return"
+app.set_notice("", 0)
+app.goto_world(1); app.close_world(n2)
 root.destroy()
 print("session tests OK")

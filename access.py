@@ -121,7 +121,7 @@ class AccessMixin:
         if not cfg:
             return False
         p = self._last_prompt
-        return combatfilter.should_skip(plain, cfg, self.cfg.get("char_name") or "", bool(p and p.get("text")))
+        return combatfilter.should_skip(plain, cfg, self._char_name(), bool(p and p.get("text")))
 
     def open_combat_filter(self):
         """Which fighting lines not about you are skipped by the voice."""

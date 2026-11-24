@@ -32,6 +32,7 @@ def clean_world_panes(raw, layout):
 class WorldTabsMixin:
     def _worlds_init(self):
         self._shown = self.session
+        self._cfg_owner = self.session             # the world whose pane settings are in self.cfg right now
         self.session.unread = False
         self._world_label = None
 
@@ -63,6 +64,23 @@ class WorldTabsMixin:
         self.cfg["panes"] = copy.deepcopy(e["panes"])
         self.cfg["layout"] = copy.deepcopy(e["layout"])
         self.cfg["panes_hidden"] = list(e["panes_hidden"])
+
+    def _in_world_cfg(self, fn):
+        """Run fn() with the pane settings of the world being handled. For the world on screen that is a plain
+        call; for a hidden world the settings in self.cfg are swapped to its own for the duration, so
+        something it does (a trigger routing a line to a pane, say) never lands in the visible world's settings."""
+        if self._here():
+            return fn()
+        owner, shown = self.session, self._shown
+        self._stash_world_panes(self._cfg_owner)
+        self._load_world_panes(owner)
+        self._cfg_owner = owner
+        try:
+            return fn()
+        finally:
+            self._stash_world_panes(owner)
+            self._load_world_panes(shown)
+            self._cfg_owner = shown
 
     def _rename_world(self, s, name):
         """A world that dials a saved one takes its name (and that name's remembered panes, if any)."""
