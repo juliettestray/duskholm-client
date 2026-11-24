@@ -113,6 +113,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   port, TLS and a note, plus the date of your last call. In the DOS look it is a Telix-style
   directory (`Enter` dial, `A` add, `E` edit, `Del` remove, `Esc` close); in the normal look it is
   an ordinary list window. *Duskholm* is saved by default.
+- **Several worlds at once.** Dialing a saved world while this one is connected opens it in its own
+  tab (up to 12); dialing one that is already open switches to it. `Ctrl+F1` .. `Ctrl+F12` show
+  the 1st .. 12th world, `/world [n|name]`, `/newworld [name]` and `/closeworld` do the same by
+  command. The tabs sit in the top bar (DOS look) or the toolbar (normal look): the world on screen
+  is in brackets and a world with new text while hidden gets a `*` and one beep. Each world has its
+  own scrollback, connection, command history and half-typed line; the stat bar, status line and
+  screen reader follow only the world you are looking at.
 - **Dial by hand.** While not connected, type `ATDT <host> <port>` (also `ATD`, `ATDP`, `ATT`,
   `host:port`, a saved world's name, and an optional `tls`/`plain`) and the client answers like a
   modem: `DIALING ...`, `CONNECT` or `NO CARRIER`. Typing `telnet` gives a small pretend telnet

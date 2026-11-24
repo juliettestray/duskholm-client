@@ -36,7 +36,8 @@ class AccessMixin:
 
     # ---- state -------------------------------------------------------------------------
     def sr_on(self):
-        return bool(self.cfg.get("screen_reader"))
+        # a world that is not on screen stays silent
+        return bool(self.cfg.get("screen_reader")) and self._here()
 
     def set_screen_reader(self, on, announce=True):
         on = bool(on)

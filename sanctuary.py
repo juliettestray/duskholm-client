@@ -68,6 +68,7 @@ import speech
 import access
 import combatfilter
 import updateui
+import worldtabs                   # several worlds at once: tabs, Ctrl+F1..F12
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -1502,6 +1503,7 @@ class Session:
 
     def __init__(self, name="", host="", port=0, tls=True):
         self.name, self.host, self.port, self.tls = name, host, port, tls
+        self.unread = False                    # text arrived while another world was on screen
 
 
 # attributes the App forwards to its active Session
@@ -1524,7 +1526,8 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, toolsui.ToolsMixin, access.AccessMixin):
+class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+          toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
         self.cfg = self._load_settings()
@@ -1557,6 +1560,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         self._extras_init()
         self._tools_init()
         self._forms_init()
+        self._worlds_init()
         self._access_init()
         self._update_init()
         self._prompt_time = 0.0                       # when the last prompt arrived (for self-ticking timers)
@@ -1735,6 +1739,8 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
                 fn()
             finally:
                 self.session = prev
+            if s is not self._shown and s in self.sessions:
+                self._sync_session_ui()
         return self.root.after(ms, run)
 
     def add_session(self, name):
@@ -1775,16 +1781,24 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         if s is self.session or s not in self.sessions:
             return
         old = self.session
+        try:                                           # what was typed in the host box belongs to the world we leave
+            old.host, old.port, old.tls = (self.v_host.get().strip(), int(self.v_port.get()), bool(self.v_tls.get()))
+        except ValueError:
+            pass
+        old.draft = self.input.get()
         for w in (old._mid, old._sb, old.out):
             w.pack_forget()
             w.place_forget()
-        self.session = s
+        self.session = self._shown = s
+        s.unread = False
         self._dosscroll._cmd = s.out.yview
         self.apply_layout()
         if self._panes_active or self.cfg["layout"]["regions"]:
             self.schedule_layout(5)
         self.input.delete(0, "end")
+        self.input.insert(0, s.draft or "")
         s.out.see("end")
+        self._sync_session_ui()
 
     def _reg(self, widget, role):
         """Register a widget so apply_theme() can restyle it."""
@@ -1850,6 +1864,9 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         self.pane_badge.pack(side="right", padx=8)
         self.clock_label = self._reg(tk.Label(top, text="", anchor="e"), "label")
         self.clock_label.pack(side="right", padx=8)
+        self._world_label = self._reg(tk.Label(top, text="", anchor="e", cursor="hand2"), "label")
+        self._world_label.bind("<Button-1>", lambda e: self.goto_world(
+            self.sessions.index(self._shown) % len(self.sessions) + 1))
 
         # holder = the coloured "overscan" border; in the DOS look the 80-column screen is
         # centred inside it, in the normal look the screen simply fills it
@@ -1896,6 +1913,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             w.bind("<Control-minus>", lambda e: self._zoom(-1))
             w.bind("<Control-l>", lambda e: self.clear())
         self._bind_hotkeys()                                   # Ctrl-T, Alt-M ... (changeable: /hotkeys)
+        self._bind_world_keys()                                # Ctrl-F1 .. Ctrl-F12 pick a world
         if self.cfg.get("clock", "off") != "off":
             self._start_xtick()
 
@@ -2942,11 +2960,12 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
     def update_dosbar(self):
         """Fill the two status rows from the live connection / prompt state."""
         bar = self.dosbar
-        if bar is None or not self.dos:
+        if bar is None or not self.dos or not self._here():
             return
         try:
             up = self.connected or self.connecting
-            bar.set_hints([("F1", "Help", 8), ("F2", "Hangup" if up else "Dial", 7), ("F3", "Log", 3),
+            bar.set_hints(self.world_hints() +
+                          [("F1", "Help", 8), ("F2", "Hangup" if up else "Dial", 7), ("F3", "Log", 3),
                            ("F5", "Skin", 4), ("F6", "Colours", 5), ("F7", "Font", 5), ("F10", "Menu", 9),
                            ("F11", "Full", 6), ("F12", "About", 2), ("^W", "Worlds", 1)],
                            right="Alt-D Normal  Alt-X Exit")
@@ -3183,6 +3202,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
 
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
+        ("/world [n|name]", "switch world (Ctrl+F1..F12);  /newworld [name]  /closeworld"),
         ("/triggers  /alias", "triggers and aliases (/alias name body, /unalias, /aliases)"),
         ("/timer 10m [label]", "a timer; also 21:30, game 21:30, list, cancel [n]"),
         ("/moon  /notes", "the moon window; the notepad"),
@@ -4674,6 +4694,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             shown = self.session
             for s in list(self.sessions):
                 self.session = s               # this world is "the" world while its events are handled
+                busy = not s.q.empty()
                 try:
                     while time.time() < deadline:
                         try:
@@ -4693,6 +4714,8 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
                         self.last_send = time.time()
                 finally:
                     self.session = shown
+                if s is not shown and busy:
+                    self._sync_session_ui()
         except Exception:  # noqa: BLE001
             traceback.print_exc()
         finally:
@@ -4796,12 +4819,15 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             # which would otherwise leave input masked for the whole session. Only this positive
             # evidence lifts the mask; guessing could leak a password into the log.
             self.term.echo_off = False
-            self.input.configure(show="")
+            if self._here():
+                self.input.configure(show="")
         self._prompt_time = time.time()
         if p == self._last_prompt:
             self._start_cd_tick()
             return
         self._last_prompt = p
+        if not self._here():
+            return                                     # a hidden world keeps its stats; the screen shows the other
         self.statbar.set_data(self._prompt_view())
         self._statbar_show()
         self.update_dosbar()
@@ -4866,7 +4892,8 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             elif k == "send":
                 self.conn.send(ev[1])
             elif k == "echo":
-                self.input.configure(show="" if ev[1] else "*")
+                if self._here():
+                    self.input.configure(show="" if ev[1] else "*")
                 if not ev[1]:
                     self.hist_pos = len(self.history)
             elif k == "bell" and self.cfg.get("bell"):
@@ -4930,6 +4957,9 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         return self.root.focus_displayof() is not None
 
     def _new_output_bell(self):
+        if not self._here():
+            self._mark_activity()
+            return
         mode = self.cfg.get("bell_new", "off")
         if mode == "off" or time.time() - self._last_new_bell < 2.0:
             return
@@ -5025,6 +5055,8 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             g[0] = (g[0][0], hp[1], hp[1])
             new["gauges"] = g
         self._last_prompt = new
+        if not self._here():
+            return
         view = self._prompt_view()
         self.statbar.set_data(view)
         self.update_dosbar()
@@ -5310,10 +5342,16 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             self._begin_dial(w["host"], w["port"], w["tls"], mode)
 
         if self.connected or self.connecting:
-            self.toggle_connection()
-            self.root.after(300, go)
+            for s in self.sessions:                    # already open in a tab: go there
+                if s.name == w["name"] and (s.connected or s.connecting):
+                    self.switch_session(s)
+                    return
+            if self.open_new_world(w["name"]) is None:
+                return
         else:
-            go()
+            self.session.name = w["name"]
+            self._refresh_world_ui()
+        go()
 
     def _save_worlds(self, worlds):
         self.cfg["worlds"] = clean_worlds(worlds)
@@ -5771,7 +5809,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         cmd, _, arg = line[1:].partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
-                or self._update_command(cmd, arg):
+                or self._update_command(cmd, arg) or self._worlds_command(cmd, arg):
             return
         if cmd == "export":
             if arg:
@@ -5789,6 +5827,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         if cmd in ("help", "?"):
             self.system("Local commands:\n"
                         "  /connect [host [port]]   /disconnect   /reconnect   /quit\n"
+                        "  /world [n|name]          /newworld [name]   /closeworld   (Ctrl+F1..F12)\n"
                         "  /alias name expansion    (use ; between commands, $* for arguments)\n"
                         "  /unalias name            /aliases\n"
                         "  /log [file]              start or stop logging\n"
@@ -5879,15 +5918,20 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         self._start_connect()
 
     def _start_connect(self, auto=False, quiet=False, mode=None):
-        host = self.v_host.get().strip()
-        try:
-            port = int(self.v_port.get())
-        except ValueError:
-            messagebox.showerror("Port", "Port must be a number.")
-            self._cancel_reconnect()
-            return
-        self.cfg.update(host=host, port=port, tls=self.v_tls.get())
-        self._save_settings()
+        if self._here():
+            host = self.v_host.get().strip()
+            try:
+                port = int(self.v_port.get())
+            except ValueError:
+                messagebox.showerror("Port", "Port must be a number.")
+                self._cancel_reconnect()
+                return
+            tls = bool(self.v_tls.get())
+            self.session.host, self.session.port, self.session.tls = host, port, tls
+            self.cfg.update(host=host, port=port, tls=tls)
+            self._save_settings()
+        else:
+            host, port, tls = self.session.host, self.session.port, self.session.tls
         self.connecting = True
         self.btn.configure(text="Cancel")
         self.status.configure(text="Connecting…")
@@ -5901,7 +5945,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         self.update_dosbar()
         self.gen += 1
         self.conn = Connection(self.q, self.gen)
-        self.conn.open(host, port, self.v_tls.get(), self.v_verify.get())
+        self.conn.open(host, port, tls, self.v_verify.get())
 
     # ---- auto-reconnect ----------------------------------------------
     def _auto_toggled(self):
@@ -6291,6 +6335,11 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
 
     def on_quit(self):
         self._cancel_reconnect()
+        for s in self.sessions:
+            try:
+                s.conn.close()
+            except Exception:  # noqa: BLE001
+                pass
         self.conn.close()
         if self.logfile:
             self.logfile.close()
