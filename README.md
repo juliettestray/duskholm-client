@@ -183,7 +183,12 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   three areas yourself as `side size panes` (e.g. `right 40 OOC, Tells`) with a live preview. The
   main text always keeps at least 80 columns: areas that would squeeze it are narrowed, then hidden.
   Several panes in one area become tabs (`Ctrl+1`..`9` select, `*3` shows unread lines). Ready-made
-  trigger presets capture OOC, tells and Guide/Newbie.
+  trigger presets capture OOC, tells and Guide/Newbie, and **phone texts**: *Capture phone texts (no repeats)* sends
+  every date-stamped message line (`[Jun  9 12:34]Name: ...`) that looking at your phone shows to a Phone pane, and
+  only the ones that pane does not already have, however often you look: a text the game wrapped onto a second line
+  comes along with it, two word-for-word identical texts in the same minute are both kept (and not doubled on the
+  next look), and clearing the pane makes the next look fill it again. It is a route action with the box *Skip lines it
+  already has* (`once`), so any log the game repeats can be captured the same way.
   Each pane area has a small fold button (`-`); `Alt+1`..`9` fold away or bring back the area
   holding that pane and `Alt+0` all of them. Folded panes keep collecting; the bar says
   `Unread: OOC*3`. In the DOS look everything sits in one double-line frame whose joins match.
@@ -452,6 +457,7 @@ python tests/test_custom.py       # the customize form's commands and the design
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
 python tests/test_buttons.py      # buttons: bar, hotkeys, per-world scope, docking, manager, both looks
 python tests/test_worldtabs_ui.py  # the row of world tabs, and clickable key hints in the DOS look
 python tests/test_entrybox.py     # the growing entry box: lines, Shift+Enter, history, passwords, both looks

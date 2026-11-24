@@ -77,6 +77,7 @@ import importui                    # import triggers and aliases from another cl
 import popout                      # a capture pane in a window of its own
 import entrybox                    # an entry box that grows as you type (optional)
 import buttons                     # a bar of clickable buttons that send commands
+import capture                     # capture a repeating log onto a pane without doubling lines
 import editmenu                    # right-click Cut / Copy / Paste
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
@@ -1097,7 +1098,10 @@ def trigger_from_values(v):
     if str(v.get("send", "")).strip():
         actions.append({"type": "send", "text": str(v["send"]).strip(), "echo": bool(v.get("echo", True))})
     if str(v.get("pane", "")).strip():
-        actions.append({"type": "route", "pane": str(v["pane"]).strip(), "gag": bool(v.get("pane_gag"))})
+        route = {"type": "route", "pane": str(v["pane"]).strip(), "gag": bool(v.get("pane_gag"))}
+        if v.get("pane_once"):
+            route["once"] = True
+        actions.append(route)
     if v.get("beep"):
         actions.append({"type": "beep"})
     if str(v.get("note", "")).strip():
@@ -1149,6 +1153,10 @@ _PRESET_DEFS = [
      "actions": [{"type": "route", "pane": "Guide"}]},
     {"name": "Capture Newbie to a pane", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
      "actions": [{"type": "route", "pane": "Guide"}]},
+    # a phone shows its whole message log every time you look at it, each message with its own date and time
+    {"name": "Capture phone texts (no repeats)", "mode": "regex", "ignore_case": False, "priority": 0,
+     "pattern": "^\\[[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}\\]",
+     "actions": [{"type": "route", "pane": "Phone", "once": True}]},
 ]
 
 
@@ -1163,7 +1171,7 @@ def values_from_trigger(t):
     """The editors' simple values for an existing trigger (None for a new one)."""
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
          "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "every": False, "hide": False, "send": "",
-         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "status": "",
+         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "pane_once": False, "status": "",
          "speak": "", "speak_int": False, "silence": False, "glob": True, "world": ""}
     if not t:
         return v
@@ -1190,7 +1198,7 @@ def values_from_trigger(t):
         elif k == "silence":
             v["silence"] = True
         elif k == "route":
-            v.update(pane=a["pane"], pane_gag=bool(a.get("gag")))
+            v.update(pane=a["pane"], pane_gag=bool(a.get("gag")), pane_once=bool(a.get("once")))
         else:
             v["keep"].append(a)
     return v
@@ -1569,7 +1577,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -2650,6 +2658,7 @@ class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, impo
             pane["history"].clear()
             pane["unread"] = 0
             pane["follow"] = True
+            self._once_forget(key)
             self._popout_clear(pane)
             self._style_region_ui()
 
@@ -3988,7 +3997,7 @@ class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, impo
         v0 = values_from_trigger(existing)
         sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "status", "speak")}
         bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole", "every",
-                                                           "hide", "echo", "beep", "pane_gag", "speak_int", "silence",
+                                                           "hide", "echo", "beep", "pane_gag", "pane_once", "speak_int", "silence",
                                                            "glob")}
         r = 0
 
@@ -4029,6 +4038,7 @@ class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, impo
         cap = tk.Frame(win)
         tk.Entry(cap, textvariable=sv["pane"], width=24).pack(side="left")
         tk.Checkbutton(cap, text="Also hide from the main window", variable=bv["pane_gag"]).pack(side="left", padx=8)
+        tk.Checkbutton(cap, text="Skip lines it already has", variable=bv["pane_once"]).pack(side="left", padx=8)
         row("Send to pane", cap)
         row("Client note", tk.Entry(win, textvariable=sv["note"], width=64))
         row("Status line", tk.Entry(win, textvariable=sv["status"], width=64))
@@ -4234,6 +4244,7 @@ class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, impo
                       c("hide", "Hide line from screen"),
                       t("send", "Send command", 40), c("echo", "Show sent command"), c("beep", "Beep"),
                       t("pane", "Send to pane", 24), c("pane_gag", "...and hide from main window"),
+                      c("pane_once", "...skip lines it already has"),
                       t("note", "Client note", 40), t("status", "Status line text", 40)]
             buttons = [("Save", "save"), ("< Back", "back"), ("Cancel", "cancel")]
             title = "Trigger: actions"
@@ -5546,10 +5557,11 @@ class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, impo
     def _run_triggers(self, pieces, plain, flushed, drawn=()):
         """Returns (pieces_to_show_or_None, side_effects). Highlight and hide only apply to text
         that has not been drawn yet; commands, beeps and notes always run."""
+        self._once_line(plain)
         if triggers is None or not plain or not any(t.get("enabled", True) for t in self.cfg["triggers"]):
             return pieces, []
         self._guard.begin_line()
-        gag, effects, routes = False, [], []
+        gag, effects, routes, once_routes = False, [], [], []
         for trig, m in triggers.match_line(plain, triggers.for_world(self.cfg["triggers"], self._world_name(self.session))):
             for act in trig["actions"]:
                 kind = act["type"]
@@ -5565,7 +5577,7 @@ class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, impo
                 elif kind == "gag":
                     gag = True
                 elif kind == "route":
-                    routes.append(act["pane"])
+                    (once_routes if act.get("once") else routes).append(act["pane"])
                     gag = gag or bool(act.get("gag"))        # copy by default; "hide from main" is per rule
                 elif kind == "send":
                     effects.append(("send", trig["name"], act, m["captures"]))
@@ -5580,11 +5592,16 @@ class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, impo
                     effects.append(("speak", triggers.expand(act["text"], m["captures"]), bool(act.get("interrupt"))))
                 elif kind == "silence":
                     effects.append(("silence",))
-        if routes:
+        if routes or once_routes or self.__dict__.get("_once"):
             # a line that was drawn in parts (it trickled in) keeps its colours: what was drawn, then the rest
             snapshot = list(drawn) + list(pieces) if (drawn or pieces) else [(plain, (None, None, False, False, False, False))]
             for pane in routes:
                 effects.insert(0, ("route", pane, snapshot))      # panes get the line before commands run
+            if once_routes:
+                for pane in dict.fromkeys(once_routes):
+                    self._once_begin(pane, snapshot, plain)
+            else:
+                self._once_continue(snapshot, plain)
         if gag and not flushed:
             return None, effects
         return pieces, effects

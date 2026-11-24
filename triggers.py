@@ -516,9 +516,13 @@ def _clean_action(a):
     if t == "route":
         pane = _clean_text(a.get("pane"), MAX_PANE)
         gag = a.get("gag", False)
-        if pane is None or not isinstance(gag, bool):
+        once = a.get("once", False)
+        if pane is None or not isinstance(gag, bool) or not isinstance(once, bool):
             return None
-        return {"type": "route", "pane": pane, "gag": gag}
+        out = {"type": "route", "pane": pane, "gag": gag}
+        if once:
+            out["once"] = True               # skip a line this pane was already given (a log the game shows again and again)
+        return out
     return None
 
 
