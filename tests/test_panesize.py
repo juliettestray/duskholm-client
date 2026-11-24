@@ -103,6 +103,43 @@ assert not app._sash_hits
 app._canvas_press(Ev(x=sx + 10, y=sy + 2)); assert app._sash_drag is None
 app.set_dos_mode(False); pump(0.3)
 
+# a picture or the notepad covering the main area stays on top of the panes, headers and drag bars
+import io
+from PIL import Image
+build("Right column")
+buf = io.BytesIO(); Image.new("RGB", (40, 30), (200, 40, 40)).save(buf, "PNG")
+app.set_panes_locked(False); pump(0.3)
+assert app.show_image("https://x.example/a.png", buf.getvalue()) is True; pump(0.3)
+frame = app._image_view["frame"]
+
+
+def top_child():
+    return app._holder.tk.eval("lindex [winfo children %s] end" % app._holder)
+
+
+app.layout_panes(); pump(0.2)
+assert top_child() == str(frame), "after a re-layout the picture is still the topmost thing: " + top_child()
+app.set_panes_locked(True); app.set_panes_locked(False); pump(0.2)
+assert top_child() == str(frame), "and after locking and unlocking"
+app.pane_ensure("Late"); app.layout_panes(); pump(0.2)
+assert top_child() == str(frame), "and when a new pane appears"
+opened = []
+sc.webbrowser.open = lambda u, *a, **k: opened.append(u)
+app._image_view["cv"].event_generate("<Button-1>", x=20, y=20); pump(0.2)
+assert not opened, "a click on the picture only takes the focus; it never opens the browser"
+app.close_image_view(); pump(0.2)
+app.toggle_notepad(); pump(0.3)
+nf = app._notepad["frame"]
+app.layout_panes(); pump(0.2)
+assert top_child() == str(nf), "the notepad too"
+app.toggle_notepad(); pump(0.2)
+# a DOS dialog (the description editor is one) stays on top of the panes after a re-layout
+app.set_dos_mode(True); pump(0.5)
+ed = app.dos_edit_text("Description", "hello", lambda r: None); pump(0.3)
+app.layout_panes(); pump(0.2)
+assert app._panes_active and top_child() == str(ed), top_child()
+ed.close(); app.set_dos_mode(False); pump(0.3)
+
 # /panelock and the menu variable
 app._local("/panelock off"); assert not app.panes_locked() and not app.v_panelock.get()
 app._local("/panelock on"); assert app.panes_locked() and app.v_panelock.get()

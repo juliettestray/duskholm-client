@@ -2227,7 +2227,8 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
 
     def show_image(self, url, data):
         """Show a picture over the main text area, scaled to fit (a viewer, not a pane: a pane can be
-        tiny). Esc closes it; O or a click opens the original in the browser. False when the picture
+        tiny). Esc closes it; O or its button opens the original in the browser (a plain click never does,
+        so clicking back into the window cannot throw you out to the browser). False when the picture
         cannot be decoded here."""
         self.close_image_view()
         try:
@@ -2249,10 +2250,15 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         th = self.theme
         frame = tk.Frame(self._holder, bd=0, highlightthickness=0, bg=th["panel"])
         name = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1][:60] or "image"
-        head = tk.Label(frame, anchor="w", padx=8, font=self.f_bold, bg=th["panel"], fg=th["fg"],
-                        text="%s  (%d x %d)    Esc: close    O or click: open the original in your browser"
+        bar = tk.Frame(frame, bd=0, highlightthickness=0, bg=th["panel"])
+        bar.pack(fill="x")
+        head = tk.Label(bar, anchor="w", padx=8, font=self.f_bold, bg=th["panel"], fg=th["fg"],
+                        text="%s  (%d x %d)    Esc: close    O: open the original in your browser"
                         % (name, size[0], size[1]))
-        head.pack(fill="x")
+        head.pack(side="left", fill="x", expand=True)
+        tk.Button(bar, text="Close", command=self.close_image_view, takefocus=0).pack(side="right", padx=4, pady=2)
+        tk.Button(bar, text="Open original", command=lambda: webbrowser.open(url), takefocus=0).pack(
+            side="right", padx=2, pady=2)
         cv = tk.Canvas(frame, bg=th["bg"], highlightthickness=0, bd=0, takefocus=1)
         cv.pack(fill="both", expand=True)
         view = {"frame": frame, "cv": cv, "url": url, "photo": None, "job": None}
@@ -2288,7 +2294,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         cv.bind("<Escape>", lambda e: (self.close_image_view(), "break")[1])
         cv.bind("<Key-o>", lambda e: (webbrowser.open(url), "break")[1])
         cv.bind("<Key-O>", lambda e: (webbrowser.open(url), "break")[1])
-        cv.bind("<Button-1>", lambda e: (webbrowser.open(url), "break")[1])
+        cv.bind("<Button-1>", lambda e: (cv.focus_set(), "break")[1])      # a click only takes the focus
         frame.place(x=0, y=0, relwidth=1.0, relheight=1.0)
         frame.lift()
         self._image_view = view
@@ -2296,6 +2302,22 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         self.system("Image opened: %s, %d by %d pixels. Escape closes it, O opens the original in your browser."
                     % (name, size[0], size[1]))
         return True
+
+    def _raise_overlays(self):
+        """The picture viewer and the notepad cover the main area: keep them above the pane headers,
+        scrollbars and drag bars, which are lifted every time the layout is redone (or clicks would fall
+        through to them)."""
+        for v in (getattr(self, "_image_view", None), getattr(self, "_notepad", None)):
+            if v:
+                try:
+                    v["frame"].lift()
+                except tk.TclError:
+                    pass
+        if self._overlay_open():                        # a DOS menu, dialog or the description editor, above all of it
+            try:
+                self._overlay.lift()
+            except tk.TclError:
+                pass
 
     def close_image_view(self):
         v = getattr(self, "_image_view", None)
@@ -2551,6 +2573,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
                 bx, by, bw, bh = info["body"]
                 pane["dsb"].place(x=bx + bw, y=by, height=bh)
                 pane["dsb"].lift()
+                self._raise_overlays()
             else:
                 pane["dsb"].place_forget()
         except (tk.TclError, KeyError, TypeError):
@@ -2683,6 +2706,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
             self._pane_scroll_visibility(key)
         self._style_region_ui()
         self._update_sashes()
+        self._raise_overlays()
 
     def _dos_geometry(self, W, H, cw, lh, lay=None):
         """DOS look: whole-cell geometry with a double-line frame drawn behind it. Neighbouring
@@ -4568,6 +4592,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
                 else:
                     self._dosscroll.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
                 self._dosscroll.lift()
+                self._raise_overlays()
             elif not scrollable and self._dosscroll.winfo_ismapped():
                 self._dosscroll.place_forget()
         except (tk.TclError, ValueError):

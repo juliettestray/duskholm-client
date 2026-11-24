@@ -127,6 +127,7 @@ class PaneSizeMixin:
             f.configure(bg=colour)
             f.place(x=x, y=y, width=max(2, w), height=max(2, h))
             f.lift()
+        self._raise_overlays()                          # a picture or the notepad stays on top of the bars
 
     # ---- DOS look: the double-line frame behind the text is the handle ----------------------------
     def _bind_canvas(self):
