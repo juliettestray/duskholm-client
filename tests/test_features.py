@@ -371,7 +371,7 @@ key(overlay(), "Escape")
 # line spacing from the DOS font menu
 app.dos_font_menu(); fm = overlay(); key(fm, "l"); d = overlay(); assert isinstance(d, dosui.DosDialog)
 e = {f["key"]: f for f in d._fields}["n"]["entry"]; e.delete(0, "end"); e.insert(0, "5"); key(e, "Return"); pump(0.4)
-assert app.cfg["line_spacing"] == 5 and int(app.out.cget("spacing3")) == 5
+assert app.cfg["dos_line_spacing"] == 5 and int(app.out.cget("spacing3")) == 5, "the DOS look's own spacing"
 b = (app._holder.winfo_width() - app._mid.winfo_width()) / 2.0 / app.f_norm.measure("0")
 assert 0.5 <= b <= 2.0, ("border stays one cell with extra line spacing", b)
 key(overlay(), "Escape")

@@ -303,7 +303,7 @@ class DosFormsMixin:
         p1 = [k for k in custom.PAGE1 if shown(k)]
         p2 = [k for k in custom.PAGE2 if shown(k)]
         try:
-            lh = max(1, self.f_norm.metrics("linespace") + int(self.cfg.get("line_spacing", 0)))
+            lh = max(1, self.f_norm.metrics("linespace") + self._spacing())
             avail = self.root.winfo_height() // lh - 4              # the bars above and below take a few rows
         except Exception:
             avail = 0

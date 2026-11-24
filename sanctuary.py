@@ -966,6 +966,9 @@ def clean_settings(cfg):
     cfg["ui_mode"] = "dos" if cfg.get("ui_mode") == "dos" else "normal"
     cfg["dos_cols"] = to_int(cfg.get("dos_cols"), 80, 40, 200)
     cfg["dos_font_size"] = to_int(cfg.get("dos_font_size"), 0, 0, MAX_FONT)   # 0 = not chosen
+    dfam = cfg.get("dos_font_family")                      # the DOS look's own font and spacing
+    cfg["dos_font_family"] = dfam.strip() if isinstance(dfam, str) and dfam.strip() and len(dfam) < 100 else None
+    cfg["dos_line_spacing"] = to_int(cfg.get("dos_line_spacing"), 0, 0, 12)
     cfg["line_spacing"] = to_int(cfg.get("line_spacing"), 0, 0, 12)
     cfg["worlds"] = clean_worlds(cfg.get("worlds"))
     pp = cfg.get("prompt_profile")
@@ -1659,7 +1662,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                "skin": DEFAULT_SKIN, "skin_overrides": {},
                "ui_mode": "normal", "dos_skin": DEFAULT_DOS_SKIN, "fullscreen": False,
                "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0,
-               "dos_fit": True, "line_spacing": 0, "worlds": None,
+               "dos_fit": True, "line_spacing": 0, "worlds": None, "dos_font_family": None, "dos_line_spacing": 0,
                "prompt_profile": prompts.DEFAULT_PRESET, "prompt_custom": [],
                "triggers": [], "alias_rules": None, "hide_prompt": False,
                "panes": [], "layout": {"regions": [], "min_main_cols": 80}}
@@ -1668,6 +1671,11 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                 loaded = json.load(f)
             if isinstance(loaded, dict):
                 cfg.update(loaded)
+                # from a version with one font for both looks: the DOS look starts from what you had
+                if "dos_font_family" not in loaded:
+                    cfg["dos_font_family"] = cfg.get("font_family")
+                if "dos_line_spacing" not in loaded:
+                    cfg["dos_line_spacing"] = cfg.get("line_spacing", 0)
         except (OSError, ValueError):
             pass
         return clean_settings(cfg)
@@ -1704,11 +1712,18 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             self._mono = [f for f in names if self._is_mono(f)]
         return self._mono
 
+    def _family_key(self):
+        return "dos_font_family" if self.dos else "font_family"
+
+    def _spacing(self):
+        """Extra pixels between lines in the look in use (each look keeps its own)."""
+        return int(self.cfg["dos_line_spacing" if self.dos else "line_spacing"])
+
     def _pick_family(self):
-        """The user's explicit font if valid, else the first installed monospace family the
-        current skin prefers, else the platform default."""
+        """The user's explicit font (for the look in use) if valid, else the first installed monospace
+        family the current skin prefers, else the platform default."""
         fams = set(tkfont.families())
-        fam = self.cfg.get("font_family")
+        fam = self.cfg.get(self._family_key())
         if fam and fam in fams and self._is_mono(fam):
             return fam
         for f in self.theme.get("fonts", []):
@@ -2615,7 +2630,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             self.schedule_layout()
 
     def _pane_cell(self):
-        return max(1, self.f_norm.measure("0")), max(1, self.f_norm.metrics("linespace") + int(self.cfg["line_spacing"]))
+        return max(1, self.f_norm.measure("0")), max(1, self.f_norm.metrics("linespace") + self._spacing())
 
     def _panes_extra(self):
         """(extra columns, extra rows) the docked regions take beside/above the main text, so the
@@ -4443,7 +4458,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         cur = self.font_family
         head = [{"label": "Size: %d..." % int(self.f_norm.cget("size")), "hotkey": "Z",
                  "action": self.dos_font_size_dialog},
-                {"label": "Line spacing: %d..." % int(self.cfg["line_spacing"]), "hotkey": "L",
+                {"label": "Line spacing: %d..." % self._spacing(), "hotkey": "L",
                  "action": self.dos_spacing_dialog},
                 {"label": "Auto-fit size", "hotkey": "A", "checked": bool(self.cfg["dos_autofit"]),
                  "action": self.dos_toggle_autofit},
@@ -4456,7 +4471,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
 
     def dos_spacing_dialog(self):
         fields = [{"key": "n", "label": "Extra pixels between lines (0 - 12)", "type": "text",
-                   "value": str(int(self.cfg["line_spacing"])), "width": 4}]
+                   "value": str(self._spacing()), "width": 4}]
 
         def result(name, values):
             if name == "ok":
@@ -4567,6 +4582,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         self.v_skin.set(self._skin_name())
         self.apply_layout()
         self.apply_theme()
+        self._apply_spacing()
         if on:
             self.root.update_idletasks()
             if self.cfg["dos_autofit"]:
@@ -4628,18 +4644,19 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             pass
 
     def _apply_spacing(self):
-        n = int(self.cfg["line_spacing"])
+        n = self._spacing()
         for w in self._text_widgets():
             w.configure(spacing2=n, spacing3=n)           # between wrapped lines / after each line
 
     def apply_spacing(self, n):
-        self.cfg["line_spacing"] = max(0, min(12, int(n)))
+        key = "dos_line_spacing" if self.dos else "line_spacing"
+        self.cfg[key] = max(0, min(12, int(n)))
         self._apply_spacing()
         self._save_settings()
         if self.dos:
             self.root.update_idletasks()
             self._fit_font()
-        return self.cfg["line_spacing"]
+        return self.cfg[key]
 
     def _dos_cols_now(self):
         """Columns for the DOS screen: the window width in character cells, less a one-cell
@@ -4670,7 +4687,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         f = self._measure_font
         for size in range(MAX_FONT, MIN_FONT - 1, -1):
             f.configure(family=self.font_family, size=size)
-            if f.measure("0") * (min_cols + 2) + 16 <= avail_w and (f.metrics("linespace") + int(self.cfg["line_spacing"])) * (25 + extra_rows) <= avail_h:
+            if f.measure("0") * (min_cols + 2) + 16 <= avail_w and (f.metrics("linespace") + self._spacing()) * (25 + extra_rows) <= avail_h:
                 return size
         return MIN_FONT
 
@@ -6245,16 +6262,20 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         """Change the display font. Only installed monospace families are accepted.
         use_skin_font=True drops the explicit choice so the skin's preferred font applies."""
         if use_skin_font:
-            self.cfg["font_family"] = None
+            self.cfg[self._family_key()] = None
         elif family is not None:
             if family not in self.mono_families():
                 return False
-            self.cfg["font_family"] = family
+            self.cfg[self._family_key()] = family
         if size is not None:
-            self.cfg["font_size"] = max(MIN_FONT, min(MAX_FONT, int(size)))
+            self.cfg["dos_font_size" if self.dos else "font_size"] = max(MIN_FONT, min(MAX_FONT, int(size)))
         self.font_family = self._pick_family()
+        if self.dos:                                   # the DOS look keeps its own size (or fits one)
+            size_now = int(self.cfg["dos_font_size"]) or int(self.f_norm.cget("size"))
+        else:
+            size_now = int(self.cfg["font_size"])
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
-            f.configure(family=self.font_family, size=self.cfg["font_size"])
+            f.configure(family=self.font_family, size=size_now)
         self._sync_variants()
         self._font_changed()
         self.statbar.refresh()
@@ -6338,7 +6359,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         sp = tk.Spinbox(row, from_=MIN_FONT, to=MAX_FONT, width=4, textvariable=v_size)
         sp.pack(side="left", padx=6)
         tk.Label(row, text="Line spacing").pack(side="left", padx=(14, 0))
-        v_gap = tk.IntVar(value=int(self.cfg["line_spacing"]))
+        v_gap = tk.IntVar(value=self._spacing())
         tk.Spinbox(row, from_=0, to=12, width=3, textvariable=v_gap).pack(side="left", padx=6)
 
         prev_font = tkfont.Font(family=cur_fam, size=cur_size)

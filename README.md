@@ -101,8 +101,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   a colour. Changes apply live to the whole screen; `Enter` keeps a colour, `Esc` puts the
   old one back and steps back one menu level. *Revert changes* undoes everything since you
   opened the screen, and *Save as new skin* writes a skin file. The font list is a scrolling
-  menu with your current font pre-selected. The DOS look remembers its own font size, separate
-  from the normal look.
+  menu with your current font pre-selected. Each look remembers its own font family, size and line
+  spacing: changing the font in one never touches the other (an older settings file gives the DOS look
+  a copy of your font the first time).
 - **Full screen** (`F11` or `Alt+Enter`, both looks): real full screen, hiding the title bar,
   borders and taskbar. Saved between runs.
 - **Tabs line up like MUSHclient.** The game lays out tables (such as the unread-notes screen)
@@ -135,7 +136,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   (View/F10 menu > Prompt bar format, or `/prompt`): a regular-expression pattern with named
   groups, plus which groups are gauges, counters, cooldowns or text, with a live test line.
   Patterns are checked for safety (no catastrophic backtracking, backreferences or lookbehind).
-- **Line spacing**: extra pixels between lines, 0-12 (Font dialog, or F7 in the DOS look).
+- **Line spacing**: extra pixels between lines, 0-12 (Font dialog, or F7 in the DOS look), kept
+  separately for each look.
 - **Triggers** (`Ctrl+T`, or `/triggers`). A trigger watches the lines the game sends and does
   something when one matches: *highlight* the match or the whole line, *hide* the line from the
   screen (it stays in your log), *send* a command, *beep*, or print a client *note*. Patterns are
@@ -353,6 +355,7 @@ python tests/test_panesize.py    # dragging pane borders and dividers, the lock,
 python tests/test_gametime.py    # each world's game clock: zone, IC:OOC ratio, timers
 python tests/test_emojipick.py   # the emoji picker
 python tests/test_emojiimg.py    # colour emoji pictures, the two options, resizing
+python tests/test_lookfonts.py   # each look keeps its own font, size and line spacing
 python tests/test_combat.py       # stun colours, grouped readout, self-ticking timers
 python tests/test_status.py       # status-line action, credit-walk preview
 python tests/test_links.py        # links, image panes, bell/scroll/echo options

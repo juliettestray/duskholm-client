@@ -160,9 +160,9 @@ app._zoom(+1); assert int(app.f_norm.cget("size")) == 18 and app.cfg["dos_font_s
 if len(mono) > 1:
     key(app.input, "F7"); fm = overlay()
     key(fm, "Down"); key(fm, "Return"); pump(0.3)
-    assert app.cfg["font_family"] in mono and app.font_family == app.cfg["font_family"]
+    assert app.cfg["dos_font_family"] in mono and app.font_family == app.cfg["dos_font_family"], "the DOS look's own font"
 key(app.input, "F7"); key(overlay(), "k"); pump(0.3)
-assert app.cfg["font_family"] is None
+assert app.cfg["dos_font_family"] is None
 key(app.input, "F7"); assert overlay() is not None; key(overlay(), "Escape"); assert overlay() is None
 
 # ---------------- the normal look still gets the ordinary dialogs ------------------------------------------------
