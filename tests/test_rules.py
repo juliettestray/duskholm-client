@@ -243,6 +243,16 @@ feed("You see a door.\n\r"); pump(0.2)
 assert "You see a door." in out() and "[350/350" not in out(), "text after a hidden prompt is shown"
 feed("[200/350DF 0ST 0WN 0LG M:0 K:0 ( )] "); pump(0.4); feed("\n\r"); pump(0.1)
 assert "[200/350" not in out() and app.statbar.data["hp"][0] == 200 and "\n\n\n" not in out(), repr(out())
+# prompts that arrive in the same burst as the text (combat, operations) are hidden too
+app.clear()
+feed("[480/480DF 0ST 0WN 0LG M:35 K:0 (S 40/50:39/50)]\n\r"
+     "[480/480DF 0ST 0WN 0LG M:20 K:0 (S 40/50:39/50)] You can move again.\n\r"
+     "[480/480DF 0ST 0WN 0LG M:9 K:0 (S 40/50:39/50)] [480/480DF 0ST 0WN 0LG M:3 K:0 (S 40/50:39/50)] a woman charges.\n\r"
+     "[OOC] Bob: 'hi'\n\r"); pump(0.4)
+assert "480/480" not in out(), "no prompt text in the output: " + repr(out())
+assert "You can move again.\na woman charges.\n[OOC] Bob: 'hi'" in out().replace("\n\n", "\n"), repr(out())
+assert "\n\n\n" not in out()
+assert app.statbar.data["hp"][0] == 480, "the bar still has it"
 app.cfg["hide_prompt"] = False
 feed("[100/350DF 0ST 0WN 0LG M:0 K:0 ( )] "); pump(0.4)
 assert "[100/350DF" in out(), "shown again when the option is off"

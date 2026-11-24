@@ -4893,8 +4893,8 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         if len(self._line) > 2000:
             self._line = self._line[-2000:]
 
-    def _update_statbar(self):
-        p = prompts.parse_prompt(self._line, self.current_profile())
+    def _update_statbar(self, text=None):
+        p = prompts.parse_prompt(self._line if text is None else text, self.current_profile())
         if p is None:
             return
         if self.term.echo_off:
@@ -5219,6 +5219,32 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
                     self.cfg["char_name"] = m.group(1)        # and the one on screen is what is remembered
                 self._save_settings()
 
+    def _leading_prompt_len(self, plain):
+        """How many characters at the start of `plain` are game prompts (several can run together), 0 if none."""
+        cut = 0
+        for _ in range(10):
+            rest = plain[cut:]
+            if not rest.startswith("["):
+                break
+            end = rest.find("] ")
+            head = rest[:end + 2] if end >= 0 else rest + " "
+            if prompts.parse_prompt(head, self.current_profile()) is None:
+                break
+            cut += end + 2 if end >= 0 else len(rest)
+        return cut
+
+    @staticmethod
+    def _trim_pieces(pieces, n):
+        """The styled pieces of a line without its first n characters."""
+        out = []
+        for text, key in pieces:
+            if n >= len(text):
+                n -= len(text)
+                continue
+            out.append((text[n:], key))
+            n = 0
+        return out
+
     def _finish_line(self, key):
         pieces, plain = self._pending, self._line_plain
         flushed, hidden = self._line_flushed, self._line_hidden_len
@@ -5230,6 +5256,14 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
             except tk.TclError:
                 pass
             self._flush_job = None
+        if self.cfg.get("hide_prompt") and not hidden and not flushed and plain.startswith("["):
+            # prompts that arrived in the same burst as the text after them were never on their own
+            # for the partial-line timer to hide: cut them off the front now (the bar already has them)
+            cut = self._leading_prompt_len(plain)
+            if cut:
+                self._log_raw(plain[:cut])
+                hidden, pieces = cut, self._trim_pieces(pieces, cut)
+                self._update_statbar(plain[:cut])         # the bar must not miss a prompt that is not at the end of the burst
         self.learn_from_line(plain[hidden:] if hidden else plain)
         if hidden:
             plain = plain[hidden:]
