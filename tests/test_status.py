@@ -83,6 +83,21 @@ pane = app._panes["tells"]
 hist = pane["history"][-1]
 assert any(k[0] is not None or k[4] for _t, k in hist), "the pane's line keeps its colour: %r" % (hist,)
 assert "".join(t for t, _k in hist) == "Goose tells you OOCly 'kitten'", hist
+# pasting emoji: kept in the box when the converter is on, dropped (as before) when it is off
+def paste(text):
+    app.input.delete(0, "end")
+    root.clipboard_clear(); root.clipboard_append(text)
+    app._on_paste(None)
+    return app.input.get()
+app.cfg["emoji"] = True
+assert paste("hi \U0001F600 café\tok") == "hi \U0001F600 cafe ok", "emoji stay, the rest is cleaned as usual"
+sent = []
+app.conn = type("C", (), {"gen": 0, "send": lambda self, b: sent.append(b) or True, "close": lambda *a: None})()
+app.connected = True
+app.send_line(app.input.get())
+assert sent[-1] == b"hi :grinning: cafe ok\r\n", sent[-1]
+app.cfg["emoji"] = False
+assert paste("hi \U0001F600 there") == "hi  there", "off: as before"
 # the editor round trip keeps a status action
 t = triggers.validate_trigger({"name": "x", "pattern": "a*", "mode": "plain",
                                "actions": [{"type": "status", "text": "hi %1"}]})

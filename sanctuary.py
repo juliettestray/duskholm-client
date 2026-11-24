@@ -69,6 +69,7 @@ import access
 import combatfilter
 import updateui
 import worldtabs                   # several worlds at once: tabs, Ctrl+F1..F12
+import panesize                    # drag a pane area's border to resize it (behind a lock)
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -982,6 +983,7 @@ def clean_settings(cfg):
     ph = cfg.get("panes_hidden")
     cfg["panes_hidden"] = [x for x in ph[:8] if isinstance(x, str) and len(x) < 20] if isinstance(ph, list) else []
     cfg["world_panes"] = worldtabs.clean_world_panes(cfg.get("world_panes"), layout)
+    cfg["panes_locked"] = cfg.get("panes_locked") is not False        # locked unless it was unlocked on purpose
     if triggers is not None:
         raw = cfg.get("triggers") if isinstance(cfg.get("triggers"), list) else []
         cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in raw[:1000]) if t is not None][:500]
@@ -1537,7 +1539,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1973,6 +1975,9 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
         f.add_command(label="Aliases...   Ctrl+A", command=self.open_aliases)
         f.add_command(label="Panes / layout...   Ctrl+P", command=self.open_panes)
+        self.v_panelock = tk.BooleanVar(value=self.panes_locked())
+        f.add_checkbutton(label="Lock pane sizes (no dragging)", variable=self.v_panelock,
+                          command=lambda: self.set_panes_locked(self.v_panelock.get()))
         f.add_command(label="Timer...   Alt+T", command=self.open_timers)
         f.add_command(label="Notepad   Alt+N", command=self.toggle_notepad)
         f.add_command(label="Moon   Alt+M", command=self.open_moon)
@@ -2677,6 +2682,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         for key in placed:
             self._pane_scroll_visibility(key)
         self._style_region_ui()
+        self._update_sashes()
 
     def _dos_geometry(self, W, H, cw, lh, lay=None):
         """DOS look: whole-cell geometry with a double-line frame drawn behind it. Neighbouring
@@ -2792,6 +2798,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
                 w.place_forget()
         for ui in self._region_ui.values():
             ui["frame"].place_forget()
+        self._forget_sashes()
 
     def _sync_region_labels(self, reg, ui):
         want = [n.lower() for n in reg["panes"]]
@@ -3084,6 +3091,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
             {"label": "Aliases...", "hotkey": "A", "shortcut": "Ctrl-A", "action": self.open_aliases},
             {"label": "Panes / layout...", "hotkey": "V", "shortcut": "Ctrl-P", "action": self.open_panes},
+            {"label": "Lock pane sizes", "hotkey": "Z", "checked": self.panes_locked(),
+             "action": self.toggle_panes_locked},
             {"label": "Tools  >", "hotkey": "M", "action": self.dos_tools_menu},
             None,
             {"label": "Log to file", "hotkey": "L", "shortcut": "F3", "checked": bool(self.logfile),
@@ -3256,6 +3265,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (Ctrl+F1..F12);  /newworld [name]  /closeworld"),
+        ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
         ("/triggers  /alias", "triggers and aliases (/alias name body, /unalias, /aliases)"),
         ("/timer 10m [label]", "a timer; also 21:30, game 21:30, list, cancel [n]"),
         ("/moon  /notes", "the moon window; the notepad"),
@@ -5855,7 +5865,18 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             text = self.root.clipboard_get()
         except tk.TclError:
             return "break"
-        clean, _dropped, _trunc = sanitize_outgoing(text)
+        if self.cfg.get("emoji") and emojis is not None and not text.isascii():
+            # with the emoji converter on, emoji stay in the box (send turns them into :name:);
+            # everything else is cleaned exactly as before
+            bits = []
+            for ch in text:
+                if ord(ch) in emojis._SKIP or emojis.name_of(ch) is not None:
+                    bits.append(ch)
+                else:
+                    bits.append(sanitize_outgoing(ch)[0])
+            clean = "".join(bits)[:MAX_LINE]
+        else:
+            clean, _dropped, _trunc = sanitize_outgoing(text)
         try:
             if self.input.selection_present():
                 self.input.delete("sel.first", "sel.last")
@@ -5928,7 +5949,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         cmd, _, arg = line[1:].partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
-                or self._update_command(cmd, arg) or self._worlds_command(cmd, arg):
+                or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg):
             return
         if cmd == "export":
             if arg:
@@ -5947,6 +5968,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             self.system("Local commands:\n"
                         "  /connect [host [port]]   /disconnect   /reconnect   /quit\n"
                         "  /world [n|name]          /newworld [name]   /closeworld   (Ctrl+F1..F12)\n"
+                        "  /panelock [on|off]       lock / unlock resizing pane areas by dragging their border\n"
                         "  /alias name expansion    (use ; between commands, $* for arguments)\n"
                         "  /unalias name            /aliases\n"
                         "  /log [file]              start or stop logging\n"
