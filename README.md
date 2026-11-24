@@ -356,6 +356,7 @@ python tests/test_gametime.py    # each world's game clock: zone, IC:OOC ratio, 
 python tests/test_emojipick.py   # the emoji picker
 python tests/test_emojiimg.py    # colour emoji pictures, the two options, resizing
 python tests/test_lookfonts.py   # each look keeps its own font, size and line spacing
+python tests/test_panefollow.py  # capture areas keep the newest line in view, and where you scrolled them
 python tests/test_combat.py       # stun colours, grouped readout, self-ticking timers
 python tests/test_status.py       # status-line action, credit-walk preview
 python tests/test_links.py        # links, image panes, bell/scroll/echo options

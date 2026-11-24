@@ -2452,10 +2452,19 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         self._reg(text, "text")
         sb = self._reg(tk.Scrollbar(self._holder, command=text.yview), "scroll")
         dsb = dosui.DosScrollbar(self._holder, text.yview, dosui.dos_colors(self.theme), self.f_norm)
-        pane = {"key": key, "text": text, "sb": sb, "dsb": dsb, "history": [], "unread": 0}
+        pane = {"key": key, "text": text, "sb": sb, "dsb": dsb, "history": [], "unread": 0,
+                "follow": True, "settling": False}       # follow: keep the newest line in view
         text.configure(yscrollcommand=lambda a, b, k=key: self._on_pane_scroll(k, a, b))
         text.bind("<Button-1>", lambda e: self.root.after_idle(self.input.focus_set), add="+")
         text.bind("<KeyPress>", self._out_key)
+        for w, seqs in ((text, ("<MouseWheel>", "<ButtonRelease-1>", "<KeyRelease>")),
+                        (sb, ("<MouseWheel>", "<ButtonRelease-1>", "<B1-Motion>")),
+                        (dsb, ("<MouseWheel>", "<ButtonRelease-1>", "<B1-Motion>"))):
+            for seq in seqs:
+                try:
+                    w.bind(seq, lambda e, p=pane: self._pane_user_scrolled(p), add="+")
+                except tk.TclError:
+                    pass
         self._bind_links(text)
         self._panes[key] = pane
         for w, role in ((text, "text"), (sb, "scroll")):
@@ -2503,7 +2512,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         if d["timestamps"]:
             pieces = [(time.strftime("[%H:%M] "), (self.theme["dim"], None, False, False, False, False))] + pieces
         text = pane["text"]
-        at_bottom = text.yview()[1] >= 0.999
+        at_bottom = pane["follow"]                          # follows until you scroll away (and again once you are back at the end)
         text.configure(state="normal")
         first = text.index("end-1c")
         for t, k in pieces:
@@ -2521,9 +2530,48 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         text.configure(state="disabled")
         if at_bottom:
             text.see("end")
+            self._pane_follow_soon(pane)
         if not self._pane_visible(pane["key"]):
             pane["unread"] += 1
             self._style_region_ui()
+
+    @staticmethod
+    def _pane_ready(pane):
+        """The area is on screen with a real size, so its scroll position means something."""
+        t = pane["text"]
+        try:
+            return bool(t.winfo_ismapped()) and t.winfo_height() > 40
+        except tk.TclError:
+            return False
+
+    def _pane_user_scrolled(self, pane):
+        """You scrolled an area (wheel, scrollbar, keys): remember whether you left it at the end."""
+        def read():
+            if self._pane_ready(pane) and not pane["settling"]:
+                pane["follow"] = pane["text"].yview()[1] >= 0.999
+        try:
+            pane["text"].after_idle(read)             # after the scroll itself has happened
+        except tk.TclError:
+            pass
+
+    def _pane_follow_soon(self, pane):
+        """Once Tk has laid the new lines out (a burst, or an area just placed, cannot be scrolled before that),
+        put the newest line in view if the area is following."""
+        if pane["settling"]:
+            return
+        pane["settling"] = True
+        try:
+            pane["text"].after_idle(lambda: self._pane_settle(pane))
+        except tk.TclError:
+            pane["settling"] = False
+
+    def _pane_settle(self, pane):
+        pane["settling"] = False
+        if pane["follow"]:
+            try:
+                pane["text"].yview_moveto(1.0)
+            except tk.TclError:
+                pass
 
     def pane_clear(self, key):
         pane = self._panes.get(str(key).lower())
@@ -2533,6 +2581,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             pane["text"].configure(state="disabled")
             pane["history"].clear()
             pane["unread"] = 0
+            pane["follow"] = True
             self._style_region_ui()
 
     def pane_delete(self, name):
@@ -2739,6 +2788,8 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                 pane["dsb"].place_forget()
         for key in placed:
             self._pane_scroll_visibility(key)
+            if self._panes[key]["follow"]:
+                self._pane_follow_soon(self._panes[key])     # a new size or look must not leave it scrolled up
         self._style_region_ui()
         self._update_sashes()
         self._raise_overlays()
@@ -4619,6 +4670,10 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         self._restyle_dosbar()
         self._update_dos_cols()
         self._emoji_refresh()
+        for s in self.sessions:                        # lines re-wrap at a new size: the areas that follow stay at the end
+            for pane in s._panes.values():
+                if pane["follow"]:
+                    self._pane_follow_soon(pane)
 
     def _on_dos_yscroll(self, first, last):
         self._dosscroll.set(first, last)
