@@ -189,14 +189,16 @@ class EmojiPickMixin:
         return self._dos_dialog("Emoji", fields, [("Find", "find"), ("Cancel", "cancel")], done, width=50,
                                 message="Part of a name: heart, cat, fire, face smile. Blank: the familiar ones.")
 
-    def _dos_emoji_list(self, query):
+    def _dos_emoji_list(self, query, initial=0):
         hits = search(query, 120)
         if not hits:
             self.system("No emoji match '%s'. Try part of a name, like heart or cat." % query)
             return self._dos_emoji_dialog(query)
 
-        def pick(ch):
+        def pick(ch, i):
             self._emoji_into_input(ch)
-            self.root.after_idle(self.input.focus_set)
-        items = [{"label": "%s   %s" % (name, ch), "action": (lambda c=ch: pick(c))} for ch, name in hits]
-        return self._dos_menu("Emoji: %s" % (query or "familiar"), items, back=lambda: self._dos_emoji_dialog(query))
+            self._reopen(self._dos_emoji_list, query, i)       # stays open, on the one you took: people send several
+        items = [{"label": "%s   %s" % (name, ch), "action": (lambda c=ch, i=i: pick(c, i))}
+                 for i, (ch, name) in enumerate(hits)]
+        return self._dos_menu("Emoji: %s   (Esc closes)" % (query or "familiar"), items, initial=initial,
+                              back=lambda: self._dos_emoji_dialog(query))

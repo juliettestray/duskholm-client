@@ -204,6 +204,17 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Timer** (`Alt+T`, `/timer 10m label`, `/timer 21:30`, `/timer game 21:30`, `/timer list`,
   `/timer cancel [n]`). Counts down, or waits for a time on your clock or the game's.
 - **Clock** (Options > Clock): your local time, or the game's own clock.
+- **Time stamps** (optional, off by default). Options > Time stamps puts a dim `[HH:MM]` (or
+  `[HH:MM:SS]`) on each line the game sends, in the main text. Each capture pane has its own switch:
+  put `(time)` after its name in Panes / layout (`right 40 OOC (time), Tells`) or use
+  `/stamps <pane> on|off` (`/stamps` shows where they are on; `/stamps main hh:mm|hh:mm:ss|off`). A
+  pane that stamps uses the main text's format, or HH:MM when that is off. Stamps are your own clock,
+  never reach triggers, logs or the screen reader, and are not put on prompts, blank lines, your own
+  commands or the client's messages.
+- **Right-click menu**: in the entry box, Cut / Copy / Paste / Select all / Clear; in the text and the
+  panes, Copy / Select all, and Open link / Copy link on a link. In the DOS look the same choices come
+  up as a DOS menu. Ctrl+X, Ctrl+C and Ctrl+V work as always; a multi-line paste is flattened to one
+  line and never sent by itself.
 - **Game time, per world** (File > Game time, `/gametime`). Every world has its own game clock, set
   to Duskholm's by default: US Eastern (EST/EDT) running 1:1 with real time. A world can use a fixed
   offset (`/gametime zone -5`, `+5:30`, `utc`), take its offset from the game's `time` command
@@ -357,6 +368,9 @@ python tests/test_emojipick.py   # the emoji picker
 python tests/test_emojiimg.py    # colour emoji pictures, the two options, resizing
 python tests/test_lookfonts.py   # each look keeps its own font, size and line spacing
 python tests/test_panefollow.py  # capture areas keep the newest line in view, and where you scrolled them
+python tests/test_stamps.py      # optional time stamps, main text and per pane
+python tests/test_editmenu.py    # right-click Cut / Copy / Paste, both looks
+python tests/test_entryfit.py    # the entry box never clips the last character of a full line
 python tests/test_combat.py       # stun colours, grouped readout, self-ticking timers
 python tests/test_status.py       # status-line action, credit-walk preview
 python tests/test_links.py        # links, image panes, bell/scroll/echo options

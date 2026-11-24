@@ -72,6 +72,8 @@ import worldtabs                   # several worlds at once: tabs, Ctrl+F1..F12
 import panesize                    # drag a pane area's border to resize it (behind a lock)
 import emojipick                   # an emoji picker (Windows' own panel cannot reach a Tk entry box)
 import gametime                    # each world's game clock: time zone and IC:OOC ratio
+import stamps                      # optional time stamps, for the main text and per capture pane
+import editmenu                    # right-click Cut / Copy / Paste
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
 DEFAULT_HOST = "duskholm.com"
@@ -937,9 +939,10 @@ EXTRA_BOOLS = [
 EXTRA_CHOICES = [
     ("bell_new", "off", ("off", "unfocused", "scrolled", "always"), "Beep on new output", "N"),
     ("clock", "off", ("off", "real", "game"), "Clock", "C"),
+    ("timestamps", "off", ("off", "hh:mm", "hh:mm:ss"), "Time stamps (main text)", "X"),
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
 ]
-CHOICE_WORDS = {"off": "off", "always": "always", "unfocused": "when the window is not in front",
+CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always": "always", "unfocused": "when the window is not in front",
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
                 "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
                 "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice"}
@@ -1556,7 +1559,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1771,6 +1774,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         out.configure(yscrollcommand=sb.set)
         out.bind("<KeyPress>", self._out_key)
         self._bind_links(out)
+        self._bind_edit_menu(out)
         out.bind("<Control-MouseWheel>", self._zoom_wheel)
         s.out, s._mid, s._sb = out, mid, sb
 
@@ -1878,6 +1882,33 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         for ms in (30, 150, 400):                      # the layout settles over a few redraws; keep the spot
             self.root.after(ms, lambda s=s: self._restore_view(s) if s is self._shown else None)
 
+    _IN_LEFT, _IN_RIGHT = 4, 6                     # room kept either side of the typing area, pixels
+
+    def _fit_input(self):
+        """Make the typing area a whole number of character cells wide. Tk's entry lets text hang a few pixels past
+        its right edge before it scrolls, so a line that ended just past the edge lost the end of its last
+        character; with a whole-cell width every line either fits exactly or scrolls. The leftover width is padding."""
+        try:
+            box = self._inbox
+            inner = box.winfo_width() - 2 * (int(box.cget("highlightthickness")) + int(box.cget("borderwidth")))
+            cw = max(1, self.f_norm.measure("0"))
+            if inner < 60:
+                return
+            k = max(8, (inner - self._IN_LEFT - self._IN_RIGHT) // cw)
+            right = max(self._IN_RIGHT, inner - self._IN_LEFT - k * cw)
+            if (self._IN_LEFT, right) != getattr(self, "_in_pad", None):
+                self._in_pad = (self._IN_LEFT, right)
+                self.input.pack_configure(padx=(self._IN_LEFT, right))
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _inbox_focus(self, on):
+        """The ring round the entry box lights up while you are typing in it."""
+        try:
+            self._inbox.configure(highlightbackground=self.theme["select"] if on else self.theme["panel_edge"])
+        except (tk.TclError, AttributeError):
+            pass
+
     def _reg(self, widget, role):
         """Register a widget so apply_theme() can restyle it."""
         self._themed.append((widget, role))
@@ -1900,8 +1931,11 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                         selectbackground=th["select"], selectforeground=th["input_fg"])
         if role == "input":
             o = self._role_options("entry", th)
-            o.update(relief="flat" if flat else "sunken", borderwidth=0 if flat else 2)
+            o.update(relief="flat", borderwidth=0, highlightthickness=0)     # (the box around it draws the border)
             return o
+        if role == "inbox":
+            return dict(bg=th["input_bg"], highlightbackground=th["panel_edge"], highlightcolor=th["select"],
+                        relief="flat" if flat else "sunken", borderwidth=0 if flat else 2)
         if role == "check":
             return dict(bg=th["panel"], fg=th["fg"], selectcolor=th["input_bg"],
                         activebackground=th["panel"], activeforeground=th["fg"])
@@ -1958,7 +1992,11 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                                              self.f_norm)
         self._apply_spacing()
 
-        self.input = self._reg(tk.Entry(self.root, font=self.f_norm, highlightthickness=1), "input")
+        self._inbox = self._reg(tk.Frame(self.root, highlightthickness=1), "inbox")
+        self.input = self._reg(tk.Entry(self._inbox, font=self.f_norm, highlightthickness=0, borderwidth=0), "input")
+        self._inbox.bind("<Configure>", lambda e: self.root.after_idle(self._fit_input))
+        self.input.bind("<FocusIn>", lambda e: self._inbox_focus(True), add="+")
+        self.input.bind("<FocusOut>", lambda e: self._inbox_focus(False), add="+")
         self.input.bind("<Return>", self._on_enter)
         self.input.bind("<KP_Enter>", self._on_enter)
         self.input.bind("<Up>", lambda e: self._hist(-1))
@@ -1968,6 +2006,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         self.input.bind("<Escape>", lambda e: self.input.delete(0, "end"))
         self.input.bind("<<Paste>>", self._on_paste)
         self.input.bind("<Control-v>", self._on_paste)
+        self._bind_edit_menu(self.input)
         self.statbar = StatBar(self.root, self.f_norm, self.f_bold, self.theme)  # shown after 1st prompt
         self.dosbar = dosui.DosStatusBar(self.root, dosui.dos_colors(self.theme), self.f_norm, self.f_bold)
         for w in (self.root,):
@@ -2425,6 +2464,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
 
     # ---- capture panes ---------------------------------------------------------------------
     def _find_pane_def(self, key):
+        key = str(key).strip().lower()
         for d in self.cfg["panes"]:
             if d["name"].lower() == key:
                 return d
@@ -2466,6 +2506,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                 except tk.TclError:
                     pass
         self._bind_links(text)
+        self._bind_edit_menu(text)
         self._panes[key] = pane
         for w, role in ((text, "text"), (sb, "scroll")):
             try:
@@ -2510,7 +2551,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         if self.cfg.get("connect_boxes") and boxes is not None:
             pieces = boxes.connect_pieces(pieces)
         if d["timestamps"]:
-            pieces = [(time.strftime("[%H:%M] "), (self.theme["dim"], None, False, False, False, False))] + pieces
+            pieces = [(self.stamp_text(pane=True), self._stamp_key())] + pieces
         text = pane["text"]
         at_bottom = pane["follow"]                          # follows until you scroll away (and again once you are back at the end)
         text.configure(state="normal")
@@ -2980,7 +3021,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         """Arrange the window for the current look. Normal: toolbar, text, stat bar, input.
         DOS: no toolbar/menu bar/scrollbar; a centred N-column screen on a coloured border,
         the input line and the DOS status bar underneath."""
-        for w in (self._top, self._holder, self.statbar, self.input, self.dosbar,
+        for w in (self._top, self._holder, self.statbar, self._inbox, self.dosbar,
                   getattr(self.dosbar, "top", None)):
             if w is not None:
                 w.pack_forget()
@@ -2998,7 +3039,8 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             self.out.configure(yscrollcommand=self._on_dos_yscroll)
             self.out.configure(width=self._dos_cols_now())
             self.out.pack(fill="both", expand=True)
-            self.input.pack(fill="x", ipady=2)
+            self._inbox.pack(fill="x")
+            self.input.pack(fill="x", padx=(4, 8), ipady=2)           # side padding keeps the end of a full line clear
             if self.dosbar is not None:
                 self.dosbar.pack(fill="x")
             self._dos_scroll_visibility()
@@ -3013,7 +3055,8 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             self._sb.pack(side="right", fill="y")
             self.out.configure(width=40)
             self.out.pack(side="left", fill="both", expand=True)
-            self.input.pack(fill="x", ipady=5)
+            self._inbox.pack(fill="x")
+            self.input.pack(fill="x", padx=(4, 8), ipady=5)
             self._statbar_show()
 
     # ---- DOS look: status bar, menus, dialogs, keys --------------------------------
@@ -3380,6 +3423,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (Ctrl+F1..F12);  /newworld [name]  /closeworld"),
+        ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
         ("/gametime", "this world's game clock: zone, IC:OOC ratio (zone, ratio, set, reset)"),
         ("/emoji [words]", "an emoji picker (Alt+E); Windows' own panel cannot reach this box"),
@@ -4196,12 +4240,13 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
     PANE_SYNTAX = ("Lines reach a pane through a trigger (Ctrl+T) whose 'Send to pane' names it. "
                    "One line per area: side size panes. Side: top, bottom, left or right. Size is "
                    "rows (top/bottom) or columns (left/right). Panes are separated by commas, e.g. "
-                   "'right 40 OOC, Tells'.")
+                   "'right 40 OOC, Tells'. Put (time) after a pane's name to stamp its lines: 'OOC (time), Tells'.")
 
     def _pane_lines(self):
         out = []
         for r in self.cfg["layout"]["regions"]:
-            out.append("%s %d %s" % (r["side"], r["size"], ", ".join(r["panes"])))
+            names = [n + (" (time)" if (self._find_pane_def(n) or {}).get("timestamps") else "") for n in r["panes"]]
+            out.append("%s %d %s" % (r["side"], r["size"], ", ".join(names)))
         return (out + ["", "", ""])[:3] if len(out) <= 3 else out[:3]
 
     def _panes_parse(self, lines):
@@ -4221,6 +4266,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                 return None, [], "Line %d: put a size (a number) after the side." % (n + 1)
             names = []
             for nm in (parts[2].split(",") if len(parts) > 2 else []):
+                nm, stamp = stamps.split_pane_name(nm)               # "OOC (time)": that pane shows time stamps
                 d = layout.validate_pane({"name": nm})
                 if d is None:
                     continue
@@ -4228,6 +4274,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
                     if len(defs) >= layout.MAX_PANES:
                         return None, [], "At most %d panes." % layout.MAX_PANES
                     defs[d["name"].lower()] = d
+                defs[d["name"].lower()] = dict(defs[d["name"].lower()], timestamps=stamp)
                 if d["name"].lower() not in [x.lower() for x in names]:
                     names.append(defs[d["name"].lower()]["name"])
             regions.append({"id": "r%d" % (len(regions) + 1), "side": side, "size": int(parts[1]),
@@ -4670,6 +4717,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         self._restyle_dosbar()
         self._update_dos_cols()
         self._emoji_refresh()
+        self._fit_input()
         for s in self.sessions:                        # lines re-wrap at a new size: the areas that follow stay at the end
             for pane in s._panes.values():
                 if pane["follow"]:
@@ -5081,7 +5129,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
     def _statbar_show(self):
         if (self.cfg.get("statbar") and self._last_prompt and not self.dos
                 and not self.statbar.winfo_ismapped()):
-            self.statbar.pack(fill="x", before=self.input)
+            self.statbar.pack(fill="x", before=self._inbox)
 
     def _statbar_hide(self):
         self.statbar.pack_forget()
@@ -5251,7 +5299,8 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             self._line_hidden_len = len(self._line_plain)   # the bar shows it; keep it off the screen
             self._log_raw(self._line_plain)
             return
-        self._append([(t, self._tag_for(k)) for t, k in pieces], _internal=True)
+        stamp = [] if self._line_flushed else self._stamp_seg(self._line_plain)
+        self._append(stamp + [(t, self._tag_for(k)) for t, k in pieces], _internal=True)
         self._line_flushed = True
         self._line_drawn = self._line_drawn + pieces
 
@@ -5410,6 +5459,8 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
             self._log_raw(plain + "\n")
         else:
             segs = [(t, self._tag_for(k)) for t, k in shown]
+            if not flushed:
+                segs = self._stamp_seg(plain) + segs
             segs.append(("\n", self._tag_for(key)))
             self._append(segs, _internal=True)
         self.sr_hear(plain, effects)
@@ -6119,7 +6170,8 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         cmd, arg = cmd.lower(), arg.strip()
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
                 or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
-                or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg):
+                or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg) \
+                or self._stamps_command(cmd, arg):
             return
         if cmd == "export":
             if arg:
@@ -6332,6 +6384,7 @@ class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickM
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
             f.configure(family=self.font_family, size=size_now)
         self._sync_variants()
+        self._fit_input()
         self._font_changed()
         self.statbar.refresh()
         self._restyle_dosbar()

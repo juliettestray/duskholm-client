@@ -177,8 +177,9 @@ for _ in range(40):
     root3.update(); time.sleep(0.02)
 H = root3.winfo_height()
 assert app3.statbar.winfo_ismapped()
-assert app3.input.winfo_y() + app3.input.winfo_height() <= H + 1, (app3.input.winfo_y(), H)
-assert app3.statbar.winfo_y() + app3.statbar.winfo_height() <= app3.input.winfo_y() + 1
+box = app3._inbox                                  # the entry lives inside its box, which is what sits in the window
+assert box.winfo_y() + box.winfo_height() <= H + 1, (box.winfo_y(), H)
+assert app3.statbar.winfo_y() + app3.statbar.winfo_height() <= box.winfo_y() + 1
 assert app3.input.winfo_height() > 5 and app3.out.winfo_height() > 5
 root3.update(); root3.destroy()
 print("statbar + font tests OK")
