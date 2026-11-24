@@ -316,7 +316,14 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   does not: scripts (Lua, VBScript) and `send to script`, notepad and variable targets, multi-line matching (one
   line at a time here), italic and underline, timers (use `/timer`), macros and keypad keys, and plugin files
   that a world file merely names (import each plugin file on its own). The limits are now 1500 triggers and
-  300 aliases. More clients (Mudlet, TinTin++) are planned.
+  300 aliases. **Mudlet** packages (`.xml`, or an `.mpackage` zip holding one) read the same way: substring,
+  start-of-line, exact-line and regular-expression patterns (several patterns on one trigger become one rule
+  each; Mudlet is case-sensitive, so they are too), the colour of a highlight trigger, the command box (`;;` and
+  new lines become `;`), sounds (as a beep), folders (a switched-off folder switches off what is in it), and
+  aliases of one word, optionally followed by one capture (`^mn (.+)`). The only Lua read is a script made
+  of `send("text" .. matches[2])` lines, which becomes the same commands with `%*`/`%1` (triggers: `%1`...);
+  any other script is not run and the report says so. Not read: multi-line triggers, Lua-function, line-spacer,
+  colour and prompt patterns, timers, keys, scripts and buttons. More clients (TinTin++) are planned.
 - **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed (including the world keys
   and `Ctrl+A`, below); F-keys are fixed.
 - **Ctrl+A selects the whole entry line**, as in MUSHclient (rebindable like the rest; Aliases moved to
@@ -370,7 +377,7 @@ Local commands start with `/` (the game has none). `//text` sends `/text`.
 | `/timer 10m [label]`, `/timer list`, `/timer cancel [n]` | timers (also `21:30`, `game 21:30`) |
 | `/moon`, `/notes`, `/hotkeys` | the moon window, notepad, hotkey editor |
 | `/hex ff8800`, `/gradient text`, `/customize` | colour tools and the customize form |
-| `/export [file]`, `/import file` | world settings files (`.snc`); `/import` also reads MUSHclient files |
+| `/export [file]`, `/import file` | world settings files (`.snc`); `/import` also reads MUSHclient and Mudlet files |
 | `/clear`, `/help` | |
 
 ## License
@@ -422,6 +429,7 @@ python tests/test_custom.py       # the customize form's commands and the design
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_mudlet.py      # Mudlet package import (pure): pattern types, folders, the send() Lua shape, zips
 python tests/test_importui.py    # importing in the app: the question, every-match colouring, both looks
 python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flood control, review
 python tests/test_access.py       # screen reader mode end to end with a fake voice

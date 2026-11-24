@@ -33,11 +33,11 @@ class ImportMixin:
             return self._dos_dialog(
                 "Import from another client", [{"key": "path", "label": "File", "type": "text", "value": "", "width": 52}],
                 [("Read", "read"), ("Cancel", "cancel")], result, width=72,
-                message="A MUSHclient world, plugin or trigger file (.MCL, .xml). Nothing in it is run.")
+                message="A MUSHclient or Mudlet file (.MCL, .xml, .mpackage). Nothing in it is run.")
         from tkinter import filedialog
         path = filedialog.askopenfilename(
             parent=self.root, initialdir=os.path.expanduser("~"), title="Import from another client",
-            filetypes=[("MUSHclient files", "*.mcl *.MCL *.xml"), ("All files", "*.*")])
+            filetypes=[("MUSHclient and Mudlet files", "*.mcl *.MCL *.xml *.mpackage"), ("All files", "*.*")])
         if path:
             self.import_client_file(path)
 

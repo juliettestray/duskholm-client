@@ -5,20 +5,26 @@
 rule is re-validated, duplicates are skipped, and anything that could send commands to the game arrives switched OFF
 (unless the person says they trust the file). Nothing in an imported file is ever run."""
 import mushimport
+import mudletimport
 from mushimport import ImportProblem
 
 from triggers import MAX_TRIGGERS, MAX_ALIASES
 
-KINDS = {"mushclient": "MUSHclient"}
-PARSERS = {"mushclient": mushimport.parse}
+KINDS = {"mushclient": "MUSHclient", "mudlet": "Mudlet"}
+PARSERS = {"mushclient": mushimport.parse, "mudlet": mudletimport.parse}
 
 
 def detect(data):
     """'mushclient' (or another kind as importers are added), or None."""
+    if isinstance(data, (bytes, bytearray)) and bytes(data[:4]) == b"PK":
+        inner = mudletimport.zip_xml(data)
+        return "mudlet" if inner is not None and b"<mudletpackage" in inner[:6000].lower() else None
     head = bytes(data[:6000]).lstrip(b"\xef\xbb\xbf \r\n\t").lower() if isinstance(data, (bytes, bytearray)) else \
         str(data[:6000]).lstrip("﻿ \r\n\t").lower().encode("utf-8", "replace")
     if b"<muclient" in head or b"<!doctype muclient" in head:
         return "mushclient"
+    if b"<mudletpackage" in head:
+        return "mudlet"
     return None
 
 
@@ -27,7 +33,7 @@ def read(data, world_name=None):
     kind = detect(data)
     if kind is None:
         raise ImportProblem("I do not know what kind of file that is. I can read MUSHclient world, plugin and "
-                            "trigger files (.MCL / .xml).")
+                            "trigger files (.MCL / .xml) and Mudlet packages (.xml / .mpackage).")
     return kind, PARSERS[kind](data, world_name)
 
 
