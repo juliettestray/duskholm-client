@@ -130,6 +130,8 @@ class EmojiPickMixin:
             for n, (ch, _n) in enumerate(state["hits"]):
                 text.insert("end", ch, "e%d" % n)              # each emoji carries its own tag: no counting of characters
                 text.insert("end", " ")
+            if self._emoji_pics_on():                      # the picker shows them the way the text will
+                self._emojify(text, size=int(big.metrics("linespace")))
             text.configure(state="disabled")
             name_lbl.configure(text="%d match%s" % (len(state["hits"]), "" if len(state["hits"]) == 1 else "es")
                                if state["hits"] else "Nothing matches. Try part of a name, like heart or cat.")

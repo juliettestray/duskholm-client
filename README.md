@@ -190,6 +190,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   panel (`Win+.`) cannot put its choice into a Tk entry box, so Sanctuary has its own picker: `Alt+E`
   (or `/emoji heart`, or File > Emoji picker) searches by part of a name and adds the emoji to what you
   are typing. Emoji you paste are kept in the box too.
+  **Colour emoji** (on by default in the ordinary look; Options > Colour emoji): Tk draws text in single
+  colours, so an emoji would come out flat. Each one is instead drawn as a small colour picture in
+  Windows' own emoji look (rendered from the Segoe UI Emoji font by Pillow), one line high, placed in
+  the text and the panes. The emoji character stays in the text, hidden, so copying, searching and logs
+  still see it. The DOS look keeps plain glyphs unless you turn on Options > "Colour emoji in the DOS
+  look" (off by default). Flags and joined emoji (family, couples) stay plain; without Pillow or the
+  font nothing changes.
 - **Join ASCII boxes** (option, off by default). The game's `| - _ . , '` boxes are redrawn with
   solid line characters (`┌─┐`), without changing any column, so the colours stay put.
 - **Timer** (`Alt+T`, `/timer 10m label`, `/timer 21:30`, `/timer game 21:30`, `/timer list`,
@@ -345,6 +352,7 @@ python tests/test_panes.py        # capture panes, routing, manager, both looks
 python tests/test_panesize.py    # dragging pane borders and dividers, the lock, both looks
 python tests/test_gametime.py    # each world's game clock: zone, IC:OOC ratio, timers
 python tests/test_emojipick.py   # the emoji picker
+python tests/test_emojiimg.py    # colour emoji pictures, the two options, resizing
 python tests/test_combat.py       # stun colours, grouped readout, self-ticking timers
 python tests/test_status.py       # status-line action, credit-walk preview
 python tests/test_links.py        # links, image panes, bell/scroll/echo options

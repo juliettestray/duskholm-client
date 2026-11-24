@@ -72,6 +72,7 @@ import worldtabs                   # several worlds at once: tabs, Ctrl+F1..F12
 import panesize                    # drag a pane area's border to resize it (behind a lock)
 import emojipick                   # an emoji picker (Windows' own panel cannot reach a Tk entry box)
 import gametime                    # each world's game clock: time zone and IC:OOC ratio
+import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -921,6 +922,8 @@ EXTRA_BOOLS = [
     ("links", True, "Clickable links", "Clickable links", "L"),
     ("link_images", True, "Open image links in a pane", "Image links open in a pane", "I"),
     ("emoji", False, "Emoji: send and show :name: as emoji", "Emoji :name:", "E"),
+    ("emoji_pics", True, "Show emoji in colour (Windows' own look)", "Colour emoji", "O"),
+    ("emoji_pics_dos", False, "Show emoji in colour in the DOS look", "Colour emoji in the DOS look", "Q"),
     ("connect_boxes", False, "Join ASCII boxes into solid lines", "Join ASCII boxes", "J"),
     ("scroll_on_send", True, "Jump to the bottom when I send", "Jump to bottom on send", "S"),
     ("show_echo", True, "Show the commands I send", "Show my commands", "M"),
@@ -1550,7 +1553,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1632,6 +1635,7 @@ class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMix
         self.apply_layout()
         self.apply_theme()
         self._bind_dos_keys()
+        self._emoji_start()
         if self.dos:
             self._start_dos_tick()
             self.update_dosbar()
@@ -2492,6 +2496,8 @@ class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMix
         text.insert("end", "\n")
         if self.cfg.get("links", True):
             self._linkify(text, first)
+        if self._emoji_pics_on():
+            self._emojify(text, first)
         pane["history"].append(pieces)
         over = len(pane["history"]) - d["max_lines"]
         if over > 0:
@@ -3247,6 +3253,8 @@ class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMix
         if key == "links" and not value:
             for w in self._text_widgets():
                 w.tag_remove("link", "1.0", "end")
+        if key in ("emoji_pics", "emoji_pics_dos"):
+            self._emoji_refresh()
         self._save_settings()
 
     def dos_connect_dialog(self):
@@ -4577,6 +4585,7 @@ class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMix
                     pass
                 self._dos_job = None
         self.update_dosbar()
+        self._emoji_refresh()
         self._save_settings()
 
     def toggle_dos_mode(self, _e=None):
@@ -4593,6 +4602,7 @@ class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMix
         self._sync_variants()
         self._restyle_dosbar()
         self._update_dos_cols()
+        self._emoji_refresh()
 
     def _on_dos_yscroll(self, first, last):
         self._dosscroll.set(first, last)
@@ -4782,6 +4792,8 @@ class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMix
                     pass
         if self.cfg.get("links", True):
             self._linkify(self.out, first)
+        if self._emoji_pics_on():
+            self._emojify(self.out, first)
         lines = int(self.out.index("end-1c").split(".")[0])
         if lines > MAX_SCROLLBACK_LINES:
             self.out.delete("1.0", "%d.0" % (lines - MAX_SCROLLBACK_LINES))
