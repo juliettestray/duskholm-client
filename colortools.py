@@ -400,10 +400,26 @@ def spans(text):
     return out
 
 
+def snap_range(text, rng):
+    """A highlighted range moved out to whole colour codes: an edge that falls inside a code (`045, `x) or a
+    doubled backtick takes the whole code in, so a highlight never cuts one in half. None stays None."""
+    if not rng:
+        return rng
+    text = str(text if text is not None else "")
+    a, b = rng
+    for m in _RUN_TOKEN.finditer(text):
+        if m.start() < a < m.end():
+            a = m.start()
+        if m.start() < b < m.end():
+            b = m.end()
+    return (a, b)
+
+
 def colour_text(text, stops, mode="stretch", smooth=True, rng=None, seed=None):
     """Colour part (or all) of `text` with a gradient: the selected range (start, end) when given,
     otherwise everything. Colour codes already inside the range are removed first. Raises ValueError."""
     text = str(text if text is not None else "")
+    rng = snap_range(text, rng)
     a, b = (rng if rng and 0 <= rng[0] < rng[1] <= len(text) else (0, len(text)))
     seg = strip_codes(text[a:b]).replace("``", "`")
     return text[:a] + apply(seg, stops, mode, smooth, seed=seed, reset=True) + text[b:]
@@ -412,6 +428,7 @@ def colour_text(text, stops, mode="stretch", smooth=True, rng=None, seed=None):
 def strip_colour(text, rng=None):
     """The same text with the colour codes removed from the range (or from everything)."""
     text = str(text if text is not None else "")
+    rng = snap_range(text, rng)
     a, b = (rng if rng and 0 <= rng[0] < rng[1] <= len(text) else (0, len(text)))
     return text[:a] + strip_codes(text[a:b]) + text[b:]
 

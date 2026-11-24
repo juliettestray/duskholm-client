@@ -137,4 +137,18 @@ assert ct.move_stop([1, 2, 3], 0, 1) == ([2, 1, 3], 1) and ct.move_stop([1, 2, 3
 bar = ct.preview_bar([196, 226], 5)
 assert len(bar) == 5 and bar[0] == 196 and bar[-1] == 226 and ct.preview_bar([21], 3) == [21, 21, 21] and ct.preview_bar([], 2) == [7, 7]
 assert ct.stops_text([196, 202]) == "196,202" and ct.parse_colours(ct.stops_text([196, 202])) == [196, 202]
+
+# ---- several gradients in one text, by highlighting each part
+txt = "Hello brave new world"
+one = ct.colour_text(txt, [196, 226], "stretch", rng=(0, 5))
+two = ct.colour_text(one, [21, 51], "stretch", rng=(one.index("brave"), one.index("brave") + 5))
+assert ct.strip_codes(two) == txt and "`196H" in two and "`021b" in two and two.endswith(" new world"), two
+assert two.startswith(one[:one.index("`x") + 2]), "the first part is untouched by colouring the second"
+# a highlight that starts or ends inside a code takes the whole code in (never a half code)
+i = two.index("`") + 2
+cut = ct.colour_text(two, [46, 82], "stretch", rng=(i, len(two)))
+assert ct.strip_codes(cut) == txt and "`1`" not in cut and cut.count("`") == len([m for m in __import__("re").finditer("`(?:\d\d\d|x)", cut)]), cut
+assert ct.snap_range("a`196bc", (3, 6)) == (1, 6) and ct.snap_range("a`196bc", (0, 3)) == (0, 5) and ct.snap_range("x", None) is None
+assert ct.snap_range("a``b", (2, 4)) == (1, 4), "a doubled backtick is one character"
+assert ct.strip_codes(ct.strip_colour(two, (i, len(two)))) == txt
 print("colortools tests OK")

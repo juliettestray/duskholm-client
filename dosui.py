@@ -2636,7 +2636,7 @@ class DosTextEditor(tk.Frame):
         self._on_done = on_done
         self._open = False
         self._title = str(title)
-        self._hint = hint or 'Ctrl-S done   Esc cancel   Ctrl-G gradient   Ctrl-K strip colours'
+        self._hint = hint or 'Ctrl-S done   Esc cancel   Ctrl-G gradient on selection   Ctrl-K strip colours'
         self._head = tk.Label(self, anchor='w', padx=8, bd=0)
         self._head.pack(fill='x', side='top')
         self._foot = tk.Label(self, anchor='w', padx=8, bd=0)

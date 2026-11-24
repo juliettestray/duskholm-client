@@ -216,7 +216,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   asks you to say Done. Where the answers are known you pick them: Enter on a line opens the list
   (item kind, size, layer, the body parts a garment covers or zips) and Enter on a description,
   taste or playlist opens a text page like the game's own editor (`Ctrl-S` keeps it, `Esc` cancels).
-  On that page `Ctrl-G` colours the selected text (or all of it) with a gradient, picked from the
+  On that page `Ctrl-G` colours the highlighted text (or all of it if nothing is highlighted) with a
+  gradient, so several gradients in one text are just: highlight a part, `Ctrl-G`, highlight another, repeat. It is picked from the
   same list, and `Ctrl-K` takes the colours off; the codes are dimmed and the text shows in
   its colour as you write. The form is one page when the screen has room for every line, two
   (Next / Back) only when it must.
