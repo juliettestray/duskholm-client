@@ -125,5 +125,75 @@ assert "^F1" in top and "^F2" in top and "three" in top, top
 app.dosbar.top.winfo_toplevel().update()
 app.set_dos_mode(False); pump(0.3)
 app.close_world(w3)
+
+# ---- pane settings are per world and saved on their own
+import json
+assert len(app.sessions) == 1
+one = app.sessions[0]
+app._rename_world(one, "Alpha"); app.goto_world(1)
+app.cfg["panes"], app.cfg["layout"], app.cfg["panes_hidden"] = [], {"regions": [], "min_main_cols": 80}, []
+pa = app.pane_ensure("OOC"); pump(0.6)
+assert [d["name"] for d in app.cfg["panes"]] == ["OOC"] and app.cfg["layout"]["regions"], "a pane and an area now exist"
+assert "ooc" in one._panes
+two = app.open_new_world("Beta"); pump(0.6)
+assert app._shown is two and app.cfg["panes"] == [] and app.cfg["layout"]["regions"] == [], "a new world starts with none"
+assert not one._panes["ooc"]["text"].winfo_ismapped(), "the other world's pane left the screen"
+pb = app.pane_ensure("Tells"); pump(0.6)
+assert [d["name"] for d in app.cfg["panes"]] == ["Tells"] and "tells" in two._panes and "ooc" not in two._panes
+saved = json.load(open(sc.SETTINGS_PATH))
+assert set(saved["world_panes"]) >= {"alpha", "beta"}, saved.get("world_panes", {}).keys()
+assert [d["name"] for d in saved["world_panes"]["alpha"]["panes"]] == ["OOC"], "the one you are not on is kept too"
+assert [d["name"] for d in saved["world_panes"]["beta"]["panes"]] == ["Tells"], "and the one on screen is saved without asking"
+app.goto_world(1); pump(0.6)
+assert [d["name"] for d in app.cfg["panes"]] == ["OOC"] and one._panes["ooc"]["text"].winfo_ismapped()
+assert not two._panes["tells"]["text"].winfo_ismapped()
+assert pa["text"] in app._text_widgets() and pb["text"] in app._text_widgets()
+# a changed layout is saved without pressing Save
+app.cfg["panes_hidden"] = ["r1"]; app._save_settings()
+assert json.load(open(sc.SETTINGS_PATH))["world_panes"]["alpha"]["panes_hidden"] == ["r1"]
+app.cfg["panes_hidden"] = []
+# the saved form comes back through the settings loader
+back = sc.App.__dict__["_load_settings"](app) if False else None
+import layout, worldtabs
+chk = worldtabs.clean_world_panes(json.load(open(sc.SETTINGS_PATH))["world_panes"], layout)
+assert chk["alpha"]["panes"][0]["name"] == "OOC" and worldtabs.clean_world_panes("junk", layout) == {}
+# closing a world takes its panes with it
+assert app.close_world(two) and pb["text"] not in app._text_widgets()
+
+# ---- triggers and aliases: Global (the default) or tied to one world
+import triggers
+base = {"name": "t", "mode": "plain", "pattern": "ping", "actions": [{"type": "beep"}]}
+assert "global" not in triggers.validate_trigger(base) and "world" not in triggers.validate_trigger(base), "stored as before"
+assert "global" not in triggers.validate_trigger(dict(base, **{"global": True, "world": "X"}))
+loc = triggers.validate_trigger(dict(base, **{"global": False, "world": "Alpha"}))
+assert loc["global"] is False and loc["world"] == "Alpha"
+assert "global" not in triggers.validate_trigger(dict(base, **{"global": False})), "no world named: stays global"
+assert triggers.rule_applies(base, "x") and triggers.rule_applies(loc, "alpha") and not triggers.rule_applies(loc, "Beta")
+al = triggers.validate_alias({"name": "k", "body": "kill", "global": False, "world": "Alpha"})
+assert al["global"] is False and triggers.validate_alias({"name": "k", "body": "kill"}) == {"name": "k", "enabled": True, "body": "kill"}
+# the form values round-trip
+v = sc.values_from_trigger(None); assert v["glob"] is True
+v.update(name="n", pattern="x", beep=True, glob=False, world="Alpha")
+tr, _m = sc.trigger_from_values(v); assert tr["global"] is False and tr["world"] == "Alpha"
+v2 = sc.values_from_trigger(tr); assert v2["glob"] is False and v2["world"] == "Alpha"
+# only the world a trigger belongs to runs it
+a1 = app.sessions[0]; a1.name = "Alpha"
+b1 = app.open_new_world("Beta"); pump(0.3)
+app.cfg["triggers"] = [dict(loc, name="only-alpha", pattern="alphaword", actions=[{"type": "note", "text": "ALPHAHIT"}]),
+                       dict(base, name="every", pattern="everyword", actions=[{"type": "note", "text": "EVERYHIT"}])]
+app.cfg["triggers"] = [triggers.validate_trigger(t) for t in app.cfg["triggers"]]
+app.cfg["alias_rules"] = [al, triggers.validate_alias({"name": "g", "body": "glob body"})]
+for ses in (a1, b1):
+    ses.connected = True
+    ses.q.put((ses.conn.gen, "data", ("alphaword everyword" + CR).encode()))
+pump(0.7)
+assert "ALPHAHIT" in txt(a1) and "ALPHAHIT" not in txt(b1), "world-only trigger"
+assert "EVERYHIT" in txt(a1) and "EVERYHIT" in txt(b1), "global trigger runs in both"
+app.goto_world(2)
+assert app._expand("k now") == ["k now"] and app._expand("g") != ["g"], "world-only alias is not seen from Beta"
+app.goto_world(1)
+assert app._expand("k now") != ["k now"], "but it works in Alpha"
+a1.connected = b1.connected = False
+app.close_world(b1)
 root.destroy()
 print("session tests OK")

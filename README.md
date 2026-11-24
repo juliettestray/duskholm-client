@@ -120,6 +120,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   is in brackets and a world with new text while hidden gets a `*` and one beep. Each world has its
   own scrollback, connection, command history and half-typed line; the stat bar, status line and
   screen reader follow only the world you are looking at.
+  Pane areas are kept per world and saved as you change them. Triggers and aliases have a
+  **Global (all worlds)** setting, on by default; turn it off and the rule works only in the world
+  it was made in. Existing rules are all global, and are stored exactly as before.
 - **Dial by hand.** While not connected, type `ATDT <host> <port>` (also `ATD`, `ATDP`, `ATT`,
   `host:port`, a saved world's name, and an optional `tls`/`plain`) and the client answers like a
   modem: `DIALING ...`, `CONNECT` or `NO CARRIER`. Typing `telnet` gives a small pretend telnet

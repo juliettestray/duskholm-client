@@ -502,6 +502,30 @@ def _clean_action(a):
     return None
 
 
+def _world_part(d):
+    """{} for a rule that works in every world (the default, and how rules have always been stored);
+    {"global": False, "world": name} for one tied to a single world."""
+    if d.get("global", True) is not False:
+        return {}
+    world = _clean_text(d.get("world"), 60)
+    return {"global": False, "world": world} if world else {}
+
+
+def rule_applies(rule, world):
+    """True if a trigger/alias is global, or tied to `world` (compared without regard to case)."""
+    try:
+        if rule.get("global", True) is not False:
+            return True
+        return str(rule.get("world", "")).strip().lower() == str(world or "").strip().lower()
+    except Exception:
+        return True
+
+
+def for_world(rules, world):
+    """The rules that apply in `world` (the same dict objects, in the same order)."""
+    return [r for r in rules if isinstance(r, dict) and rule_applies(r, world)]
+
+
 def _validate_trigger(d):
     """(clean | None, problem)."""
     if not isinstance(d, dict):
@@ -532,9 +556,11 @@ def _validate_trigger(d):
                     break
     if not acts:
         return None, "No valid actions"
-    return {"name": name, "enabled": _bool(d.get("enabled", True), False), "mode": mode,
-            "pattern": pat, "ignore_case": ic, "priority": prio,
-            "stop": _bool(d.get("stop", False), False), "actions": acts}, ""
+    out = {"name": name, "enabled": _bool(d.get("enabled", True), False), "mode": mode,
+           "pattern": pat, "ignore_case": ic, "priority": prio,
+           "stop": _bool(d.get("stop", False), False), "actions": acts}
+    out.update(_world_part(d))
+    return out, ""
 
 
 def validate_trigger(d):
@@ -605,7 +631,9 @@ def _validate_alias(d):
     body = _clean_text(d.get("body"), MAX_ALIAS_BODY)
     if body is None:
         return None
-    return {"name": name, "enabled": _bool(d.get("enabled", True), False), "body": body}
+    out = {"name": name, "enabled": _bool(d.get("enabled", True), False), "body": body}
+    out.update(_world_part(d))
+    return out
 
 
 def validate_alias(d):

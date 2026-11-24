@@ -981,6 +981,7 @@ def clean_settings(cfg):
     cfg["designs"] = customize_data.validate_designs(cfg.get("designs"))
     ph = cfg.get("panes_hidden")
     cfg["panes_hidden"] = [x for x in ph[:8] if isinstance(x, str) and len(x) < 20] if isinstance(ph, list) else []
+    cfg["world_panes"] = worldtabs.clean_world_panes(cfg.get("world_panes"), layout)
     if triggers is not None:
         raw = cfg.get("triggers") if isinstance(cfg.get("triggers"), list) else []
         cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in raw[:1000]) if t is not None][:500]
@@ -1083,6 +1084,8 @@ def trigger_from_values(v):
             "mode": "regex" if v.get("regex") else "plain", "pattern": str(v.get("pattern", "")),
             "ignore_case": bool(v.get("ignore_case", True)), "priority": prio, "stop": bool(v.get("stop")),
             "actions": actions}
+    if not v.get("glob", True) and v.get("world"):
+        trig["global"], trig["world"] = False, str(v["world"])
     ok_trig = triggers.validate_trigger(trig)
     if ok_trig is None:
         ok, msg, _m = triggers.check_trigger(trig, str(v.get("sample", "")) or "x")
@@ -1130,11 +1133,12 @@ def values_from_trigger(t):
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
          "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "hide": False, "send": "",
          "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "status": "",
-         "speak": "", "speak_int": False, "silence": False}
+         "speak": "", "speak_int": False, "silence": False, "glob": True, "world": ""}
     if not t:
         return v
     v.update(name=t["name"], enabled=t["enabled"], regex=t["mode"] == "regex", pattern=t["pattern"],
-             ignore_case=t["ignore_case"], priority=str(t["priority"]), stop=t["stop"])
+             ignore_case=t["ignore_case"], priority=str(t["priority"]), stop=t["stop"],
+             glob=t.get("global", True) is not False, world=t.get("world", ""))
     for a in t["actions"]:
         k = a["type"]
         if k == "highlight":
@@ -1514,6 +1518,7 @@ SESSION_FIELDS = (
     "_line", "_last_prompt", "_pending", "_line_plain", "_line_flushed", "_line_hidden_len",
     "_flush_job", "_online_since", "_prompt_time", "_dial_mode", "_telnet_cli",
     "out", "_mid", "_sb",                      # this world's scrollback, its frame and scrollbar
+    "_panes", "_region_ui", "_region_active", "_panes_active", "_pane_geom",    # its capture panes
 )
 
 
@@ -1644,6 +1649,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         return clean_settings(cfg)
 
     def _save_settings(self):
+        if getattr(self, "_shown", None) is not None:
+            self._stash_world_panes(self._shown)          # pane settings are kept per world, automatically
         self.cfg["geometry"] = self.root.geometry()
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
@@ -1761,6 +1768,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             s._pending, s._line_plain, s._line_flushed, s._line_hidden_len = [], "", False, 0
             s._flush_job, s._online_since, s._prompt_time = None, 0.0, 0.0
             s._dial_mode, s._telnet_cli = None, False
+            s._panes, s._region_ui, s._region_active = {}, {}, {}
+            s._panes_active, s._pane_geom = False, None
             self._make_session_widgets(s)
             self.sessions.append(s)
             for w, role in ((s.out, "text"), (s._sb, "scroll"), (s._mid, "frame")):
@@ -1786,10 +1795,14 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         except ValueError:
             pass
         old.draft = self.input.get()
+        self._stash_world_panes(old)
+        self.session = old
+        self._hide_pane_widgets()                      # the old world's panes leave the screen with it
         for w in (old._mid, old._sb, old.out):
             w.pack_forget()
             w.place_forget()
         self.session = self._shown = s
+        self._load_world_panes(s)
         s.unread = False
         self._dosscroll._cmd = s.out.yview
         self.apply_layout()
@@ -2263,7 +2276,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
 
     def _text_widgets(self):
         """The main text area and every pane's text area (they share one set of colour tags)."""
-        return [s.out for s in self.sessions] + [p["text"] for p in self._panes.values()]
+        return [s.out for s in self.sessions] + [p["text"] for s in self.sessions for p in s._panes.values()]
 
     def _style_tag(self, name):
         key = self._tag_keys[name]
@@ -3690,7 +3703,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         v0 = values_from_trigger(existing)
         sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "status", "speak")}
         bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole",
-                                                           "hide", "echo", "beep", "pane_gag", "speak_int", "silence")}
+                                                           "hide", "echo", "beep", "pane_gag", "speak_int", "silence",
+                                                           "glob")}
         r = 0
 
         def row(label, widget):
@@ -3708,6 +3722,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         opts = tk.Frame(win)
         tk.Checkbutton(opts, text="Enabled", variable=bv["enabled"]).pack(side="left")
         tk.Checkbutton(opts, text="Stop other triggers", variable=bv["stop"]).pack(side="left", padx=10)
+        tk.Checkbutton(opts, text="Global (all worlds)", variable=bv["glob"]).pack(side="left")
         tk.Label(opts, text="Priority").pack(side="left", padx=(10, 4))
         tk.Entry(opts, textvariable=sv["priority"], width=6).pack(side="left")
         row("", opts)
@@ -3748,6 +3763,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             v = {k: x.get() for k, x in sv.items()}
             v.update({k: x.get() for k, x in bv.items()})
             v["keep"] = v0["keep"]
+            v["world"] = v0.get("world") or self._world_name(self._shown)
             return v
 
         def test(*_):
@@ -3793,10 +3809,14 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
               "body": tk.StringVar(value=existing["body"] if existing else ""),
               "sample": tk.StringVar(value="")}
         en = tk.BooleanVar(value=existing["enabled"] if existing else True)
+        gl = tk.BooleanVar(value=(existing or {}).get("global", True) is not False)
         for r, (label, key, width) in enumerate((("Name", "name", 24), ("Expands to", "body", 70), ("Try arguments", "sample", 40))):
             tk.Label(win, text=label).grid(row=r, column=0, sticky="w", padx=(10, 6), pady=4)
             tk.Entry(win, textvariable=sv[key], width=width).grid(row=r, column=1, sticky="w", pady=4, padx=(0, 10))
-        tk.Checkbutton(win, text="Enabled", variable=en).grid(row=3, column=1, sticky="w")
+        flags = tk.Frame(win)
+        flags.grid(row=3, column=1, sticky="w")
+        tk.Checkbutton(flags, text="Enabled", variable=en).pack(side="left")
+        tk.Checkbutton(flags, text="Global (all worlds)", variable=gl).pack(side="left", padx=10)
         tk.Label(win, justify="left", wraplength=560, text="Use ; between commands. %1-%9 are the words you type after the "
                  "alias, %* is all of them. With no % in the text, whatever you type is added to the last command."
                  ).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 0))
@@ -3805,7 +3825,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
 
         def build():
             return triggers.validate_alias({"name": sv["name"].get().strip(), "body": sv["body"].get().strip(),
-                                            "enabled": en.get()})
+                                            "enabled": en.get(), "global": gl.get(),
+                                            "world": (existing or {}).get("world") or self._world_name(self._shown)})
 
         def test(*_):
             a = build()
@@ -3829,6 +3850,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         for x in sv.values():
             x.trace_add("write", test)
         en.trace_add("write", test)
+        gl.trace_add("write", test)
         row_b = tk.Frame(win)
         row_b.grid(row=6, column=0, columnspan=2, sticky="e", padx=10, pady=10)
         tk.Button(row_b, text="OK", width=8, command=ok).pack(side="right")
@@ -3909,12 +3931,14 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         """Two pages: what to match, then what to do. `values` carries entries between pages."""
         if values is None:
             values = values_from_trigger(self.cfg["triggers"][index] if index is not None else None)
+        if not values.get("world"):
+            values["world"] = self._world_name(self._shown)
         t = lambda k, label, w=40: {"key": k, "label": label, "type": "text", "value": str(values[k]), "width": w}
         c = lambda k, label: {"key": k, "label": label, "type": "check", "value": bool(values[k])}
         if page == 1:
             fields = [t("name", "Name", 30), t("pattern", "Pattern", 46), c("regex", "Regular expression"),
-                      c("ignore_case", "Ignore case"), c("enabled", "Enabled"), c("stop", "Stop other triggers"),
-                      t("priority", "Priority", 6), t("sample", "Test line", 46)]
+                      c("ignore_case", "Ignore case"), c("enabled", "Enabled"), c("glob", "Global (all worlds)"),
+                      c("stop", "Stop other triggers"), t("priority", "Priority", 6), t("sample", "Test line", 46)]
             buttons = [("Actions >", "next"), ("Test", "test"), ("Cancel", "cancel")]
             title = "Trigger: match"
             msg = "Plain: * is a wildcard. %1-%9 / %0 can be used in commands."
@@ -3964,10 +3988,13 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         if values is None:
             ex = self.cfg["alias_rules"][index] if index is not None else None
             values = {"name": ex["name"] if ex else "", "body": ex["body"] if ex else "",
-                      "enabled": ex["enabled"] if ex else True, "sample": ""}
+                      "enabled": ex["enabled"] if ex else True, "sample": "",
+                      "glob": (ex or {}).get("global", True) is not False,
+                      "world": (ex or {}).get("world") or self._world_name(self._shown)}
         fields = [{"key": "name", "label": "Name", "type": "text", "value": values["name"], "width": 22},
                   {"key": "body", "label": "Expands to", "type": "text", "value": values["body"], "width": 46},
                   {"key": "enabled", "label": "Enabled", "type": "check", "value": bool(values["enabled"])},
+                  {"key": "glob", "label": "Global (all worlds)", "type": "check", "value": bool(values["glob"])},
                   {"key": "sample", "label": "Try arguments", "type": "text", "value": values["sample"], "width": 30}]
 
         def result(res, vals):
@@ -3976,7 +4003,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
                 self._reopen(self.dos_rules, "alias", index or 0)
                 return
             a = triggers.validate_alias({"name": values["name"].strip(), "body": values["body"].strip(),
-                                         "enabled": values["enabled"]})
+                                         "enabled": values["enabled"], "global": values["glob"],
+                                         "world": values["world"]})
             if res == "test":
                 text = ("Sends: " + " | ".join(triggers.expand_alias(a, values["sample"]))) if a else \
                     "Give a name (letters, digits and _!?.+-, no spaces) and what it expands to."
@@ -5136,7 +5164,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             return pieces, []
         self._guard.begin_line()
         gag, effects, routes = False, [], []
-        for trig, m in triggers.match_line(plain, self.cfg["triggers"]):
+        for trig, m in triggers.match_line(plain, triggers.for_world(self.cfg["triggers"], self._world_name(self.session))):
             for act in trig["actions"]:
                 kind = act["type"]
                 if kind == "highlight" and not flushed:
@@ -5349,7 +5377,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             if self.open_new_world(w["name"]) is None:
                 return
         else:
-            self.session.name = w["name"]
+            self._rename_world(self.session, w["name"])
             self._refresh_world_ui()
         go()
 
@@ -5781,7 +5809,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         if triggers is None:
             return [line]
         word, _, rest = line.partition(" ")
-        alias = triggers.find_alias(word, self.cfg["alias_rules"])
+        alias = triggers.find_alias(word, triggers.for_world(self.cfg["alias_rules"], self._world_name(self.session)))
         if alias is None:
             return [line]
         return triggers.expand_alias(alias, rest)

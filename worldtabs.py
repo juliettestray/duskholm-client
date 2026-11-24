@@ -7,6 +7,23 @@ reader) only follow the shown world; a world that gets new text while hidden is 
 import tkinter as tk
 
 MAX_WORLDS = 12                     # Ctrl+F1 .. Ctrl+F12
+EMPTY_LAYOUT = {"regions": [], "min_main_cols": 80}
+
+
+def clean_world_panes(raw, layout):
+    """cfg["world_panes"]: {world name (lower case): {"panes", "layout", "panes_hidden"}}, checked."""
+    out = {}
+    if not isinstance(raw, dict) or layout is None:
+        return out
+    for name, e in list(raw.items())[:24]:
+        if not isinstance(name, str) or len(name) > 60 or not isinstance(e, dict):
+            continue
+        panes = layout.validate_panes(e.get("panes") if isinstance(e.get("panes"), list) else [])
+        lay = layout.validate_layout(e.get("layout"), known_panes=[p["name"] for p in panes])
+        ph = e.get("panes_hidden")
+        out[name] = {"panes": panes, "layout": lay,
+                     "panes_hidden": [x for x in ph[:8] if isinstance(x, str) and len(x) < 20] if isinstance(ph, list) else []}
+    return out
 
 
 class WorldTabsMixin:
@@ -14,6 +31,56 @@ class WorldTabsMixin:
         self._shown = self.session
         self.session.unread = False
         self._world_label = None
+
+    # ---- pane settings are kept per world ----------------------------------------------
+    @staticmethod
+    def _world_key(s):
+        return (s.name or "").strip().lower()
+
+    def _stash_world_panes(self, s):
+        """The current pane settings belong to world `s`: remember them under its name."""
+        import copy
+        store = self.cfg.setdefault("world_panes", {})
+        key = self._world_key(s)
+        store[key] = {"panes": copy.deepcopy(self.cfg.get("panes", [])),
+                      "layout": copy.deepcopy(self.cfg.get("layout", EMPTY_LAYOUT)),
+                      "panes_hidden": list(self.cfg.get("panes_hidden", []))}
+        while len(store) > 24:                         # keep the newest; never drop the world on screen
+            for k in list(store):
+                if k != key:
+                    del store[k]
+                    break
+
+    def _load_world_panes(self, s):
+        """Make world `s`'s saved pane settings the current ones (an empty layout for a new world)."""
+        import copy
+        e = self.cfg.get("world_panes", {}).get(self._world_key(s))
+        if e is None:
+            e = {"panes": [], "layout": EMPTY_LAYOUT, "panes_hidden": []}
+        self.cfg["panes"] = copy.deepcopy(e["panes"])
+        self.cfg["layout"] = copy.deepcopy(e["layout"])
+        self.cfg["panes_hidden"] = list(e["panes_hidden"])
+
+    def _rename_world(self, s, name):
+        """A world that dials a saved one takes its name (and that name's remembered panes, if any)."""
+        name = (name or "").strip()
+        if not name or name == s.name:
+            return
+        old_key = self._world_key(s)
+        had = self.cfg.get("world_panes", {}).get(name.lower())
+        if s is self._shown:
+            if had is not None:
+                s.name = name
+                self._load_world_panes(s)
+                self._region_active = {}
+                self.schedule_layout(5)
+            else:
+                s.name = name
+                self._stash_world_panes(s)
+        else:
+            s.name = name
+        if old_key != self._world_key(s) and old_key.startswith("world "):
+            self.cfg.get("world_panes", {}).pop(old_key, None)     # a placeholder name is not worth remembering
 
     # ---- which world is on screen --------------------------------------------------
     def _here(self):
@@ -163,7 +230,22 @@ class WorldTabsMixin:
                     pass
         finally:
             self.session = prev
+        for pane in list(s._panes.values()):
+            for w in (pane["text"], pane["sb"], pane["dsb"]):
+                try:
+                    w.destroy()
+                except tk.TclError:
+                    pass
+        for ui in list(s._region_ui.values()):
+            try:
+                ui["frame"].destroy()
+            except tk.TclError:
+                pass
+        self._themed = [(w, r) for (w, r) in self._themed
+                        if not any(w is p[k] for p in s._panes.values() for k in ("text", "sb"))]
         self.sessions.remove(s)
+        if self._world_key(s).startswith("world "):
+            self.cfg.get("world_panes", {}).pop(self._world_key(s), None)
         self._themed = [(w, r) for (w, r) in self._themed if w not in (s.out, s._sb, s._mid)]
         try:
             s._mid.destroy()
