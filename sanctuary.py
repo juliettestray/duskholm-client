@@ -70,6 +70,8 @@ import combatfilter
 import updateui
 import worldtabs                   # several worlds at once: tabs, Ctrl+F1..F12
 import panesize                    # drag a pane area's border to resize it (behind a lock)
+import emojipick                   # an emoji picker (Windows' own panel cannot reach a Tk entry box)
+import gametime                    # each world's game clock: time zone and IC:OOC ratio
 
 DEFAULT_HOST = "duskholm.com"
 PLAIN_PORT = 3000
@@ -984,9 +986,7 @@ def clean_settings(cfg):
     sr = cfg.get("sr_rate")
     cfg["sr_rate"] = max(-10, min(10, sr)) if isinstance(sr, int) and not isinstance(sr, bool) else 0
     cfg["gradients"] = colortools.validate_saved(cfg.get("gradients"))
-    go = cfg.get("game_offset")
-    cfg["game_offset"] = go if isinstance(go, int) and not isinstance(go, bool) and abs(go) <= 14 * 3600 and go % 900 == 0 \
-        else None
+    cfg["world_time"] = gametime.clean_all(cfg.get("world_time"))
     cn = cfg.get("char_name")
     cfg["char_name"] = cn if isinstance(cn, str) and re.fullmatch(r"[A-Za-z][A-Za-z'-]{0,23}", cn) else ""
     cfg["designs"] = customize_data.validate_designs(cfg.get("designs"))
@@ -1550,7 +1550,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1990,9 +1990,11 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         f.add_checkbutton(label="Lock pane sizes (no dragging)", variable=self.v_panelock,
                           command=lambda: self.set_panes_locked(self.v_panelock.get()))
         f.add_command(label="Timer...   Alt+T", command=self.open_timers)
+        f.add_command(label="Game time (this world)...", command=self.open_game_time)
         f.add_command(label="Notepad   Alt+N", command=self.toggle_notepad)
         f.add_command(label="Moon   Alt+M", command=self.open_moon)
         f.add_command(label="Gradient maker...   Alt+G", command=self.open_gradient)
+        f.add_command(label="Emoji picker...   Alt+E", command=self.open_emoji_picker)
         f.add_command(label="Hex to xterm...   Alt+H", command=self.open_hex)
         f.add_command(label="Customize form...   Alt+K", command=self.open_customize)
         f.add_command(label="Export world settings...", command=self.open_export)
@@ -3154,10 +3156,12 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
     def dos_tools_menu(self):
         items = [
             {"label": "Timer...", "hotkey": "T", "shortcut": "Alt-T", "action": self.open_timers},
+            {"label": "Game time (this world)...", "hotkey": "A", "action": self.open_game_time},
             {"label": "Notepad", "hotkey": "N", "shortcut": "Alt-N", "action": self.toggle_notepad},
             {"label": "Moon", "hotkey": "M", "shortcut": "Alt-M", "action": self.open_moon},
             {"label": "Gradient maker...", "hotkey": "G", "shortcut": "Alt-G", "action": self.open_gradient},
             {"label": "Hex to xterm...", "hotkey": "H", "shortcut": "Alt-H", "action": self.open_hex},
+            {"label": "Emoji picker...", "hotkey": "P", "shortcut": "Alt-E", "action": self.open_emoji_picker},
             {"label": "Customize form...", "hotkey": "C", "shortcut": "Alt-K", "action": self.open_customize},
             None,
             {"label": "Export world settings...", "hotkey": "E", "action": self.open_export},
@@ -3291,7 +3295,8 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
                  ("Ctrl-G", "Gradient in a text page"), ("Ctrl-K", "Strip colours there")]
         titles = {"worlds": "Worlds", "triggers": "Triggers", "aliases": "Aliases", "panes": "Panes",
                   "moon": "The moon", "notepad": "Notepad", "timers": "Timer", "dos_toggle": "DOS look",
-                  "gradient": "Gradient maker", "hex": "Hex to xterm", "customize": "Customize form"}
+                  "gradient": "Gradient maker", "hex": "Hex to xterm", "customize": "Customize form",
+                  "emoji": "Emoji picker"}
         changeable = [(shown, titles[a]) for a, _t, shown in self.hotkey_table() if a in titles]
         out = fixed + changeable
         if self.sr_on():
@@ -3302,6 +3307,8 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (Ctrl+F1..F12);  /newworld [name]  /closeworld"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
+        ("/gametime", "this world's game clock: zone, IC:OOC ratio (zone, ratio, set, reset)"),
+        ("/emoji [words]", "an emoji picker (Alt+E); Windows' own panel cannot reach this box"),
         ("/triggers  /alias", "triggers and aliases (/alias name body, /unalias, /aliases)"),
         ("/timer 10m [label]", "a timer; also 21:30, game 21:30, list, cancel [n]"),
         ("/moon  /notes", "the moon window; the notepad"),
@@ -5183,7 +5190,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
     _WALK_RE = re.compile(r"^Your (?:(.+?) walk(?: string)? is now|new walk is): (.+?)\s*$")
     _DISPLAY_WALK_RE = re.compile(r"^\[Walk\s*\]\s+-\s+(.+?) in from the right\.\s*$")
     _DISPLAY_INTRO_RE = re.compile(r"^\[Intro\s*\]\s+-\s+(.+?)\s*$")
-    _TIME_RE = re.compile(r"^The time is [A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} (\d\d):(\d\d):(\d\d) (\d{4})\s*$")
+    _TIME_RE = re.compile(r"^The time is [A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4})\s*$")
     _NAME_RE = re.compile(r"^\[Name\s*\]\s+-\s+([A-Za-z][A-Za-z'-]{0,23})\s*$")
 
     def _df_full(self):
@@ -5248,15 +5255,10 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
             m = self._TIME_RE.match(plain)
             if m:
                 try:
-                    # the game prints a date and time; compare its time of day with UTC now
-                    h, mi, se = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                    now = time.gmtime()
-                    diff = (h * 3600 + mi * 60 + se) - (now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec)
-                    diff = ((diff + 43200) % 86400) - 43200            # nearest whole-day wrap
-                    off = int(round(diff / 900.0)) * 900
-                    if abs(off) <= 14 * 3600 and off != self.cfg.get("game_offset"):
-                        self.cfg["game_offset"] = off
-                        self._save_settings()
+                    # the game prints a date and time: a world set to learn its zone takes the offset from it, and
+                    # a world with its own clock speed re-sets its clock to this
+                    self.learn_game_time(m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4)),
+                                         int(m.group(5)), int(m.group(6)))
                 except (ValueError, OverflowError):
                     pass
         elif plain.startswith("[Name"):
@@ -6032,7 +6034,8 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         cmd, _, arg = line[1:].partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
-                or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg):
+                or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
+                or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg):
             return
         if cmd == "export":
             if arg:

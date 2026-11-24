@@ -167,6 +167,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   Each pane area has a small fold button (`-`); `Alt+1`..`9` fold away or bring back the area
   holding that pane and `Alt+0` all of them. Folded panes keep collecting; the bar says
   `Unread: OOC*3`. In the DOS look everything sits in one double-line frame whose joins match.
+  **Resize with the mouse:** unlock with File > Lock pane sizes (or `/panelock off`), then drag the
+  border between the main text and an area, or the divider between two areas stacked on one side (in
+  the DOS look these are the frame lines, a whole cell thick, and the scrollbars step aside while it is
+  unlocked). It is locked by default, so nothing moves by accident.
 - **Combat readout.** Stun, wounds, the other counters and the move/attack timers sit together
   beside HP. Stun changes colour as it climbs (50 warm, 75 bad). `M:` and `K:` count down on their
   own once a second, as the game does, instead of waiting for the next prompt. The lines the game
@@ -182,15 +186,24 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   other link opens in your browser. Both are options (Options menu).
 - **Emoji** (option, off by default). `:smile:` in incoming text is shown as the emoji and any
   emoji you type is sent as `:smile:`, since the game only takes plain ASCII. About 100 familiar
-  shortcodes plus every emoji's official name (`:rolling_on_the_floor_laughing:`).
+  shortcodes plus every emoji's official name (`:rolling_on_the_floor_laughing:`). Windows' own emoji
+  panel (`Win+.`) cannot put its choice into a Tk entry box, so Sanctuary has its own picker: `Alt+E`
+  (or `/emoji heart`, or File > Emoji picker) searches by part of a name and adds the emoji to what you
+  are typing. Emoji you paste are kept in the box too.
 - **Join ASCII boxes** (option, off by default). The game's `| - _ . , '` boxes are redrawn with
   solid line characters (`┌─┐`), without changing any column, so the colours stay put.
 - **Timer** (`Alt+T`, `/timer 10m label`, `/timer 21:30`, `/timer game 21:30`, `/timer list`,
-  `/timer cancel [n]`). Counts down, or waits for a time on your clock or the game's (US Eastern).
-- **Clock** (Options > Clock): your local time, or the game's own clock. The game's clock is learned
-  from the first line of the game's `time` command (type `time` once); until then it is US Eastern.
-  Game-time timers (`game 21:30`) use the same clock. The client also learns your character's name
-  from the game's `display` output, only ever from what the game prints, never from what you type.
+  `/timer cancel [n]`). Counts down, or waits for a time on your clock or the game's.
+- **Clock** (Options > Clock): your local time, or the game's own clock.
+- **Game time, per world** (File > Game time, `/gametime`). Every world has its own game clock, set
+  to Duskholm's by default: US Eastern (EST/EDT) running 1:1 with real time. A world can use a fixed
+  offset (`/gametime zone -5`, `+5:30`, `utc`), take its offset from the game's `time` command
+  (`/gametime zone learn`), or run at another speed: `/gametime ratio 3:1` is three in-character
+  hours per real hour, `1:24` is one game hour per real day (`/gametime set 14:30` says what its clock
+  reads now, and the game's own `time` output re-sets it). The clock and `/timer game 21:30` follow
+  the world on screen; `/gametime reset` goes back to Duskholm's. The client also learns your
+  character's name from the game's `display` output, only ever from what the game prints, never from
+  what you type.
 - **Notepad** (`Alt+N`): a scratch page saved in `~/.sanctuary_notes.txt` as you type.
 - **Moon** (`Alt+M`, `/moon`): the phase, how much is lit, and the next full and new moon, worked
   out the way the game does it (so they agree); a picture in the DOS look.
@@ -329,6 +342,9 @@ python tests/test_triggers.py     # the trigger/alias engine (matching, safety, 
 python tests/test_rules.py        # triggers, aliases and whole-line output, end to end
 python tests/test_layout_engine.py  # pane geometry (pure)
 python tests/test_panes.py        # capture panes, routing, manager, both looks
+python tests/test_panesize.py    # dragging pane borders and dividers, the lock, both looks
+python tests/test_gametime.py    # each world's game clock: zone, IC:OOC ratio, timers
+python tests/test_emojipick.py   # the emoji picker
 python tests/test_combat.py       # stun colours, grouped readout, self-ticking timers
 python tests/test_status.py       # status-line action, credit-walk preview
 python tests/test_links.py        # links, image panes, bell/scroll/echo options

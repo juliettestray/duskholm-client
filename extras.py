@@ -16,6 +16,7 @@ try:
     import dosui
 except ImportError:
     dosui = None
+import gametime
 
 MAX_TIMERS = 20
 MAX_TIMER_SECS = 7 * 86400
@@ -43,7 +44,7 @@ def _clock_hm(text):
     return h, mi
 
 
-def parse_when(text, now=None, game_offset=None):
+def parse_when(text, now=None, game_offset=None, game=None):
     """What a timer is waiting for: '10m', '1h30m', '90s', '45' (minutes), '21:30' / '9:30pm'
     (your local clock) or 'game 21:30' / 'et 9pm' (the game's Eastern clock).
     Returns (due_timestamp, kind) with kind 'after', 'local' or 'game'; raises ValueError."""
@@ -54,6 +55,8 @@ def parse_when(text, now=None, game_offset=None):
     m = re.match(r"^(game|et|eastern)\s+(.+)$", t)
     if m:
         hm = _clock_hm(m.group(2))
+        if hm is not None and game is not None:                  # this world's own clock (zone and speed)
+            return _check(gametime.next_at(game, hm, now), now), "game"
         if hm is None or (moon is None and game_offset is None):
             raise ValueError("Game time looks like 'game 21:30' or 'game 9pm'.")
         loc = (datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=now + game_offset)) \
@@ -145,6 +148,7 @@ HOTKEYS = {
     "panes": ("Panes / layout", "Ctrl-P"), "moon": ("Moon", "Alt-M"), "notepad": ("Notepad", "Alt-N"),
     "timers": ("Timers", "Alt-T"), "dos_toggle": ("DOS look on/off", "Alt-D"),
     "gradient": ("Gradient maker", "Alt-G"), "hex": ("Hex to xterm", "Alt-H"), "customize": ("Customize form", "Alt-K"),
+    "emoji": ("Emoji picker", "Alt-E"),
     # screen reader mode
     "sr_prev": ("Review: older line", "Alt-Up"), "sr_next": ("Review: newer line", "Alt-Down"),
     "sr_last": ("Repeat last line", "Alt-R"), "sr_stats": ("Read my stats", "Alt-S"),
@@ -227,14 +231,8 @@ class ExtrasMixin:
         now = time.time()
         if mode == "real":
             return time.strftime("%H:%M", time.localtime(now))
-        go = self.cfg.get("game_offset")
-        if mode == "game" and go is not None:               # the game's own clock, as its `time` command showed it
-            t = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=now + go)
-            name = {-4 * 3600: "EDT", -5 * 3600: "EST"}.get(go, "UTC%+d" % (go // 3600) if go % 3600 == 0 else "")
-            return ("%02d:%02d %s" % (t.hour, t.minute, name)).strip()
-        if mode == "game" and moon is not None:
-            t = moon.eastern_struct(now)
-            return "%02d:%02d %s" % (t.hour, t.minute, "EDT" if moon.eastern_offset(now) == -4 * 3600 else "EST")
+        if mode == "game":                                   # this world's clock: its zone and speed
+            return self.game_clock_text()
         return ""
 
     def _update_clock(self):
@@ -248,7 +246,7 @@ class ExtrasMixin:
     def add_timer(self, when, label=""):
         """Start a timer. Returns a message for the user."""
         try:
-            due, kind = parse_when(when, game_offset=self.cfg.get("game_offset"))
+            due, kind = parse_when(when, game=self.world_time())
         except ValueError as e:
             return False, str(e)
         if len(self._timers) >= MAX_TIMERS:
@@ -316,12 +314,12 @@ class ExtrasMixin:
                     self.system(self.cancel_timer())
             return self._dos_dialog("Timer", fields, [("Start", "start"), ("List", "list"), ("Clear all", "clear"),
                                                       ("Cancel", "cancel")], result, width=60,
-                                    message="Examples: 10m   1h30m   21:30   game 21:30 (the game's Eastern clock)")
+                                    message="Examples: 10m   1h30m   21:30   game 21:30 (this world's game clock)")
         top = tk.Toplevel(self.root)
         top.title("Timer")
         top.transient(self.root)
         w, l = tk.StringVar(), tk.StringVar()
-        tk.Label(top, justify="left", text="When: 10m, 1h30m, 90s, 21:30, or game 21:30 (the game's Eastern clock)"
+        tk.Label(top, justify="left", text="When: 10m, 1h30m, 90s, 21:30, or game 21:30 (this world's game clock)"
                  ).grid(row=0, column=0, columnspan=2, padx=10, pady=(8, 2), sticky="w")
         tk.Label(top, text="When").grid(row=1, column=0, padx=10, sticky="w")
         e = tk.Entry(top, textvariable=w, width=20)
@@ -503,7 +501,8 @@ class ExtrasMixin:
         actions = {"worlds": self.open_worlds, "triggers": self.open_triggers, "aliases": self.open_aliases,
                    "panes": self.open_panes, "moon": self.open_moon, "notepad": self.toggle_notepad,
                    "timers": self.open_timers, "dos_toggle": self.toggle_dos_mode,
-                   "gradient": self.open_gradient, "hex": self.open_hex, "customize": self.open_customize}
+                   "gradient": self.open_gradient, "hex": self.open_hex, "customize": self.open_customize,
+                   "emoji": self.open_emoji_picker}
         actions.update(self.access_actions())
         for action, (seq, _shown) in effective_keys(self.cfg.get("keys")).items():
             fn = actions.get(action)
