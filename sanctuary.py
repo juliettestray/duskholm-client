@@ -2029,8 +2029,8 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
             w.bind("<Control-equal>", lambda e: self._zoom(+1))
             w.bind("<Control-minus>", lambda e: self._zoom(-1))
             w.bind("<Control-l>", lambda e: self.clear())
-        self._bind_hotkeys()                                   # Ctrl-T, Alt-M ... (changeable: /hotkeys)
-        self._bind_world_keys()                                # Ctrl-F1 .. Ctrl-F12 pick a world
+        self._bind_hotkeys()                                   # Ctrl-T, Alt-M, Ctrl-A, Ctrl-F1 ... (changeable: /hotkeys)
+        self._bind_clipboard_keys()                            # Ctrl-C copies what you dragged over, Ctrl-V pastes
         if self.cfg.get("clock", "off") != "off":
             self._start_xtick()
 
@@ -2042,7 +2042,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         f.add_command(label="Close this world   Ctrl+Shift+W", command=self.close_world_ask)
         f.add_command(label="Prompt bar format...", command=self.edit_prompt)
         f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
-        f.add_command(label="Aliases...   Ctrl+A", command=self.open_aliases)
+        f.add_command(label="Aliases...   Alt+A", command=self.open_aliases)
         f.add_command(label="Panes / layout...   Ctrl+P", command=self.open_panes)
         self.v_panelock = tk.BooleanVar(value=self.panes_locked())
         f.add_checkbutton(label="Lock pane sizes (no dragging)", variable=self.v_panelock,
@@ -3242,7 +3242,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
              if len(self.sessions) > 1 else []) + [
             {"label": "Prompt bar format...", "hotkey": "B", "action": self.edit_prompt},
             {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
-            {"label": "Aliases...", "hotkey": "A", "shortcut": "Ctrl-A", "action": self.open_aliases},
+            {"label": "Aliases...", "hotkey": "A", "shortcut": "Alt-A", "action": self.open_aliases},
             {"label": "Panes / layout...", "hotkey": "V", "shortcut": "Ctrl-P", "action": self.open_panes},
             {"label": "Lock pane sizes", "hotkey": "Z", "checked": self.panes_locked(),
              "action": self.toggle_panes_locked},
@@ -3403,8 +3403,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         """[(keys, what it does)] built from the real key table, so it can never go stale."""
         fixed = [("F1", "This help"), ("F2", "Connect / disconnect"), ("F3", "Log to file"), ("F5", "Skin"),
                  ("F6", "Colours"), ("F7", "Font"), ("F10", "Main menu"), ("F11", "Full screen"),
-                 ("F12", "About"), ("Alt-X", "Exit"), ("Ctrl-F1..F12", "Show world 1..12"),
-                 ("Ctrl-Shift-W", "Close this world"), ("PgUp / PgDn", "Scroll back"),
+                 ("F12", "About"), ("Alt-X", "Exit"), ("PgUp / PgDn", "Scroll back"),
                  ("Up / Down", "Command history"), ("Ctrl-L", "Clear the screen"), ("Ctrl +/-", "Font size"),
                  ("Ctrl-1..9", "Show a pane's tab"), ("Alt-1..9", "Fold a pane area"), ("Alt-0", "Fold all areas"),
                  ("Ctrl-*", "More text contrast"), ("Ctrl-/", "Less text contrast"),
@@ -3413,8 +3412,12 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         titles = {"worlds": "Worlds", "triggers": "Triggers", "aliases": "Aliases", "panes": "Panes",
                   "moon": "The moon", "notepad": "Notepad", "timers": "Timer", "dos_toggle": "DOS look",
                   "gradient": "Gradient maker", "hex": "Hex to xterm", "customize": "Customize form",
-                  "emoji": "Emoji picker"}
+                  "emoji": "Emoji picker", "select_input": "Select the entry line",
+                  "world_next": "Next world", "world_prev": "Previous world", "close_world": "Close this world"}
         changeable = [(shown, titles[a]) for a, _t, shown in self.hotkey_table() if a in titles]
+        pre = self.world_key_prefix()
+        if pre:
+            changeable.append(("%s1..%s12" % (pre, pre), "Show world 1..12"))
         out = fixed + changeable
         if self.sr_on():
             out += [(shown, t) for a, t, shown in self.hotkey_table() if a.startswith("sr_")]
@@ -3422,7 +3425,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
 
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
-        ("/world [n|name]", "switch world (Ctrl+F1..F12);  /newworld [name]  /closeworld"),
+        ("/world [n|name]", "switch world (keys: /hotkeys);  /newworld [name]  /closeworld"),
         ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
         ("/gametime", "this world's game clock: zone, IC:OOC ratio (zone, ratio, set, reset)"),
@@ -6189,7 +6192,7 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
         if cmd in ("help", "?"):
             self.system("Local commands:\n"
                         "  /connect [host [port]]   /disconnect   /reconnect   /quit\n"
-                        "  /world [n|name]          /newworld [name]   /closeworld   (Ctrl+F1..F12)\n"
+                        "  /world [n|name]          /newworld [name]   /closeworld   (world keys: /hotkeys)\n"
                         "  /panelock [on|off]       lock / unlock resizing pane areas by dragging their border\n"
                         "  /alias name expansion    (use ; between commands, $* for arguments)\n"
                         "  /unalias name            /aliases\n"

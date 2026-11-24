@@ -116,8 +116,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   an ordinary list window. *Duskholm* is saved by default.
 - **Several worlds at once.** Dialing a saved world while this one is connected opens it in its own
   tab (up to 12); dialing one that is already open switches to it. `Ctrl+F1` .. `Ctrl+F12` show
-  the 1st .. 12th world, `/world [n|name]`, `/newworld [name]` and `/closeworld` do the same by
-  command. **Close this world** (main menu, or `Ctrl+Shift+W`) hangs up, after asking, and closes the tab. The tabs sit in the top bar (DOS look) or the toolbar (normal look): the world on screen
+  the 1st .. 12th world, `Ctrl+PageDown` / `Ctrl+PageUp` the next and previous one, `/world [n|name]`,
+  `/newworld [name]` and `/closeworld` do the same by command (all of these keys can be changed under
+  `/hotkeys`: one row sets the prefix for all twelve, e.g. `Ctrl-Alt-F`; world 1-12 can also be set
+  one by one in the settings file). **Close this world** (main menu, or `Ctrl+Shift+W`) hangs up, after asking, and closes the tab. The tabs sit in the top bar (DOS look) or the toolbar (normal look): the world on screen
   is in brackets and a world with new text while hidden gets a `*` and one beep. Each world has its
   own scrollback, connection, command history and half-typed line; the stat bar, status line and
   screen reader follow only the world you are looking at.
@@ -152,7 +154,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   players can never add commands), and a rate limit stops a runaway loop.
   Plain patterns stop a `*` at the first possible end, so end a pattern with `$` to take the
   whole rest of a line (`* tells you *$`).
-- **Aliases** (`Ctrl+A`, or `/alias name body`, `/unalias`, `/aliases`). An alias is a first word
+- **Aliases** (`Alt+A`, or `/alias name body`, `/unalias`, `/aliases`). An alias is a first word
   that expands to commands: `;` separates them and `%1`-`%9` / `%*` are your arguments. With no `%`
   in the body, what you type after the alias is added to the last command. Old aliases written
   with `$*` are converted to `%*` automatically.
@@ -285,7 +287,12 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `.snc` file holds a world and, optionally, its triggers, aliases, pane layout, prompt formats,
   gradients and designs. Importing is careful: triggers that send commands and all aliases arrive
   switched off for you to check; nothing is overwritten.
-- **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed; F-keys are fixed.
+- **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed (including the world keys
+  and `Ctrl+A`, below); F-keys are fixed.
+- **Ctrl+A selects the whole entry line**, as in MUSHclient (rebindable like the rest; Aliases moved to
+  `Alt+A`). **Copy and paste**: drag over text in the output or a pane, press `Ctrl+C` (`Ctrl+Insert`),
+  and `Ctrl+V` (`Shift+Insert`) pastes it into the entry box from wherever the keyboard is, even though a
+  click in a pane hands the keyboard back to the entry box. A multi-line paste is flattened to one line.
   In the DOS look `Alt+Left` goes back (out of a menu, or to the previous page of a form) and
   `Alt+Right` goes forward (into an entry that opens a list, or to the next page).
 - **Other options:** bell on new output (always / window not in front / scrolled up), jump to the
@@ -371,6 +378,7 @@ python tests/test_panefollow.py  # capture areas keep the newest line in view, a
 python tests/test_stamps.py      # optional time stamps, main text and per pane
 python tests/test_editmenu.py    # right-click Cut / Copy / Paste, both looks
 python tests/test_entryfit.py    # the entry box never clips the last character of a full line
+python tests/test_clipboard_keys.py  # Ctrl+C/V on dragged text, Ctrl+A on the entry line, world keys
 python tests/test_combat.py       # stun colours, grouped readout, self-ticking timers
 python tests/test_status.py       # status-line action, credit-walk preview
 python tests/test_links.py        # links, image panes, bell/scroll/echo options

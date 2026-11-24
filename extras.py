@@ -103,7 +103,8 @@ _MODS = {"ctrl": "Control", "control": "Control", "alt": "Alt", "shift": "Shift"
 _NAMED = {"enter": "Return", "return": "Return", "tab": "Tab", "space": "space", "esc": "Escape",
           "escape": "Escape", "home": "Home", "end": "End", "pageup": "Prior", "pagedown": "Next",
           "insert": "Insert", "delete": "Delete", "backspace": "BackSpace", "up": "Up", "down": "Down",
-          "left": "Left", "right": "Right"}
+          "left": "Left", "right": "Right", "next": "Next", "prior": "Prior"}
+_LABELS = {"Next": "PageDown", "Prior": "PageUp"}          # how those keys are written (Tk calls them Next and Prior)
 # Ctrl/Alt letters a normal text box or the client itself needs
 RESERVED_KEYS = {"Control-c", "Control-v", "Control-x", "Control-z", "Control-y", "Control-l", "Control-plus",
                  "Control-minus", "Control-equal", "Alt-F4", "Alt-x", "Alt-Return"}
@@ -127,7 +128,8 @@ def parse_hotkey(text):
     if re.fullmatch(r"f([1-9]|1[0-2])", k):
         name, label = k.upper(), k.upper()
     elif k in _NAMED:
-        name, label = _NAMED[k], _NAMED[k]
+        name = _NAMED[k]
+        label = _LABELS.get(name, name)
     elif len(key) == 1 and key.isalnum() and key.isascii():
         if not ({"Control", "Alt"} & set(tk_mods)):
             raise ValueError("Letters and digits need Ctrl or Alt.")
@@ -144,11 +146,26 @@ def parse_hotkey(text):
 
 # action -> (title, default key) for the hotkeys that can be changed
 HOTKEYS = {
-    "worlds": ("Worlds", "Ctrl-W"), "triggers": ("Triggers", "Ctrl-T"), "aliases": ("Aliases", "Ctrl-A"),
+    "worlds": ("Worlds", "Ctrl-W"), "triggers": ("Triggers", "Ctrl-T"), "aliases": ("Aliases", "Alt-A"),
     "panes": ("Panes / layout", "Ctrl-P"), "moon": ("Moon", "Alt-M"), "notepad": ("Notepad", "Alt-N"),
     "timers": ("Timers", "Alt-T"), "dos_toggle": ("DOS look on/off", "Alt-D"),
     "gradient": ("Gradient maker", "Alt-G"), "hex": ("Hex to xterm", "Alt-H"), "customize": ("Customize form", "Alt-K"),
     "emoji": ("Emoji picker", "Alt-E"),
+    "select_input": ("Select the whole entry line", "Ctrl-A"),
+    "world_next": ("Next world", "Ctrl-PageDown"), "world_prev": ("Previous world", "Ctrl-PageUp"),
+    "close_world": ("Close this world", "Ctrl-Shift-W"),
+    "world_1": ("Show world 1", "Ctrl-F1"),
+    "world_2": ("Show world 2", "Ctrl-F2"),
+    "world_3": ("Show world 3", "Ctrl-F3"),
+    "world_4": ("Show world 4", "Ctrl-F4"),
+    "world_5": ("Show world 5", "Ctrl-F5"),
+    "world_6": ("Show world 6", "Ctrl-F6"),
+    "world_7": ("Show world 7", "Ctrl-F7"),
+    "world_8": ("Show world 8", "Ctrl-F8"),
+    "world_9": ("Show world 9", "Ctrl-F9"),
+    "world_10": ("Show world 10", "Ctrl-F10"),
+    "world_11": ("Show world 11", "Ctrl-F11"),
+    "world_12": ("Show world 12", "Ctrl-F12"),
     # screen reader mode
     "sr_prev": ("Review: older line", "Alt-Up"), "sr_next": ("Review: newer line", "Alt-Down"),
     "sr_last": ("Repeat last line", "Alt-R"), "sr_stats": ("Read my stats", "Alt-S"),
@@ -502,7 +519,11 @@ class ExtrasMixin:
                    "panes": self.open_panes, "moon": self.open_moon, "notepad": self.toggle_notepad,
                    "timers": self.open_timers, "dos_toggle": self.toggle_dos_mode,
                    "gradient": self.open_gradient, "hex": self.open_hex, "customize": self.open_customize,
-                   "emoji": self.open_emoji_picker}
+                   "emoji": self.open_emoji_picker, "select_input": self._select_input_line,
+                   "world_next": lambda: self.cycle_world(+1), "world_prev": lambda: self.cycle_world(-1),
+                   "close_world": self.close_world_ask}
+        for n in range(1, 13):
+            actions["world_%d" % n] = (lambda n=n: self.goto_world(n))
         actions.update(self.access_actions())
         for action, (seq, _shown) in effective_keys(self.cfg.get("keys")).items():
             fn = actions.get(action)
@@ -517,6 +538,38 @@ class ExtrasMixin:
                 for w in (self.root, self.input):
                     w.bind(s, handler)
                     self._hotkey_bound.append((w, s))
+
+    def _select_input_line(self):
+        """Ctrl-A (as in MUSHclient): the whole entry line is selected, ready to be replaced or cut."""
+        self.input.focus_set()
+        self.input.select_range(0, "end")
+        self.input.icursor("end")
+
+    def world_key_prefix(self):
+        """'Ctrl-F' when worlds 1..12 are all that prefix plus 1..12; '' when they have been set one by one."""
+        keys = {a: s for a, _t, s in self.hotkey_table()}
+        first = keys.get("world_1", "")
+        if not first.endswith("1"):
+            return ""
+        pre = first[:-1]
+        return pre if all(keys.get("world_%d" % n) == "%s%d" % (pre, n) for n in range(1, 13)) else ""
+
+    def _hotkey_rows(self):
+        """The rows of the Hotkeys form: the twelve world keys are one row (their prefix, e.g. Ctrl-F)."""
+        rows = [r for r in self.hotkey_table() if not re.fullmatch(r"world_\d+", r[0])]
+        at = next((k for k, r in enumerate(rows) if r[0] == "worlds"), -1) + 1
+        rows.insert(at, ("world_keys", "Show world 1-12: key prefix", self.world_key_prefix() or "(custom)"))
+        return rows
+
+    def _wanted_from_form(self, vals):
+        """What the Hotkeys form holds -> {action: key text}; a new prefix is spread over world 1..12."""
+        wanted = {a: v for a, v in vals.items() if a != "world_keys"}
+        pre = str(vals.get("world_keys", "") or "").strip()
+        now = {a: s for a, _t, s in self.hotkey_table()}
+        changed = bool(pre) and pre != "(custom)" and pre != (self.world_key_prefix() or "(custom)")
+        for n in range(1, 13):
+            wanted["world_%d" % n] = ("%s%d" % (pre, n)) if changed else now["world_%d" % n]
+        return wanted
 
     def _hotkey_current(self, action):
         return effective_keys(self.cfg.get("keys"))[action][1]
@@ -544,14 +597,15 @@ class ExtrasMixin:
         return True, "Hotkeys saved."
 
     def open_hotkeys(self):
-        rows = self.hotkey_table()
+        rows = self._hotkey_rows()
         if self.dos:
             rows = [r for r in rows if not r[0].startswith("sr_")]      # screen reader keys: normal look only
             fields = [{"key": a, "label": title, "type": "text", "value": shown, "width": 12} for a, title, shown in rows]
 
             def result(res, vals):
                 if res == "save":
-                    ok, msg = self.set_hotkeys({a: vals.get(a, self._hotkey_current(a)) for a, _t, _s in self.hotkey_table()})
+                    ok, msg = self.set_hotkeys(self._wanted_from_form(
+                        {a: vals.get(a, shown) for a, _t, shown in self._hotkey_rows()}))
                     self.system(msg)
                     if not ok:
                         self._reopen(self.open_hotkeys)
@@ -566,18 +620,21 @@ class ExtrasMixin:
         top.title("Hotkeys")
         top.transient(self.root)
         vars_ = {}
+        half = (len(rows) + 1) // 2                         # two columns, so the form is not taller than the screen
         for i, (a, title, shown) in enumerate(rows):
-            tk.Label(top, text=title).grid(row=i, column=0, sticky="w", padx=10, pady=2)
+            col = (i // half) * 2
+            tk.Label(top, text=title).grid(row=i % half, column=col, sticky="w", padx=10, pady=2)
             vars_[a] = tk.StringVar(value=shown)
-            tk.Entry(top, textvariable=vars_[a], width=14).grid(row=i, column=1, padx=10, pady=2)
-        tk.Label(top, justify="left", wraplength=360, text="Type keys like Ctrl-T or Alt-M. Fixed keys: " +
+            tk.Entry(top, textvariable=vars_[a], width=14).grid(row=i % half, column=col + 1, padx=10, pady=2)
+        tk.Label(top, justify="left", wraplength=620, text="Type keys like Ctrl-T or Alt-M. The world prefix is "
+                 "the key part before the number: Ctrl-F gives Ctrl-F1 .. Ctrl-F12. Fixed keys: " +
                  ", ".join("%s %s" % (k, v) for k, v in FIXED_KEYS.items())).grid(
-            row=len(rows), column=0, columnspan=2, padx=10, pady=6, sticky="w")
+            row=half, column=0, columnspan=4, padx=10, pady=6, sticky="w")
         msg = tk.Label(top, text="", fg="#c03030")
-        msg.grid(row=len(rows) + 1, column=0, columnspan=2)
+        msg.grid(row=half + 1, column=0, columnspan=4)
 
         def save():
-            ok, m = self.set_hotkeys({a: v.get() for a, v in vars_.items()})
+            ok, m = self.set_hotkeys(self._wanted_from_form({a: v.get() for a, v in vars_.items()}))
             if ok:
                 top.destroy()
             else:
@@ -585,9 +642,9 @@ class ExtrasMixin:
 
         def reset():
             for a, v in vars_.items():
-                v.set(HOTKEYS[a][1])
+                v.set("Ctrl-F" if a == "world_keys" else HOTKEYS[a][1])
         bf = tk.Frame(top)
-        bf.grid(row=len(rows) + 2, column=0, columnspan=2, pady=8)
+        bf.grid(row=half + 2, column=0, columnspan=4, pady=8)
         tk.Button(bf, text="Save", width=8, command=save).pack(side="left", padx=4)
         tk.Button(bf, text="Defaults", width=8, command=reset).pack(side="left", padx=4)
         tk.Button(bf, text="Cancel", width=8, command=top.destroy).pack(side="left", padx=4)

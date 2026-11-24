@@ -18,6 +18,50 @@ class EditMenuMixin:
         else:
             w.bind("<Button-3>", lambda e, w=w: self._edit_menu(w, e.x_root, e.y_root, e.x, e.y), add="+")
 
+    # ---- Ctrl+C / Ctrl+V -------------------------------------------------------------------------
+    def _bind_clipboard_keys(self):
+        """Drag over text in the output or a pane, Ctrl+C copies it (even though a click in a pane hands the keyboard
+        back to the entry box), and Ctrl+V pastes into the entry box from wherever the keyboard is."""
+        for seq in ("<Control-c>", "<Control-C>", "<Control-Insert>"):
+            self.root.bind(seq, self._smart_copy, add="+")
+        for seq in ("<Control-v>", "<Control-V>", "<Shift-Insert>"):
+            self.root.bind(seq, self._smart_paste, add="+")
+
+    def _visible_text_areas(self):
+        s = self._shown
+        return [s.out] + [p["text"] for p in s._panes.values()]
+
+    def _smart_copy(self, _e=None):
+        if self._overlay_open():
+            return None
+        areas = self._visible_text_areas()
+        try:
+            owner = self.root.selection_own_get()             # whoever you selected in last comes first
+        except (tk.TclError, KeyError):
+            owner = None
+        if owner in areas:
+            areas = [owner] + [w for w in areas if w is not owner]
+        elif owner is self.input:
+            return None                                       # the entry box has the selection: it copies it itself
+        for w in areas:
+            try:
+                if w.tag_ranges("sel"):
+                    w.event_generate("<<Copy>>")
+                    return "break"
+            except tk.TclError:
+                continue
+        return None
+
+    def _smart_paste(self, _e=None):
+        if self._overlay_open():
+            return None
+        fg = self.root.focus_get()
+        if fg is self.input or (fg is not None and fg.winfo_class() == "Entry"):
+            return None                                       # a box that takes a paste itself
+        self.input.focus_set()
+        self._on_paste(None)
+        return "break"
+
     # ---- what the menu offers -------------------------------------------------------------------
     def _clipboard_has_text(self):
         try:

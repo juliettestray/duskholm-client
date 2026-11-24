@@ -106,7 +106,7 @@ def merge(cfg, bundle, tools):
             have.add(a["name"].lower())
             added += 1
         if added:
-            said.append("Added %d alias%s, switched off (turn on the ones you want in Ctrl+A)."
+            said.append("Added %d alias%s, switched off (turn on the ones you want in Alt+A)."
                         % (added, "" if added == 1 else "es"))
     if isinstance(bundle.get("panes"), list):
         panes = tools["validate_panes"](bundle["panes"])

@@ -293,11 +293,13 @@ class WorldTabsMixin:
         elif messagebox.askyesno("Close world", text, parent=self.root):
             self.close_world(s)
 
-    def _bind_world_keys(self):
-        for seq in ("<Control-Shift-W>", "<Control-Shift-w>"):
-            self.root.bind(seq, lambda e: (self.close_world_ask(), "break")[1])
-        for n in range(1, MAX_WORLDS + 1):
-            self.root.bind("<Control-F%d>" % n, lambda e, n=n: (self.goto_world(n), "break")[1])
+    def cycle_world(self, step):
+        """The next (+1) or previous (-1) world, wrapping round; False when there is only one."""
+        if len(self.sessions) < 2:
+            return False
+        i = self.sessions.index(self._shown)
+        self.switch_session(self.sessions[(i + step) % len(self.sessions)])
+        return True
 
     def _worlds_command(self, cmd, arg):
         """/world [n|name]  /newworld [name]  /closeworld"""

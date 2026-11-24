@@ -309,7 +309,7 @@ form.destroy()
 A["listbox"].selection_clear(0, "end"); A["listbox"].selection_set(1); A["delete"](); assert asked and len(app.cfg["triggers"]) == 1
 win.destroy(); pump(0.1)
 # aliases
-app.input.event_generate("<Control-a>"); pump(0.3)
+app.input.event_generate("<Alt-a>"); pump(0.3)                  # (Ctrl+A selects the entry line; aliases are Alt+A)
 aw = app._alias_win; assert aw is not None and aw.winfo_exists()
 AA = aw._actions; assert "gg" in AA["listbox"].get(0)
 AA["edit"](None); pump(0.2)
@@ -365,7 +365,7 @@ key(overlay(), "Escape")
 feed("[OOC] Bob: 'dos'\n\r"); pump(0.1)
 assert tag_fg("dos") == app.theme["ansi"][14], "the OOC highlight trigger works in the DOS look too"
 # aliases
-app.input.focus_force(); root.update(); app.input.event_generate("<Control-a>"); pump(0.3)
+app.input.focus_force(); root.update(); app.input.event_generate("<Alt-a>"); pump(0.3)
 table = overlay(); assert isinstance(table, dosui.DosTable) and table.row_count >= 1
 key(table, "a"); d = overlay(); ents = {f["key"]: f for f in d._fields}
 for k_, v_ in (("name", "zz"), ("body", "say z %*")):
