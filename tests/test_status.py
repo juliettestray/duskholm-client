@@ -60,15 +60,20 @@ w2 = app.open_new_world("Two"); pump(0.3)
 assert app._notice_text == "", "another world has its own"
 app._on_data(b"[Walk        ] - Ywellia strides in from the right.\n\r"); pump(0.2)
 assert app._notice_text == "Preview: Ywellia strides in from the north", "read from the display command: " + app._notice_text
+app._on_data(b"[Name        ] - Ywellia\n\r[Intro       ] - a tall woman with long silver hair\n\r"); pump(0.2)
+assert app._notice_text == "Preview: Ywellia strides in from the north", app._notice_text
+app._on_data(b"[Walk        ] - A tall woman with long silver hair glides gracefully in from the right.\n\r"
+             b"[Intro       ] - a tall woman with long silver hair\n\r"); pump(0.3)
+assert app._notice_text == "Preview: Ywellia glides gracefully in from the north", "the long intro becomes your name: " + app._notice_text
 app.switch_session(first); pump(0.2)
 assert app._notice_text == want, "and the first world's walk is back"
 app.switch_session(w2); pump(0.2)
-assert app._notice_text.startswith("Preview: Ywellia")
+assert app._notice_text.startswith("Preview: Ywellia glides")
 app.close_world(w2); pump(0.2)
 assert app.session is first and app._notice_text == want
 # a walk set with no form named
 app._on_data(b"Your new walk is: ambles\n\r"); pump(0.2)
-assert app._notice_text == "Preview: Someone ambles in from the north" and app.session.form == "credit"
+assert app._notice_text == "Preview: Ywellia ambles in from the north" and app.session.form == "credit"
 # a new login clears it
 app._handle_event("connected", None); pump(0.2)
 assert app._notice_text == "" and not app.session.walks, "cleared on login"
@@ -96,6 +101,12 @@ app.conn = type("C", (), {"gen": 0, "send": lambda self, b: sent.append(b) or Tr
 app.connected = True
 app.send_line(app.input.get())
 assert sent[-1] == b"hi :grinning: cafe ok\r\n", sent[-1]
+# an emoji that reaches us as two UTF-16 halves (some input methods) is put back together and sent
+half = chr(0xD83D) + chr(0xDE00)
+assert sc.join_surrogates("hi " + half + "!") == "hi " + chr(0x1F600) + "!" and sc.join_surrogates("plain") == "plain"
+app.input.delete(0, "end")
+app.send_line("go " + half)
+assert sent[-1] == b"go :grinning:" + bytes([13, 10]), sent[-1]
 app.cfg["emoji"] = False
 assert paste("hi \U0001F600 there") == "hi  there", "off: as before"
 # the editor round trip keeps a status action

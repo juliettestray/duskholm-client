@@ -426,6 +426,16 @@ _TRANSLIT = {
 }
 
 
+def join_surrogates(text):
+    """An emoji typed with the Windows emoji keyboard can reach us as two UTF-16 halves; make it one character."""
+    if text.isascii():
+        return text
+    try:
+        return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    except UnicodeError:
+        return text
+
+
 def sanitize_outgoing(line):
     """Returns (clean_line, dropped, truncated): printable ASCII only, tabs/newlines as
     spaces, typographic characters transliterated, accents stripped. `dropped` counts
@@ -1515,6 +1525,7 @@ class Session:
         self.walk_text = ""                    # the walk preview for the form you are in (lasts until you log in again)
         self.walks = {}                        # form -> the walk string the game last told us for it
         self.form = ""                         # the form that walk belongs to
+        self.walk_raw = ""                     # `display`'s Walk sentence (intro + walk), until its Intro line tells us where the walk starts
         self._notice = None                    # (text, expiry time) the status line should show when it is on screen
 
 
@@ -2568,7 +2579,8 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
             first, last = pane["text"].yview()
             reg = self._pane_region(key)
             info = self._pane_geom["regions"].get(reg["id"]) if reg else None
-            show = info is not None and self._active_pane_key(reg) == key and (first > 0.0 or last < 1.0)
+            show = (info is not None and self._active_pane_key(reg) == key and (first > 0.0 or last < 1.0)
+                    and not self._resize_mode())
             if show:
                 bx, by, bw, bh = info["body"]
                 pane["dsb"].place(x=bx + bw, y=by, height=bh)
@@ -4584,7 +4596,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         try:
             if first is None:
                 first, last = self.out.yview()
-            scrollable = self.dos and (float(first) > 0.0 or float(last) < 1.0)
+            scrollable = self.dos and not self._resize_mode() and (float(first) > 0.0 or float(last) < 1.0)
             if scrollable and not self._dosscroll.winfo_ismapped():
                 if self._panes_active and self._pane_geom is not None:
                     mx, my, mw, mh = self._pane_geom["main"]
@@ -4868,7 +4880,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
             self._telnet_cli = False
             s = self.session
             if s.walk_text or s.walks:                     # a new login: the last character's walk means nothing now
-                s.walk_text, s.walks, s.form = "", {}, ""
+                s.walk_text, s.walks, s.form, s.walk_raw = "", {}, "", ""
                 if not self._notice_until:
                     self.set_notice("", 0)
             self._note_world_called()
@@ -5170,6 +5182,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         "You recover your defenses."])
     _WALK_RE = re.compile(r"^Your (?:(.+?) walk(?: string)? is now|new walk is): (.+?)\s*$")
     _DISPLAY_WALK_RE = re.compile(r"^\[Walk\s*\]\s+-\s+(.+?) in from the right\.\s*$")
+    _DISPLAY_INTRO_RE = re.compile(r"^\[Intro\s*\]\s+-\s+(.+?)\s*$")
     _TIME_RE = re.compile(r"^The time is [A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} (\d\d):(\d\d):(\d\d) (\d{4})\s*$")
     _NAME_RE = re.compile(r"^\[Name\s*\]\s+-\s+([A-Za-z][A-Za-z'-]{0,23})\s*$")
 
@@ -5218,7 +5231,17 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
         if rest.startswith("[Walk"):
             m = self._DISPLAY_WALK_RE.match(rest)          # `display` states the walk you have right now
             if m:
+                self.session.walk_raw = m.group(1)         # "<intro> <walk>": shown as is until the Intro line follows
                 self.session.walk_text = "Preview: %s in from the north" % m.group(1)
+                self.set_notice("", 0)
+                return
+        if rest.startswith("[Intro") and self.session.walk_raw:
+            m = self._DISPLAY_INTRO_RE.match(rest)
+            raw, self.session.walk_raw = self.session.walk_raw, ""
+            if m and raw.lower().startswith(m.group(1).lower()) and len(raw) > len(m.group(1)):
+                # the intro can be long: show your name where it was, then just the walk
+                walk = raw[len(m.group(1)):].strip()
+                self.session.walk_text = "Preview: %s %s in from the north" % (self._char_name() or "Someone", walk)
                 self.set_notice("", 0)
                 return
         if plain.startswith("The time is "):
@@ -5921,7 +5944,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
     def _on_paste(self, _e):
         # Entry would insert newlines as odd glyphs; flatten them (never auto-send a paste).
         try:
-            text = self.root.clipboard_get()
+            text = join_surrogates(self.root.clipboard_get())
         except tk.TclError:
             return "break"
         if self.cfg.get("emoji") and emojis is not None and not text.isascii():
@@ -5951,6 +5974,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
             self.system("Not connected.")
             return
         self._close_open_line()
+        line = join_surrogates(line)
         parts = [line] if (secret or not expand) else self._expand(line)
         if self.cfg.get("emoji") and emojis is not None and not secret:
             parts = [emojis.shorten(p) for p in parts]
@@ -5998,7 +6022,7 @@ class App(panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMix
 
     def _out_key(self, e):
         # typing while the output pane has focus goes to the input line
-        if e.char and e.char.isprintable() and not (e.state & 0x4):
+        if e.char and (e.char.isprintable() or chr(0xD800) <= e.char[:1] <= chr(0xDFFF)) and not (e.state & 0x4):
             self.input.focus_set()
             self.input.insert("end", e.char)
             return "break"
