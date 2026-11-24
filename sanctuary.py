@@ -75,6 +75,7 @@ import gametime                    # each world's game clock: time zone and IC:O
 import stamps                      # optional time stamps, for the main text and per capture pane
 import importui                    # import triggers and aliases from another client's files
 import popout                      # a capture pane in a window of its own
+import entrybox                    # an entry box that grows as you type (optional)
 import editmenu                    # right-click Cut / Copy / Paste
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
@@ -943,11 +944,13 @@ EXTRA_CHOICES = [
     ("clock", "off", ("off", "real", "game"), "Clock", "C"),
     ("timestamps", "off", ("off", "hh:mm", "hh:mm:ss"), "Time stamps (main text)", "X"),
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
+    ("entry_grow", "off", ("off", "2", "3", "5", "8"), "Entry box grows to (lines)", "K"),
 ]
 CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always": "always", "unfocused": "when the window is not in front",
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
                 "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
-                "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice"}
+                "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice",
+                "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines"}
 
 
 def clean_settings(cfg):
@@ -1561,7 +1564,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1655,6 +1658,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
         if self.cfg["fullscreen"]:
             self.set_fullscreen(True, save=False)
         root.protocol("WM_DELETE_WINDOW", self.on_quit)
+        self._apply_entry_mode()
         self.input.focus_set()
         self._pump_job = root.after(25, self._pump)
         root.bind("<Destroy>", self._on_root_destroy, add="+")
@@ -2015,6 +2019,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
         self.input.bind("<<Paste>>", self._on_paste)
         self.input.bind("<Control-v>", self._on_paste)
         self._bind_edit_menu(self.input)
+        self._init_grow_input()                            # the growing box, shown when Options asks for it
         self.statbar = StatBar(self.root, self.f_norm, self.f_bold, self.theme)  # shown after 1st prompt
         self.dosbar = dosui.DosStatusBar(self.root, dosui.dos_colors(self.theme), self.f_norm, self.f_bold)
         for w in (self.root,):
@@ -3080,7 +3085,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
             self.out.configure(width=self._dos_cols_now())
             self.out.pack(fill="both", expand=True)
             self._inbox.pack(fill="x")
-            self.input.pack(fill="x", padx=(4, 8), ipady=2)           # side padding keeps the end of a full line clear
+            self._pack_input()
             if self.dosbar is not None:
                 self.dosbar.pack(fill="x")
             self._dos_scroll_visibility()
@@ -3096,7 +3101,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
             self.out.configure(width=40)
             self.out.pack(side="left", fill="both", expand=True)
             self._inbox.pack(fill="x")
-            self.input.pack(fill="x", padx=(4, 8), ipady=5)
+            self._pack_input()
             self._statbar_show()
 
     # ---- DOS look: status bar, menus, dialogs, keys --------------------------------
@@ -3405,6 +3410,8 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
                 w.tag_remove("link", "1.0", "end")
         if key in ("emoji_pics", "emoji_pics_dos"):
             self._emoji_refresh()
+        if key == "entry_grow":
+            self._apply_entry_mode()
         self._save_settings()
 
     def dos_connect_dialog(self):
@@ -5048,7 +5055,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
         self._line, self._last_prompt = "", None     # stale stats must not outlive the session
         self._statbar_hide()
         self.update_dosbar()
-        self.input.configure(show="")
+        self._input_show("")
         self.btn.configure(text="Connect")
         self.status.configure(text="Disconnected")
 
@@ -5060,7 +5067,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
             self._quit_sent_at = 0.0      # a "quit" from an earlier session means nothing now
             self.connecting, self.connected = False, True
             self.term = Terminal(want_mxp=True)
-            self.input.configure(show="")
+            self._input_show("")
             self.btn.configure(text="Disconnect")
             self.status.configure(text="Connected")
             self._online_since = time.time()
@@ -5128,7 +5135,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
             # evidence lifts the mask; guessing could leak a password into the log.
             self.term.echo_off = False
             if self._here():
-                self.input.configure(show="")
+                self._input_show("")
         self._prompt_time = time.time()
         if p == self._last_prompt:
             self._start_cd_tick()
@@ -5201,7 +5208,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
                 self.conn.send(ev[1])
             elif k == "echo":
                 if self._here():
-                    self.input.configure(show="" if ev[1] else "*")
+                    self._input_show("" if ev[1] else "*")
                 if not ev[1]:
                     self.hist_pos = len(self.history)
             elif k == "bell" and self.cfg.get("bell"):
@@ -5608,9 +5615,18 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
 
     # ---- input -------------------------------------------------------
     def _on_enter(self, _e):
-        line = self.input.get()
+        text = self.input.get()
         self.input.delete(0, "end")
         secret = self.term.echo_off
+        if secret or "\n" not in text:
+            self._submit_line(text, secret)
+            return "break"
+        for line in text.split("\n"):                 # line breaks (Shift+Enter): each line is a command of its own
+            if line.strip():
+                self._submit_line(line, secret)
+        return "break"
+
+    def _submit_line(self, line, secret):
         if not secret and line.strip() and (not self.history or self.history[-1] != line):
             self.history.append(line)
             del self.history[:-500]
@@ -6132,12 +6148,7 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
         self._theme_tree(win)
         return win
 
-    def _on_paste(self, _e):
-        # Entry would insert newlines as odd glyphs; flatten them (never auto-send a paste).
-        try:
-            text = join_surrogates(self.root.clipboard_get())
-        except tk.TclError:
-            return "break"
+    def _clean_paste(self, text):
         if self.cfg.get("emoji") and emojis is not None and not text.isascii():
             # with the emoji converter on, emoji stay in the box (send turns them into :name:);
             # everything else is cleaned exactly as before
@@ -6147,9 +6158,24 @@ class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.
                     bits.append(ch)
                 else:
                     bits.append(sanitize_outgoing(ch)[0])
-            clean = "".join(bits)[:MAX_LINE]
+            return "".join(bits)[:MAX_LINE]
+        return sanitize_outgoing(text)[0]
+
+    def _on_paste(self, _e):
+        # Entry would insert newlines as odd glyphs; flatten them (never auto-send a paste).
+        try:
+            text = join_surrogates(self.root.clipboard_get())
+        except tk.TclError:
+            return "break"
+        if self.input is getattr(self, "_grow", None):
+            # the growing box keeps line breaks: each pasted line is cleaned on its own (and sent as its own command)
+            pieces = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if len(pieces) > entrybox.MAX_LINES_TOTAL:
+                pieces = pieces[:entrybox.MAX_LINES_TOTAL]
+                self.system("Only the first %d lines of that paste were kept." % entrybox.MAX_LINES_TOTAL)
+            clean = "\n".join(self._clean_paste(p) for p in pieces)
         else:
-            clean, _dropped, _trunc = sanitize_outgoing(text)
+            clean = self._clean_paste(text)
         try:
             if self.input.selection_present():
                 self.input.delete("sel.first", "sel.last")

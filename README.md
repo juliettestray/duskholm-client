@@ -329,6 +329,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   colour and prompt patterns, timers, keys, scripts and buttons. More clients (TinTin++) are planned.
 - **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed (including the world keys
   and `Ctrl+A`, below); F-keys are fixed.
+- **An entry box that grows as you type** (Options > Entry box grows to (lines): off, 2, 3, 5 or 8; off by
+  default). The line wraps at the window edge and the box gets taller with it, up to the limit you chose, and goes
+  back down when you send. **Shift+Enter** or **Ctrl+Enter** puts a line break in the box; Enter sends. A box with
+  line breaks sends each line as its own command, in order (empty lines are skipped), and pasted text keeps its
+  lines (up to 30). Up and Down walk your command history from the first / last line and move the cursor in
+  between. While the game has echo off (a password) the ordinary one-line entry takes over, masked, so nothing
+  you type there is ever shown or wrapped, and your text moves back when it is over.
 - **Ctrl+A selects the whole entry line**, as in MUSHclient (rebindable like the rest; Aliases moved to
   `Alt+A`). **Copy and paste**: drag over text in the output or a pane, press `Ctrl+C` (`Ctrl+Insert`),
   and `Ctrl+V` (`Shift+Insert`) pastes it into the entry box from wherever the keyboard is, even though a
@@ -432,6 +439,7 @@ python tests/test_custom.py       # the customize form's commands and the design
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_entrybox.py     # the growing entry box: lines, Shift+Enter, history, passwords, both looks
 python tests/test_mudlet.py      # Mudlet package import (pure): pattern types, folders, the send() Lua shape, zips
 python tests/test_importui.py    # importing in the app: the question, every-match colouring, both looks
 python tests/test_speech.py      # what is spoken: cleaning, stats sentence, flood control, review

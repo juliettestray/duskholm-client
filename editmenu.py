@@ -6,9 +6,9 @@ import tkinter as tk
 
 
 class EditMenuMixin:
-    def _bind_edit_menu(self, w):
+    def _bind_edit_menu(self, w, entry=False):
         """Right-click (and the Menu key / Shift+F10 in the entry box) on a text area or the entry box."""
-        if w is getattr(self, "input", None):
+        if entry or w is getattr(self, "input", None):
             w.bind("<Button-3>", lambda e: self._edit_menu(w, e.x_root, e.y_root), add="+")
             for seq in ("<Shift-F10>", "<Key-Menu>"):
                 try:

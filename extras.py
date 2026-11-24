@@ -535,7 +535,7 @@ class ExtrasMixin:
             if m:                                           # caps lock must not change what a key does
                 variants.add("<%s%s>" % (m.group(1) or "", m.group(2).upper()))
             for s in variants:
-                for w in (self.root, self.input):
+                for w in (self.root,) + self._inputs():
                     w.bind(s, handler)
                     self._hotkey_bound.append((w, s))
 

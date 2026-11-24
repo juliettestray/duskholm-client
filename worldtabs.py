@@ -160,7 +160,7 @@ class WorldTabsMixin:
             self.v_port.set(str(s.port))
             self.v_tls.set(bool(s.tls))
             echo_off = bool(getattr(s.term, "echo_off", False))
-            self.input.configure(show="*" if echo_off else "")
+            self._input_show("*" if echo_off else "")
             if s._last_prompt:
                 self.statbar.set_data(self._prompt_view())
                 self._statbar_show()
