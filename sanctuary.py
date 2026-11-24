@@ -1510,6 +1510,9 @@ class Session:
         self.unread = False                    # text arrived while another world was on screen
         self._view = None                      # scroll position when it was left (None: at the latest line)
         self.char_name = ""                    # your character here, learned from the game
+        self.walk_text = ""                    # the walk preview for the form you are in (lasts until you log in again)
+        self.walks = {}                        # form -> the walk string the game last told us for it
+        self.form = ""                         # the form that walk belongs to
         self._notice = None                    # (text, expiry time) the status line should show when it is on screen
 
 
@@ -1518,7 +1521,7 @@ SESSION_FIELDS = (
     "q", "gen", "conn", "term", "connected", "connecting",
     "history", "hist_pos", "draft", "logfile", "last_send",
     "_retrying", "_reconnect_job", "_reconnect_at", "_quit_sent_at",
-    "_line", "_last_prompt", "_pending", "_line_plain", "_line_flushed", "_line_hidden_len",
+    "_line", "_last_prompt", "_pending", "_line_plain", "_line_flushed", "_line_hidden_len", "_line_drawn",
     "_flush_job", "_online_since", "_prompt_time", "_dial_mode", "_telnet_cli",
     "out", "_mid", "_sb",                      # this world's scrollback, its frame and scrollbar
     "_panes", "_region_ui", "_region_active", "_panes_active", "_pane_geom",    # its capture panes
@@ -1590,6 +1593,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         self._pending = []                            # [(text, style_key)] of the unfinished output line
         self._line_plain = ""                         # plain text of the current logical line
         self._line_flushed = False                    # part of this line is already on screen
+        self._line_drawn = []                         # ...and the styled pieces of that part, for the panes
         self._line_hidden_len = 0                     # leading prompt text we chose not to show
         self._flush_job = None
         self._guard = triggers.LoopGuard() if triggers is not None else None
@@ -1769,6 +1773,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             s._retrying, s._reconnect_job, s._reconnect_at, s._quit_sent_at = False, None, 0.0, 0.0
             s._line, s._last_prompt = "", None
             s._pending, s._line_plain, s._line_flushed, s._line_hidden_len = [], "", False, 0
+            s._line_drawn = []
             s._flush_job, s._online_since, s._prompt_time = None, 0.0, 0.0
             s._dial_mode, s._telnet_cli = None, False
             s._panes, s._region_ui, s._region_active = {}, {}, {}
@@ -1809,7 +1814,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         except ValueError:
             pass
         old.draft = self.input.get()
-        old._notice = (self._notice_text, self._notice_until) if getattr(self, "_notice_text", "") else None
+        old._notice = (self._notice_text, self._notice_until) if getattr(self, "_notice_text", "") and self._notice_until else None
         try:
             top, bottom = old.out.yview()
             old._view = None if bottom >= 0.999 else top           # None: it was at the latest line
@@ -1898,7 +1903,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         self.btn.pack(side="left", padx=4)
         self.status = self._reg(tk.Label(top, text="Disconnected", anchor="e"), "label")
         self.status.pack(side="right", padx=8)
-        self._notice_text, self._notice_job = "", None
+        self._notice_text, self._notice_job, self._notice_until = "", None, 0.0
         self.notice = self._reg(tk.Label(top, text="", anchor="e"), "label")
         self.notice.pack(side="right", padx=8)
         self.pane_badge = self._reg(tk.Label(top, text="", anchor="e"), "label")
@@ -4744,6 +4749,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
 
     def clear(self):
         self._pending, self._line_plain, self._line_flushed, self._line_hidden_len = [], "", False, 0
+        self._line_drawn = []
         self.out.configure(state="normal")
         self.out.delete("1.0", "end")
         self.out.configure(state="disabled")
@@ -4825,6 +4831,11 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             self.status.configure(text="Connected")
             self._online_since = time.time()
             self._telnet_cli = False
+            s = self.session
+            if s.walk_text or s.walks:                     # a new login: the last character's walk means nothing now
+                s.walk_text, s.walks, s.form = "", {}, ""
+                if not self._notice_until:
+                    self.set_notice("", 0)
             self._note_world_called()
             mode, self._dial_mode = self._dial_mode, None
             if mode == "modem":
@@ -5104,6 +5115,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             return
         self._append([(t, self._tag_for(k)) for t, k in pieces], _internal=True)
         self._line_flushed = True
+        self._line_drawn = self._line_drawn + pieces
 
     # the lines the game prints when your defence (DF) is back to full (regened_message in fight.c)
     DF_FULL_LINES = frozenset([
@@ -5121,7 +5133,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         "The discomfort from your injuries fades.", "You start to feel lucky again.",
         "You feel your mental fatigue lifting.", "You resettle your shield into place.",
         "You recover your defenses."])
-    _WALK_RE = re.compile(r"^Your (.+?) walk(?: string)? is now: (.+?)\s*$")
+    _WALK_RE = re.compile(r"^Your (?:(.+?) walk(?: string)? is now|new walk is): (.+?)\s*$")
+    _DISPLAY_WALK_RE = re.compile(r"^\[Walk\s*\]\s+-\s+(.+?) in from the right\.\s*$")
     _TIME_RE = re.compile(r"^The time is [A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} (\d\d):(\d\d):(\d\d) (\d{4})\s*$")
     _NAME_RE = re.compile(r"^\[Name\s*\]\s+-\s+([A-Za-z][A-Za-z'-]{0,23})\s*$")
 
@@ -5155,13 +5168,23 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         if rest.strip() in self.DF_FULL_LINES:
             self._df_full()
             return
-        if rest.startswith("Your ") and " walk" in rest and self.cfg.get("walk_preview", True):
+        if rest.startswith("Your ") and " walk" in rest or rest.startswith("Your new walk is:"):
             m = self._WALK_RE.match(rest)
             if m:
-                label, walk = m.group(1), m.group(2)
+                label, walk = (m.group(1) or "credit"), m.group(2)
                 who = self._char_name() or "Someone"
-                form = "" if label.lower() in ("credit", "ego form", "ego") else " (%s)" % label
-                self.set_notice("Preview%s: %s %s in from the north" % (form, who, walk), 90)
+                s = self.session
+                s.form = label.lower()                     # the game says which form this walk belongs to
+                s.walks[s.form] = walk
+                form = "" if s.form in ("credit", "ego form", "ego") else " (%s)" % label
+                s.walk_text = "Preview%s: %s %s in from the north" % (form, who, walk)
+                self.set_notice("", 0)
+                return
+        if rest.startswith("[Walk"):
+            m = self._DISPLAY_WALK_RE.match(rest)          # `display` states the walk you have right now
+            if m:
+                self.session.walk_text = "Preview: %s in from the north" % m.group(1)
+                self.set_notice("", 0)
                 return
         if plain.startswith("The time is "):
             m = self._TIME_RE.match(plain)
@@ -5189,6 +5212,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
     def _finish_line(self, key):
         pieces, plain = self._pending, self._line_plain
         flushed, hidden = self._line_flushed, self._line_hidden_len
+        drawn, self._line_drawn = self._line_drawn, []
         self._pending, self._line_plain, self._line_flushed, self._line_hidden_len = [], "", False, 0
         if self._flush_job is not None:
             try:
@@ -5203,7 +5227,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
                 return                                    # nothing but the hidden prompt: drop it and its newline
         if self._iface is not None and self.iface_capture(pieces, plain):
             return                                        # the game's item editor talking: gathered, not scrolled
-        shown, effects = self._run_triggers(pieces, plain, flushed)
+        shown, effects = self._run_triggers(pieces, plain, flushed, drawn)
         if shown is None:                                 # hidden by a trigger
             self._log_raw(plain + "\n")
         else:
@@ -5214,7 +5238,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         for fx in effects:
             self._do_effect(fx)
 
-    def _run_triggers(self, pieces, plain, flushed):
+    def _run_triggers(self, pieces, plain, flushed, drawn=()):
         """Returns (pieces_to_show_or_None, side_effects). Highlight and hide only apply to text
         that has not been drawn yet; commands, beeps and notes always run."""
         if triggers is None or not plain or not any(t.get("enabled", True) for t in self.cfg["triggers"]):
@@ -5246,7 +5270,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
                 elif kind == "silence":
                     effects.append(("silence",))
         if routes:
-            snapshot = list(pieces) if pieces else [(plain, (None, None, False, False, False, False))]
+            # a line that was drawn in parts (it trickled in) keeps its colours: what was drawn, then the rest
+            snapshot = list(drawn) + list(pieces) if (drawn or pieces) else [(plain, (None, None, False, False, False, False))]
             for pane in routes:
                 effects.insert(0, ("route", pane, snapshot))      # panes get the line before commands run
         if gag and not flushed:
@@ -5260,13 +5285,16 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             # a hidden world's status text waits for that world to come on screen
             self.session._notice = (text, time.time() + secs) if text else None
             return
+        base = self.session.walk_text if (not text and self.cfg.get("walk_preview", True)) else ""
+        if base:
+            text = base                                # nothing else to say: the walk preview stays up, with no timeout
         self._notice_text = text
-        self._notice_until = time.time() + secs if text else 0.0
+        self._notice_until = time.time() + secs if text and not base else 0.0
         try:
             self.notice.configure(text=text)
             if self._notice_job is not None:
                 self.root.after_cancel(self._notice_job)
-            self._notice_job = self.root.after(secs * 1000, lambda: self.set_notice("", 0)) if text else None
+            self._notice_job = self.root.after(secs * 1000, lambda: self.set_notice("", 0)) if text and not base else None
         except tk.TclError:
             self._notice_job = None
         self.update_dosbar()
