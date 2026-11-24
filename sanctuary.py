@@ -1511,6 +1511,7 @@ SESSION_FIELDS = (
     "_retrying", "_reconnect_job", "_reconnect_at", "_quit_sent_at",
     "_line", "_last_prompt", "_pending", "_line_plain", "_line_flushed", "_line_hidden_len",
     "_flush_job", "_online_since", "_prompt_time", "_dial_mode", "_telnet_cli",
+    "out", "_mid", "_sb",                      # this world's scrollback, its frame and scrollbar
 )
 
 
@@ -1708,6 +1709,83 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
                 if f.measure("0") != base:
                     f.configure(slant="roman")
 
+    def _make_session_widgets(self, s):
+        """The scrollback (with its frame and scrollbar) for one world."""
+        mid = self._reg(tk.Frame(self._holder), "frame")
+        # height=4: the pane must REQUEST little and expand into what is left, otherwise at large
+        # font sizes its default 24-row request squeezes the stat bar and input line off-screen.
+        out = self._reg(tk.Text(mid, font=self.f_norm, wrap="word", state="disabled",
+                                height=4, width=40, borderwidth=0, highlightthickness=0,
+                                padx=8, pady=4, cursor="arrow"), "text")
+        sb = self._reg(tk.Scrollbar(mid, command=out.yview), "scroll")
+        out.configure(yscrollcommand=sb.set)
+        out.bind("<KeyPress>", self._out_key)
+        self._bind_links(out)
+        out.bind("<Control-MouseWheel>", self._zoom_wheel)
+        s.out, s._mid, s._sb = out, mid, sb
+
+    def _after_session(self, ms, fn):
+        """root.after for a timer that belongs to the CURRENT world: it runs with that world active."""
+        s = self.session
+
+        def run():
+            prev = self.session
+            self.session = s
+            try:
+                fn()
+            finally:
+                self.session = prev
+        return self.root.after(ms, run)
+
+    def add_session(self, name):
+        """A new, empty world (not yet shown). Returns the Session."""
+        s = Session(name, self.cfg["host"], self.cfg["port"], self.cfg["tls"])
+        prev, self.session = self.session, s
+        try:
+            s.q = queue.Queue()
+            s.gen = 0
+            s.conn = Connection(s.q, s.gen)
+            s.term = Terminal(want_mxp=True)
+            s.connected = s.connecting = False
+            s.history, s.hist_pos, s.draft = [], 0, ""
+            s.logfile = None
+            s.last_send = time.time()
+            s._retrying, s._reconnect_job, s._reconnect_at, s._quit_sent_at = False, None, 0.0, 0.0
+            s._line, s._last_prompt = "", None
+            s._pending, s._line_plain, s._line_flushed, s._line_hidden_len = [], "", False, 0
+            s._flush_job, s._online_since, s._prompt_time = None, 0.0, 0.0
+            s._dial_mode, s._telnet_cli = None, False
+            self._make_session_widgets(s)
+            self.sessions.append(s)
+            for w, role in ((s.out, "text"), (s._sb, "scroll"), (s._mid, "frame")):
+                try:
+                    w.configure(**self._role_options(role))
+                except tk.TclError:
+                    pass
+            for tag in self._tags:
+                self._style_tag(tag)
+            self._restyle_tags()
+            self._apply_spacing()
+        finally:
+            self.session = prev
+        return s
+
+    def switch_session(self, s):
+        """Show world `s`. Its scrollback, line state and connection become the active ones."""
+        if s is self.session or s not in self.sessions:
+            return
+        old = self.session
+        for w in (old._mid, old._sb, old.out):
+            w.pack_forget()
+            w.place_forget()
+        self.session = s
+        self._dosscroll._cmd = s.out.yview
+        self.apply_layout()
+        if self._panes_active or self.cfg["layout"]["regions"]:
+            self.schedule_layout(5)
+        self.input.delete(0, "end")
+        s.out.see("end")
+
     def _reg(self, widget, role):
         """Register a widget so apply_theme() can restyle it."""
         self._themed.append((widget, role))
@@ -1777,21 +1855,12 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         # centred inside it, in the normal look the screen simply fills it
         self._holder = self._reg(tk.Frame(self.root), "holder")
         self._holder.bind("<Configure>", self._on_holder_configure, add="+")
-        mid = self._mid = self._reg(tk.Frame(self._holder), "frame")
-        # height=4: the pane must REQUEST little and expand into what is left, otherwise at large
-        # font sizes its default 24-row request squeezes the stat bar and input line off-screen.
-        self.out = self._reg(tk.Text(mid, font=self.f_norm, wrap="word", state="disabled",
-                                     height=4, width=40, borderwidth=0, highlightthickness=0,
-                                     padx=8, pady=4, cursor="arrow"), "text")
-        sb = self._sb = self._reg(tk.Scrollbar(mid, command=self.out.yview), "scroll")
-        self.out.configure(yscrollcommand=sb.set)
+        self.sessions = [self.session]
+        self._make_session_widgets(self.session)
         # the DOS scrollbar replaces the right-hand border cell (placed over it) while there is
         # something to scroll; the parent is the holder so it can sit at the very edge
         self._dosscroll = dosui.DosScrollbar(self._holder, self.out.yview, dosui.dos_colors(self.theme),
                                              self.f_norm)
-        self.out.bind("<KeyPress>", self._out_key)
-        self._bind_links(self.out)
-        self.out.bind("<Control-MouseWheel>", self._zoom_wheel)
         self._apply_spacing()
 
         self.input = self._reg(tk.Entry(self.root, font=self.f_norm, highlightthickness=1), "input")
@@ -2176,7 +2245,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
 
     def _text_widgets(self):
         """The main text area and every pane's text area (they share one set of colour tags)."""
-        return [self.out] + [p["text"] for p in self._panes.values()]
+        return [s.out for s in self.sessions] + [p["text"] for p in self._panes.values()]
 
     def _style_tag(self, name):
         key = self._tag_keys[name]
@@ -4602,22 +4671,28 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
         # kill network handling for the rest of the session.
         try:
             deadline = time.time() + 0.02      # keep the window responsive during bursts
-            while time.time() < deadline:
+            shown = self.session
+            for s in list(self.sessions):
+                self.session = s               # this world is "the" world while its events are handled
                 try:
-                    gen, kind, payload = self.q.get_nowait()
-                except queue.Empty:
-                    break
-                if gen != self.conn.gen:
-                    continue                   # event from a connection we already dropped
-                try:
-                    self._handle_event(kind, payload)
-                except Exception:  # noqa: BLE001
-                    traceback.print_exc()
-                    self.system("Internal error handling %s (see console); carrying on." % kind)
-            if (self.connected and self.cfg.get("keepalive") and
-                    time.time() - self.last_send > KEEPALIVE_SECONDS):
-                self.conn.send(bytes([IAC, NOP]))
-                self.last_send = time.time()
+                    while time.time() < deadline:
+                        try:
+                            gen, kind, payload = self.q.get_nowait()
+                        except queue.Empty:
+                            break
+                        if gen != self.conn.gen:
+                            continue           # event from a connection we already dropped
+                        try:
+                            self._handle_event(kind, payload)
+                        except Exception:  # noqa: BLE001
+                            traceback.print_exc()
+                            self.system("Internal error handling %s (see console); carrying on." % kind)
+                    if (self.connected and self.cfg.get("keepalive") and
+                            time.time() - self.last_send > KEEPALIVE_SECONDS):
+                        self.conn.send(bytes([IAC, NOP]))
+                        self.last_send = time.time()
+                finally:
+                    self.session = shown
         except Exception:  # noqa: BLE001
             traceback.print_exc()
         finally:
@@ -4797,7 +4872,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             elif k == "bell" and self.cfg.get("bell"):
                 self.root.bell()
         if self._pending and self._flush_job is None:
-            self._flush_job = self.root.after(PARTIAL_FLUSH_MS, self._flush_partial)
+            self._flush_job = self._after_session(PARTIAL_FLUSH_MS, self._flush_partial)
         if had_text:
             self._update_statbar()
             self._new_output_bell()
@@ -5854,7 +5929,7 @@ class App(dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin, tool
             self._start_connect(auto=True)
             return
         self.status.configure(text="Reconnecting in %ds" % left)
-        self._reconnect_job = self.root.after(min(1000, left * 1000), self._reconnect_tick)
+        self._reconnect_job = self._after_session(min(1000, left * 1000), self._reconnect_tick)
 
     def _cancel_reconnect(self, announce=False):
         was = self._retrying
