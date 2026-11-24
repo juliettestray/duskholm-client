@@ -182,6 +182,16 @@ class WorldTabsMixin:
         self._tabs_inner.pack(pady=(6, 0))
         self._tabs_sig = None
 
+    def _small_fonts(self):
+        """(plain, bold) fonts for the tab row and the button bar: the text font, but never bigger than TAB_FONT_MAX points
+        (a huge text font must not make a huge bar)."""
+        size = max(8, min(TAB_FONT_MAX, int(self.cfg.get("font_size", 11))))
+        fkey = (self.font_family, size)
+        if fkey != getattr(self, "_tab_font_key", None):
+            self._tab_font_key = fkey
+            self._tab_fonts = (tkfont.Font(family=fkey[0], size=size), tkfont.Font(family=fkey[0], size=size, weight="bold"))
+        return self._tab_fonts
+
     def tab_bar_wanted(self):
         mode = self.cfg.get("world_tabs", "always")
         return (not self.dos) and (mode == "always" or (mode == "two+" and len(self.sessions) > 1))
@@ -210,19 +220,17 @@ class WorldTabsMixin:
             if not self.tab_bar_wanted():
                 if bar.winfo_manager():
                     bar.pack_forget()
+                    self._place_buttonbar_again()
                 self._tabs_sig = None
                 return
             th = self.theme
-            size = max(8, min(TAB_FONT_MAX, int(self.cfg.get("font_size", 11))))      # a huge text font must not make a huge tab row
-            fkey = (self.font_family, size)
-            if fkey != getattr(self, "_tab_font_key", None):
-                self._tab_font_key = fkey
-                self._tab_fonts = (tkfont.Font(family=fkey[0], size=size), tkfont.Font(family=fkey[0], size=size, weight="bold"))
-            f_plain, f_bold = self._tab_fonts
+            f_plain, f_bold = self._small_fonts()
+            fkey = self._tab_font_key
             sig = (tuple((self._world_name(s), s is self._shown, bool(s.unread) and s is not self._shown)
                          for s in self.sessions), th["bg"], th["panel"], th["select"], fkey)
             if not bar.winfo_manager():
                 bar.pack(fill="x", after=self._top)
+                self._place_buttonbar_again()
             if sig == self._tabs_sig and not force:
                 return
             self._tabs_sig = sig
@@ -252,6 +260,12 @@ class WorldTabsMixin:
         except tk.TclError:
             pass
 
+    def _place_buttonbar_again(self):
+        """The tab row came or went: a button bar docked at the top must stay under it."""
+        bar = getattr(self, "_btnbar", None)
+        if bar is not None and bar.winfo_manager():
+            self._place_buttonbar()
+
     def _dos_hint_click(self, hint):
         """A click on a key hint in the DOS top row does what pressing the key does."""
         import re
@@ -269,6 +283,7 @@ class WorldTabsMixin:
         if lab is None:
             return
         self._refresh_tabbar()
+        self._refresh_buttonbar()
         try:
             if self.tab_bar_wanted():
                 if lab.winfo_ismapped():

@@ -76,6 +76,7 @@ import stamps                      # optional time stamps, for the main text and
 import importui                    # import triggers and aliases from another client's files
 import popout                      # a capture pane in a window of its own
 import entrybox                    # an entry box that grows as you type (optional)
+import buttons                     # a bar of clickable buttons that send commands
 import editmenu                    # right-click Cut / Copy / Paste
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
@@ -946,6 +947,7 @@ EXTRA_CHOICES = [
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
     ("entry_grow", "off", ("off", "2", "3", "5", "8"), "Entry box grows to (lines)", "K"),
     ("world_tabs", "always", ("always", "two+", "off"), "World tabs", "W"),
+    ("button_dock", "top", ("top", "bottom", "off"), "Button bar", "B"),
 ]
 CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always": "always", "unfocused": "when the window is not in front",
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
@@ -1010,6 +1012,7 @@ def clean_settings(cfg):
     cfg["panes_hidden"] = [x for x in ph[:8] if isinstance(x, str) and len(x) < 20] if isinstance(ph, list) else []
     cfg["world_panes"] = worldtabs.clean_world_panes(cfg.get("world_panes"), layout)
     cfg["panes_locked"] = cfg.get("panes_locked") is not False        # locked unless it was unlocked on purpose
+    cfg["buttons"] = buttons.clean_buttons(cfg.get("buttons"))
     if triggers is not None:
         raw = cfg.get("triggers") if isinstance(cfg.get("triggers"), list) else []
         cfg["triggers"] = [t for t in (triggers.validate_trigger(x) for x in raw[:3000]) if t is not None][:triggers.MAX_TRIGGERS]
@@ -1566,7 +1569,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1680,7 +1683,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
                "dos_autofit": True, "dos_cols": 80, "dos_flourish": True, "dos_font_size": 0,
                "dos_fit": True, "line_spacing": 0, "worlds": None, "dos_font_family": None, "dos_line_spacing": 0,
                "prompt_profile": prompts.DEFAULT_PRESET, "prompt_custom": [],
-               "triggers": [], "alias_rules": None, "hide_prompt": False,
+               "triggers": [], "alias_rules": None, "buttons": [], "hide_prompt": False,
                "panes": [], "layout": {"regions": [], "min_main_cols": 80}}
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
@@ -1994,6 +1997,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         self._world_label.bind("<Button-1>", lambda e: self.goto_world(
             self.sessions.index(self._shown) % len(self.sessions) + 1))
         self._build_tabbar()
+        self._build_buttonbar()
 
         # holder = the coloured "overscan" border; in the DOS look the 80-column screen is
         # centred inside it, in the normal look the screen simply fills it
@@ -2059,6 +2063,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         f.add_command(label="Prompt bar format...", command=self.edit_prompt)
         f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
         f.add_command(label="Aliases...   Alt+A", command=self.open_aliases)
+        f.add_command(label="Buttons...   Alt+B", command=self.open_buttons)
         f.add_command(label="Panes / layout...   Ctrl+P", command=self.open_panes)
         self.v_panelock = tk.BooleanVar(value=self.panes_locked())
         f.add_checkbutton(label="Lock pane sizes (no dragging)", variable=self.v_panelock,
@@ -2479,6 +2484,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         self.statbar.set_theme(th)
         self._restyle_dosbar()
         self._refresh_tabbar(True)
+        self._refresh_buttonbar(True)
         if self.dos and self._panes_active:
             self.schedule_layout(5)
 
@@ -3070,7 +3076,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         """Arrange the window for the current look. Normal: toolbar, text, stat bar, input.
         DOS: no toolbar/menu bar/scrollbar; a centred N-column screen on a coloured border,
         the input line and the DOS status bar underneath."""
-        for w in (self._top, self._tabbar, self._holder, self.statbar, self._inbox, self.dosbar,
+        for w in (self._top, self._tabbar, self._btnbar, self._holder, self.statbar, self._inbox, self.dosbar,
                   getattr(self.dosbar, "top", None)):
             if w is not None:
                 w.pack_forget()
@@ -3092,6 +3098,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
             self._pack_input()
             if self.dosbar is not None:
                 self.dosbar.pack(fill="x")
+            self._refresh_buttonbar(True)
             self._dos_scroll_visibility()
             self._panes_active = False
         else:
@@ -3109,6 +3116,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
             self._inbox.pack(fill="x")
             self._pack_input()
             self._statbar_show()
+            self._refresh_buttonbar(True)
 
     # ---- DOS look: status bar, menus, dialogs, keys --------------------------------
     def _dc(self):
@@ -3294,6 +3302,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
             {"label": "Prompt bar format...", "hotkey": "B", "action": self.edit_prompt},
             {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
             {"label": "Aliases...", "hotkey": "A", "shortcut": "Alt-A", "action": self.open_aliases},
+            {"label": "Buttons...", "hotkey": "J", "shortcut": "Alt-B", "action": self.open_buttons},
             {"label": "Panes / layout...", "hotkey": "V", "shortcut": "Ctrl-P", "action": self.open_panes},
             {"label": "Lock pane sizes", "hotkey": "Z", "checked": self.panes_locked(),
              "action": self.toggle_panes_locked},
@@ -3421,6 +3430,8 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         if key == "world_tabs":
             self._refresh_tabbar(True)
             self._refresh_world_label()
+        if key == "button_dock":
+            self._refresh_buttonbar(True)
         self._save_settings()
 
     def dos_connect_dialog(self):
@@ -3483,6 +3494,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (keys: /hotkeys);  /newworld [name]  /closeworld"),
+        ("/button [add|key|run|del|list|dock]", "buttons that send commands from a bar or a hotkey (Alt+B opens the list)"),
         ("/popout <pane>", "put a capture pane in a window of its own;  /dock <pane> brings it back;  /ontop <pane>"),
         ("/import [file]", "import triggers and aliases from a MUSHclient file (or a Sanctuary world file)"),
         ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
@@ -5635,8 +5647,8 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
                 self._submit_line(line, secret)
         return "break"
 
-    def _submit_line(self, line, secret):
-        if not secret and line.strip() and (not self.history or self.history[-1] != line):
+    def _submit_line(self, line, secret, remember=True):
+        if remember and not secret and line.strip() and (not self.history or self.history[-1] != line):
             self.history.append(line)
             del self.history[:-500]
         self.hist_pos, self.draft = len(self.history), ""
@@ -6260,7 +6272,7 @@ class App(entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stam
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
                 or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
                 or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg) \
-                or self._stamps_command(cmd, arg) or self._import_command(cmd, arg) \
+                or self._stamps_command(cmd, arg) or self._import_command(cmd, arg) or self._buttons_command(cmd, arg) \
                 or self._popout_command(cmd, arg):
             return
         if cmd == "export":

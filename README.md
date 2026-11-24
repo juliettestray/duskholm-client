@@ -165,6 +165,15 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   (`text ann` as well as `text`): the longest name that matches the start of what you typed wins, whole
   words only, so `text ann hello` can send to someone's long name while `text bob hi` still uses a plain
   `text` alias. In `/alias` a name of two or three words goes in quotes: `/alias "text ann" text annabelle %*`.
+- **Buttons** (`Alt+B`, File > Buttons..., or `/button`). A bar of clickable buttons, each sending its commands (the same
+  `;` form an alias uses, run exactly as if you had typed them, so aliases and `/commands` work; they are not added to
+  your command history). A button can have a **hotkey** (`Alt-F5`, `Ctrl-Alt-S`, `Shift-F9` ...; one that is already a
+  built-in key or another button's is refused with the reason) and belongs to every world or to just one: the bar shows,
+  and the hotkeys work, only for the buttons of the world on screen. Dock it at the **top** (under the world tabs, the
+  default) or the **bottom** (above the entry box) in Options > Button bar, or turn the bar off; it wraps onto more rows
+  when the window is narrow, and shows only when the world has buttons. In the DOS look the buttons are text-mode labels.
+  `/button add Sneak = sneak;hide`, `/button key Sneak Alt-F5` (or `none`), `/button run|del|on|off Sneak`,
+  `/button list`, `/button dock top|bottom|off`. The list window adds, edits, switches on and off, removes and reorders.
 - **Capture panes** (`Ctrl+P`, File > Panes / layout). Lines can be copied into small in-client
   panes (OOC, Tells, Guide ...) docked to the top, bottom, left or right of the main text. In the
   DOS look they are plain regions of the screen with a tab row, not windows. A trigger's *Send to
@@ -443,6 +452,7 @@ python tests/test_custom.py       # the customize form's commands and the design
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_buttons.py      # buttons: bar, hotkeys, per-world scope, docking, manager, both looks
 python tests/test_worldtabs_ui.py  # the row of world tabs, and clickable key hints in the DOS look
 python tests/test_entrybox.py     # the growing entry box: lines, Shift+Enter, history, passwords, both looks
 python tests/test_mudlet.py      # Mudlet package import (pure): pattern types, folders, the send() Lua shape, zips
