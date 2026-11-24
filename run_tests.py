@@ -86,6 +86,9 @@ class HiddenDesktop:
         return code
 
 
+os.environ["SANCTUARY_QUIET"] = "1"          # the tests (and anything importing this to run a window) stay silent
+
+
 def run_one(path, desktop):
     out = tempfile.NamedTemporaryFile(prefix="sanctuary-test-", suffix=".txt", delete=False)
     out.close()

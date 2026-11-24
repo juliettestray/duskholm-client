@@ -1563,6 +1563,10 @@ class App(stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, g
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
+        if os.environ.get("SANCTUARY_QUIET"):
+            # the test runner sets this: a window on the invisible desktop still plays the system beep through
+            # your speakers, so Tk's own bell command (every place that rings it goes through there) does nothing
+            root.tk.eval("catch {rename bell {}}; proc bell {args} {}")
         self.cfg = self._load_settings()
         if host:
             self.cfg["host"] = host

@@ -405,7 +405,8 @@ python tests/test_local_server.py # needs the local test server, skips otherwise
 
 `python run_tests.py [names]` runs them all (or just the ones named) on a separate invisible
 Windows desktop, so their windows can never grab your focus or keystrokes, and exits non-zero if any
-fail.
+fail. It also sets `SANCTUARY_QUIET=1`, which turns Tk's bell into a no-op (a window on another desktop
+still beeps through your speakers otherwise); `python tests/test_quiet.py` checks it.
 
 The Tk-based tests open a window briefly. `test_fuzz.py` checks that any chunking of a
 stream parses identically, that malformed input never raises, that buffers stay bounded
