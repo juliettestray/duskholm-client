@@ -210,5 +210,31 @@ v1.out.yview_moveto(0.3); pump(0.2); top = v1.out.yview()[0]
 app.goto_world(2); pump(0.5); app.goto_world(1); pump(0.8)
 assert abs(v1.out.yview()[0] - top) < 0.02 and v1.out.yview()[1] < 0.99, "a world scrolled back stays there"
 app.goto_world(1); app.close_world(v2)
+
+# ---- closing a world from the menus and the keyboard (also in the DOS look)
+import dosui
+only = app.sessions[0]
+app.close_world_ask(); pump(0.2)
+assert app.sessions == [only], "the only world cannot be closed"
+app.set_dos_mode(True); pump(0.5)
+extra = app.open_new_world("Delta"); pump(0.4)
+app.dos_main_menu(); pump(0.4)
+labels = [it["label"] for it in app._overlay._items if it]
+assert "Close this world" in labels, labels
+app.dos_close_overlay(); pump(0.2)
+extra.connected = True
+app.root.event_generate("<Control-Shift-W>"); pump(0.4)
+cf = app._overlay; assert isinstance(cf, dosui.DosDialog) and "Hang up and close Delta" in cf._message and extra in app.sessions
+cf._press([b["result"] for b in cf._buttons].index("no")); pump(0.4)
+assert extra in app.sessions, "No keeps it"
+app.root.event_generate("<Control-Shift-W>"); pump(0.4)
+cf = app._overlay; cf._press([b["result"] for b in cf._buttons].index("yes")); pump(0.4)
+assert extra not in app.sessions and app._shown is only, "Yes hangs up and closes it"
+extra2 = app.open_new_world("Echo"); pump(0.3)
+app.root.event_generate("<Control-Shift-W>"); pump(0.4)
+assert extra2 not in app.sessions and not app._overlay_open(), "a disconnected world closes without asking"
+app.dos_main_menu(); pump(0.3)
+assert "Close this world" not in [it["label"] for it in app._overlay._items if it], "no entry when there is only one"
+app.dos_close_overlay(); app.set_dos_mode(False); pump(0.3)
 root.destroy()
 print("session tests OK")

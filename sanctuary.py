@@ -1954,6 +1954,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         f = tk.Menu(m, tearoff=0)
         f.add_command(label="Connect / Disconnect", command=self.toggle_connection)
         f.add_command(label="Worlds...   Ctrl+W", command=self.open_worlds)
+        f.add_command(label="Close this world   Ctrl+Shift+W", command=self.close_world_ask)
         f.add_command(label="Prompt bar format...", command=self.edit_prompt)
         f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
         f.add_command(label="Aliases...   Ctrl+A", command=self.open_aliases)
@@ -3060,6 +3061,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
              "action": self.toggle_connection},
             {"label": "Connection settings...", "hotkey": "S", "action": self.dos_connect_dialog},
             {"label": "Worlds...", "hotkey": "W", "shortcut": "Ctrl-W", "action": self.open_worlds},
+        ] + ([{"label": "Close this world", "hotkey": "D", "shortcut": "Ctrl-Shift-W", "action": self.close_world_ask}]
+             if len(self.sessions) > 1 else []) + [
             {"label": "Prompt bar format...", "hotkey": "B", "action": self.edit_prompt},
             {"label": "Triggers...", "hotkey": "T", "shortcut": "Ctrl-T", "action": self.open_triggers},
             {"label": "Aliases...", "hotkey": "A", "shortcut": "Ctrl-A", "action": self.open_aliases},
@@ -3217,7 +3220,8 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         """[(keys, what it does)] built from the real key table, so it can never go stale."""
         fixed = [("F1", "This help"), ("F2", "Connect / disconnect"), ("F3", "Log to file"), ("F5", "Skin"),
                  ("F6", "Colours"), ("F7", "Font"), ("F10", "Main menu"), ("F11", "Full screen"),
-                 ("F12", "About"), ("Alt-X", "Exit"), ("PgUp / PgDn", "Scroll back"),
+                 ("F12", "About"), ("Alt-X", "Exit"), ("Ctrl-F1..F12", "Show world 1..12"),
+                 ("Ctrl-Shift-W", "Close this world"), ("PgUp / PgDn", "Scroll back"),
                  ("Up / Down", "Command history"), ("Ctrl-L", "Clear the screen"), ("Ctrl +/-", "Font size"),
                  ("Ctrl-1..9", "Show a pane's tab"), ("Alt-1..9", "Fold a pane area"), ("Alt-0", "Fold all areas"),
                  ("Ctrl-*", "More text contrast"), ("Ctrl-/", "Less text contrast"),
@@ -5046,6 +5050,22 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             except OSError:
                 pass
 
+    def _close_open_line(self):
+        """You pressed Enter. A terminal would move to a new line, ending whatever unfinished line the game
+        left on screen (a tell that arrives without its newline, say), so your command and the game's reply
+        do not run into it. A PROMPT is the exception: the game's stat prompt, or a login question such as
+        'Password: ' (it ends in a space), is meant to be followed by what you type."""
+        plain = self._line_plain
+        if not plain or self._line_hidden_len:
+            return
+        if self._flush_job is not None:
+            return                                     # it only just arrived and is probably still arriving
+        if plain[-1:].isspace() or prompts.parse_prompt(plain, self.current_profile()) is not None:
+            return
+        key = self._pending[-1][1] if self._pending else (None, None, False, False, False, False)
+        self._feed_text(chr(10), key)
+        self._line = ""
+
     def _settle(self):
         """Show any unfinished line now (before something else is written after it)."""
         if self._pending or self._flush_job is not None:
@@ -5799,6 +5819,7 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         if not self.connected:
             self.system("Not connected.")
             return
+        self._close_open_line()
         parts = [line] if (secret or not expand) else self._expand(line)
         if self.cfg.get("emoji") and emojis is not None and not secret:
             parts = [emojis.shorten(p) for p in parts]

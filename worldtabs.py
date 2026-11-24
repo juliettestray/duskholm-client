@@ -5,6 +5,9 @@ their own scrollback. Things that belong to the screen (the stat bar, the status
 reader) only follow the shown world; a world that gets new text while hidden is marked instead.
 """
 import tkinter as tk
+from tkinter import messagebox
+
+import dosui
 
 MAX_WORLDS = 12                     # Ctrl+F1 .. Ctrl+F12
 EMPTY_LAYOUT = {"regions": [], "min_main_cols": 80}
@@ -254,7 +257,27 @@ class WorldTabsMixin:
         self._refresh_world_ui()
         return True
 
+    def close_world_ask(self):
+        """Close the world on screen (menu entry / Ctrl+Shift+W): asks first if it is still connected."""
+        s = self._shown
+        if len(self.sessions) < 2:
+            self.system("That is the only world; use Exit to leave.")
+            return
+        name = self._world_name(s)
+        live = s.connected or s.connecting or s._retrying
+        if not live:
+            self.close_world(s)
+            return
+        text = "Hang up and close %s?" % name
+        if self.dos:
+            self._overlay = dosui.confirm(self.root, "Close world", text, self._dc(), self.f_norm,
+                                          lambda r, v: self.close_world(s) if r == "yes" else None)
+        elif messagebox.askyesno("Close world", text, parent=self.root):
+            self.close_world(s)
+
     def _bind_world_keys(self):
+        for seq in ("<Control-Shift-W>", "<Control-Shift-w>"):
+            self.root.bind(seq, lambda e: (self.close_world_ask(), "break")[1])
         for n in range(1, MAX_WORLDS + 1):
             self.root.bind("<Control-F%d>" % n, lambda e, n=n: (self.goto_world(n), "break")[1])
 

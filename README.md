@@ -116,7 +116,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Several worlds at once.** Dialing a saved world while this one is connected opens it in its own
   tab (up to 12); dialing one that is already open switches to it. `Ctrl+F1` .. `Ctrl+F12` show
   the 1st .. 12th world, `/world [n|name]`, `/newworld [name]` and `/closeworld` do the same by
-  command. The tabs sit in the top bar (DOS look) or the toolbar (normal look): the world on screen
+  command. **Close this world** (main menu, or `Ctrl+Shift+W`) hangs up, after asking, and closes the tab. The tabs sit in the top bar (DOS look) or the toolbar (normal look): the world on screen
   is in brackets and a world with new text while hidden gets a `*` and one beep. Each world has its
   own scrollback, connection, command history and half-typed line; the stat bar, status line and
   screen reader follow only the world you are looking at.
