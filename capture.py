@@ -15,7 +15,7 @@ starts with an empty pane and an empty memory, which agree."""
 import time
 
 GAP = 3.0                  # seconds: lines further apart than this are not one listing
-WRAP_MIN = 40              # a line shorter than this was not cut short by the game's wrapping, so nothing continues it
+WRAP_MIN = 50              # a line shorter than this was not cut short by the game's wrapping, so nothing continues it
 SETTLE_MS = 500            # the last message of a listing is shown this long after its last line
 MAX_REMEMBERED = 4000
 

@@ -184,7 +184,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   main text always keeps at least 80 columns: areas that would squeeze it are narrowed, then hidden.
   Several panes in one area become tabs (`Ctrl+1`..`9` select, `*3` shows unread lines). Ready-made
   trigger presets capture OOC, tells and Guide/Newbie, and **phone texts**: *Capture phone texts (no repeats)* sends
-  every date-stamped message line (`[Jun  9 12:34]Name: ...`) that looking at your phone shows to a Phone pane, and
+  every date-stamped message line (`[Jun  9 12:34]Name: ...`) to a Phone pane, whether it pops up the moment it
+  arrives (while you hold the phone) or is listed when you look at the phone, and
   only the ones that pane does not already have, however often you look: a text the game wrapped onto a second line
   comes along with it, two word-for-word identical texts in the same minute are both kept (and not doubled on the
   next look), and clearing the pane makes the next look fill it again. It is a route action with the box *Skip lines it

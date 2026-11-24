@@ -110,6 +110,15 @@ assert pane_lines() == []
 feed(*HEAD, M1, M2, *LOOK_END); pump(0.9)
 assert pane_lines() == [M1, M2], pane_lines()
 
+# holding the phone: a text shows up the moment it arrives, as a single line after "vibrates"; looking later does not double it
+LIVE = "[Nov 24 18:31]7108390: so who are we giving him?? charity?"
+feed("Your iPhone 15 vibrates.", LIVE); pump(0.9)
+assert pane_lines() == [M1, M2, LIVE], pane_lines()
+feed("text 7108390 preferably someone useless", "Sent."); pump(0.9)
+assert pane_lines() == [M1, M2, LIVE], "what you type and the game's answer are not texts"
+feed(*HEAD, M1, M2, LIVE, *LOOK_END); pump(0.9)
+assert pane_lines() == [M1, M2, LIVE], pane_lines()
+
 # a plain route (not once) is untouched, and another world has its own memory
 app.cfg["triggers"].append({"name": "plain", "mode": "plain", "pattern": "Exits:*", "enabled": True, "priority": 0,
                             "actions": [{"type": "route", "pane": "Plain"}]})
@@ -124,7 +133,7 @@ app.session = app._shown
 assert app._shown is second
 assert pane_lines() == [M1], "the world on screen has its own pane and its own memory"
 app.goto_world(1); pump(0.4)
-assert pane_lines() == [M1, M2]
+assert pane_lines() == [M1, M2, LIVE]
 
 root.update(); root.destroy()
 print("capture-once tests OK")
