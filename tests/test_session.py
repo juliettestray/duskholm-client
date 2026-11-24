@@ -195,5 +195,20 @@ app.goto_world(1)
 assert app._expand("k now") != ["k now"], "but it works in Alpha"
 a1.connected = b1.connected = False
 app.close_world(b1)
+
+# ---- switching worlds lands on the latest line (and keeps a deliberate scroll-back)
+v1 = app.sessions[0]; v2 = app.open_new_world("Gamma"); pump(0.3)
+for ses in (v1, v2):
+    for i in range(300):
+        ses.q.put((ses.conn.gen, "data", ("filler line %d" % i + CR).encode()))
+pump(1.5)
+for _ in range(3):
+    app.goto_world(1); pump(0.8); assert v1.out.yview()[1] >= 0.999, v1.out.yview()
+    app.goto_world(2); pump(0.8); assert v2.out.yview()[1] >= 0.999, v2.out.yview()
+app.goto_world(1); pump(0.5)
+v1.out.yview_moveto(0.3); pump(0.2); top = v1.out.yview()[0]
+app.goto_world(2); pump(0.5); app.goto_world(1); pump(0.8)
+assert abs(v1.out.yview()[0] - top) < 0.02 and v1.out.yview()[1] < 0.99, "a world scrolled back stays there"
+app.goto_world(1); app.close_world(v2)
 root.destroy()
 print("session tests OK")

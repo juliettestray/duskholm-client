@@ -1508,6 +1508,7 @@ class Session:
     def __init__(self, name="", host="", port=0, tls=True):
         self.name, self.host, self.port, self.tls = name, host, port, tls
         self.unread = False                    # text arrived while another world was on screen
+        self._view = None                      # scroll position when it was left (None: at the latest line)
 
 
 # attributes the App forwards to its active Session
@@ -1785,6 +1786,17 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             self.session = prev
         return s
 
+    def _restore_view(self, s):
+        """Back to where world `s` was: the latest line, or the place it was scrolled to."""
+        try:
+            top = getattr(s, "_view", None)
+            if top is None:
+                s.out.yview_moveto(1.0)
+            else:
+                s.out.yview_moveto(top)
+        except tk.TclError:
+            pass
+
     def switch_session(self, s):
         """Show world `s`. Its scrollback, line state and connection become the active ones."""
         if s is self.session or s not in self.sessions:
@@ -1795,6 +1807,11 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
         except ValueError:
             pass
         old.draft = self.input.get()
+        try:
+            top, bottom = old.out.yview()
+            old._view = None if bottom >= 0.999 else top           # None: it was at the latest line
+        except tk.TclError:
+            old._view = None
         self._stash_world_panes(old)
         self.session = old
         self._hide_pane_widgets()                      # the old world's panes leave the screen with it
@@ -1810,8 +1827,10 @@ class App(worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin
             self.schedule_layout(5)
         self.input.delete(0, "end")
         self.input.insert(0, s.draft or "")
-        s.out.see("end")
         self._sync_session_ui()
+        self._restore_view(s)
+        for ms in (30, 150, 400):                      # the layout settles over a few redraws; keep the spot
+            self.root.after(ms, lambda s=s: self._restore_view(s) if s is self._shown else None)
 
     def _reg(self, widget, role):
         """Register a widget so apply_theme() can restyle it."""
