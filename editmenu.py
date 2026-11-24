@@ -29,7 +29,7 @@ class EditMenuMixin:
 
     def _visible_text_areas(self):
         s = self._shown
-        return [s.out] + [p["text"] for p in s._panes.values()]
+        return [s.out] + [p["text"] for p in s._panes.values()] + self._popout_texts()
 
     def _smart_copy(self, _e=None):
         if self._overlay_open():
@@ -119,12 +119,15 @@ class EditMenuMixin:
         if w is self.input:
             w.focus_set()
 
+        in_main = w.winfo_toplevel() is self.root          # a pane's own window gets an ordinary pop-up menu
+
         def back():
-            try:
-                self.root.after_idle(self.input.focus_set)
-            except tk.TclError:
-                pass
-        if self.dos:
+            if in_main:
+                try:
+                    self.root.after_idle(self.input.focus_set)
+                except tk.TclError:
+                    pass
+        if self.dos and in_main:
             if self._overlay_open():
                 return
             dos_items = [{"label": label, "hotkey": hk, "enabled": enabled,

@@ -171,6 +171,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   Each pane area has a small fold button (`-`); `Alt+1`..`9` fold away or bring back the area
   holding that pane and `Alt+0` all of them. Folded panes keep collecting; the bar says
   `Unread: OOC*3`. In the DOS look everything sits in one double-line frame whose joins match.
+  **Pop a pane out** into a window of its own (a second monitor, say): the `\u2197` arrow at the right of an
+  area's header pops out its active tab, or `/popout <pane>`; the window's Dock button, closing it, or
+  `/dock <pane>` brings it back. The window shows the pane's history and then every new line, with its colours,
+  links, colour emoji, time stamps and follow-the-newest-line, and a selection in it copies with Ctrl+C. The pane's
+  tab leaves the main window while it is out, and an area whose panes are all out goes away (the main text gets the
+  room). A pane belongs to a world and keeps updating while that world is not on screen; closing the world closes its
+  windows. Where the window was, and whether it was out, is remembered per world and comes back next time.
   **Resize with the mouse:** unlock with File > Lock pane sizes (or `/panelock off`), then drag the
   border between the main text and an area, or the divider between two areas stacked on one side (in
   the DOS look these are the frame lines, a whole cell thick, and the scrollbars step aside while it is
@@ -393,6 +400,7 @@ python tests/test_emojipick.py   # the emoji picker
 python tests/test_emojiimg.py    # colour emoji pictures, the two options, resizing
 python tests/test_lookfonts.py   # each look keeps its own font, size and line spacing
 python tests/test_panefollow.py  # capture areas keep the newest line in view, and where you scrolled them
+python tests/test_popout.py      # a pane in its own window: lines, docking, position, worlds, looks
 python tests/test_stamps.py      # optional time stamps, main text and per pane
 python tests/test_editmenu.py    # right-click Cut / Copy / Paste, both looks
 python tests/test_entryfit.py    # the entry box never clips the last character of a full line

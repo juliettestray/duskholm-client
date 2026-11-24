@@ -252,6 +252,7 @@ class WorldTabsMixin:
         finally:
             self.session = prev
         for pane in list(s._panes.values()):
+            self._popout_destroy(pane)                     # a pane's own window goes with its world
             for w in (pane["text"], pane["sb"], pane["dsb"]):
                 try:
                     w.destroy()

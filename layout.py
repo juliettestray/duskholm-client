@@ -5,6 +5,7 @@ Everything here is pure data in / pure data out; every input is untrusted.
 """
 
 import math
+import re
 
 MIN_MAIN_COLS = 80
 SIDES = ('top', 'bottom', 'left', 'right')
@@ -55,12 +56,23 @@ def validate_pane(d):
         return None
     title = _clean_name(d.get('title')) or name
     ts = d.get('timestamps')
-    return {
+    out = {
         'name': name,
         'title': title,
         'max_lines': _clamp_int(d.get('max_lines'), 100, 20000, 2000),
         'timestamps': ts if isinstance(ts, bool) else False,
     }
+    win = d.get('window')                       # where the pane's own window was, and whether it was out
+    if isinstance(win, dict):
+        w = {}
+        if isinstance(win.get('out'), bool):
+            w['out'] = win['out']
+        g = win.get('geometry')
+        if isinstance(g, str) and len(g) <= 40 and re.match(r'^\d+x\d+([+-]-?\d+){0,2}$', g):
+            w['geometry'] = g
+        if w:
+            out['window'] = w
+    return out
 
 
 def validate_panes(lst):

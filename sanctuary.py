@@ -74,6 +74,7 @@ import emojipick                   # an emoji picker (Windows' own panel cannot 
 import gametime                    # each world's game clock: time zone and IC:OOC ratio
 import stamps                      # optional time stamps, for the main text and per capture pane
 import importui                    # import triggers and aliases from another client's files
+import popout                      # a capture pane in a window of its own
 import editmenu                    # right-click Cut / Copy / Paste
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
@@ -1560,7 +1561,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1647,6 +1648,7 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
         self.apply_theme()
         self._bind_dos_keys()
         self._emoji_start()
+        self.root.after(700, self._restore_popouts)             # panes that were in their own windows come back
         if self.dos:
             self._start_dos_tick()
             self.update_dosbar()
@@ -1884,6 +1886,7 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
         else:
             self.set_notice("", 0)
         self._restore_view(s)
+        self._restore_popouts()
         for ms in (30, 150, 400):                      # the layout settles over a few redraws; keep the spot
             self.root.after(ms, lambda s=s: self._restore_view(s) if s is self._shown else None)
 
@@ -2414,7 +2417,8 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
 
     def _text_widgets(self):
         """The main text area and every pane's text area (they share one set of colour tags)."""
-        return [s.out for s in self.sessions] + [p["text"] for s in self.sessions for p in s._panes.values()]
+        return ([s.out for s in self.sessions] + [p["text"] for s in self.sessions for p in s._panes.values()]
+                + self._popout_texts())
 
     def _style_tag(self, name):
         key = self._tag_keys[name]
@@ -2578,7 +2582,8 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
         if at_bottom:
             text.see("end")
             self._pane_follow_soon(pane)
-        if not self._pane_visible(pane["key"]):
+        self._popout_append(pane, d, pieces)
+        if not self._pane_visible(pane["key"]) and not pane.get("popout"):
             pane["unread"] += 1
             self._style_region_ui()
 
@@ -2629,10 +2634,12 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
             pane["history"].clear()
             pane["unread"] = 0
             pane["follow"] = True
+            self._popout_clear(pane)
             self._style_region_ui()
 
     def pane_delete(self, name):
         key = str(name).strip().lower()
+        self.dock_pane(key)
         pane = self._panes.pop(key, None)
         if pane:
             for w in (pane["text"], pane["sb"], pane["dsb"]):
@@ -2653,6 +2660,8 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
         return layout.find_region(self.cfg["layout"], d["name"]) if d else None
 
     def _pane_visible(self, key):
+        if self._popped(key):
+            return False                                       # (its own window, not a tab)
         reg = self._pane_region(key)
         if reg is None or not self._panes_active or self._pane_geom is None:
             return False
@@ -2667,6 +2676,9 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
 
     def select_pane(self, key):
         key = str(key).lower()
+        if self._popped(key):
+            self._popout_raise(self._panes[key]["popout"])       # a pane that is out: its window comes forward
+            return True
         reg = self._pane_region(key)
         if reg is None:
             return False
@@ -2890,9 +2902,20 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
         """The layout without the areas the user has folded away."""
         lay = self.cfg["layout"]
         hidden = set(self.cfg.get("panes_hidden", []))
-        if not hidden:
+        out = {k for k, p in self._panes.items() if p.get("popout")}
+        if not hidden and not out:
             return lay
-        return dict(lay, regions=[r for r in lay["regions"] if r["id"] not in hidden])
+        regions = []
+        for r in lay["regions"]:
+            if r["id"] in hidden:
+                continue
+            if out:
+                names = [n for n in r["panes"] if n.lower() not in out]
+                if r["panes"] and not names:
+                    continue                                   # everything in it has its own window
+                r = dict(r, panes=names)
+            regions.append(r)
+        return dict(lay, regions=regions)
 
     def toggle_region(self, rid):
         hidden = list(self.cfg.get("panes_hidden", []))
@@ -2974,6 +2997,12 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
             ui["hide"] = hb
         ui["hide"].pack_forget()
         ui["hide"].pack(side="right", fill="y")
+        if "pop" not in ui:
+            pb = tk.Label(ui["frame"], text=" \u2197 " if not self.dos else " ^ ", padx=2, cursor="hand2")
+            pb.bind("<Button-1>", lambda e, r=reg["id"]: self._popout_region_active(r))
+            ui["pop"] = pb
+        ui["pop"].pack_forget()
+        ui["pop"].pack(side="right", fill="y")
         for lbl in ui["labels"].values():
             lbl.pack_forget()
         for key in want:
@@ -3008,6 +3037,8 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
                 active = self._active_pane_key(reg)
                 if "hide" in ui:
                     ui["hide"].configure(bg=base_bg, fg=base_fg, font=self.f_norm)
+                if "pop" in ui:
+                    ui["pop"].configure(bg=base_bg, fg=base_fg, font=self.f_norm)
                 for key, lbl in ui["labels"].items():
                     d = self._find_pane_def(key) if key else None
                     title = d["title"] if d else ""
@@ -3433,6 +3464,7 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
     HELP_COMMANDS = (
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (keys: /hotkeys);  /newworld [name]  /closeworld"),
+        ("/popout <pane>", "put a capture pane in a window of its own;  /dock <pane> brings it back"),
         ("/import [file]", "import triggers and aliases from a MUSHclient file (or a Sanctuary world file)"),
         ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
@@ -6190,7 +6222,8 @@ class App(importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emoji
         if self._extras_command(cmd, arg) or self._tools_command(cmd, arg) or self._access_command(cmd, arg) \
                 or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
                 or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg) \
-                or self._stamps_command(cmd, arg) or self._import_command(cmd, arg):
+                or self._stamps_command(cmd, arg) or self._import_command(cmd, arg) \
+                or self._popout_command(cmd, arg):
             return
         if cmd == "export":
             if arg:
