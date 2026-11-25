@@ -185,6 +185,15 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   Ordinary `Ctrl+C` is unchanged and copies everything.
 - **Logging** (`/log`, F3): Options > *Put the commands I send in the log file* (on by default) can be switched off to keep
   what you typed out of the log; the game's text and the client's notes are still logged.
+- **Scrollback length and reloading it** (Options). *Scrollback length* is how many lines of text each world keeps in the
+  window before the oldest go: 5,000, 10,000, 20,000 (the default), 50,000 or 100,000. *Reload earlier backscroll at
+  start* (off by default) saves the end of each world's text when you quit (and every five minutes, and when you close a
+  world) and puts it back above the new text the next time you connect to that address (at start-up for the world on
+  screen), with a line saying where the old text ends. *Backscroll to reload* is how many lines are saved and put back:
+  500 to 20,000, and never more than the scrollback length (lowering the length lowers it too). **The more lines you
+  reload, the longer start-up takes**, which is why this is a choice and why turning it on asks first. It is plain text,
+  without colours or highlights, kept in a `backscroll` folder next to the settings (so anyone who can open that folder
+  can read it); switching the option off deletes it. Capture panes are not saved.
 - **No gap where a message was hidden.** When a trigger hides a message and the screen already ends in a blank line, the
   blank line the game puts after the message is dropped with it (one blank line only), so hiding something does not
   leave a hole.
@@ -491,6 +500,7 @@ python tests/test_importers.py   # MUSHclient file import (pure): patterns, colo
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
+python tests/test_backscroll.py   # scrollback length, kept <= length, warning, save/load plain text, start-up, both looks
 python tests/test_clone_echo.py   # clone worlds / triggers / aliases / buttons, log without my commands, copy without them, no gap
 python tests/test_buttons.py      # buttons: bar, hotkeys, per-world scope, docking, manager, both looks
 python tests/test_worldtabs_ui.py  # the row of world tabs, and clickable key hints in the DOS look

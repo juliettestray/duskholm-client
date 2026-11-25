@@ -79,6 +79,7 @@ import entrybox                    # an entry box that grows as you type (option
 import buttons                     # a bar of clickable buttons that send commands
 import capture                     # capture a repeating log onto a pane without doubling lines
 import editmenu                    # right-click Cut / Copy / Paste
+import backscroll                  # scrollback length, and keeping it between sessions
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
 DEFAULT_HOST = "duskholm.com"
@@ -935,6 +936,8 @@ EXTRA_BOOLS = [
     ("scroll_on_send", True, "Jump to the bottom when I send", "Jump to bottom on send", "S"),
     ("show_echo", True, "Show the commands I send", "Show my commands", "M"),
     ("log_echo", True, "Put the commands I send in the log file", "Log my commands", "Z"),
+    ("keep_backscroll", False, "Reload earlier backscroll at start (longer backscroll = slower start-up)",
+     "Reload backscroll (slows start-up)", "2"),
     ("custom_form", True, "Fill-in form when I type 'customize'", "Customize form", "F"),
     ("screen_reader", False, "Screen reader mode", "Screen reader mode", "Y"),
     ("sr_alerts", True, "Screen reader: announce stun, health and ready timers", "Reader alerts", "T"),
@@ -950,13 +953,18 @@ EXTRA_CHOICES = [
     ("entry_grow", "off", ("off", "2", "3", "5", "8"), "Entry box grows to (lines)", "K"),
     ("world_tabs", "always", ("always", "two+", "off"), "World tabs", "W"),
     ("button_dock", "top", ("top", "bottom", "off"), "Button bar", "B"),
+    ("scrollback_lines", backscroll.DEFAULT_TOTAL, backscroll.TOTAL_CHOICES, "Scrollback length (lines)", "1"),
+    ("keep_lines", backscroll.DEFAULT_KEEP, backscroll.KEEP_CHOICES,
+     "Backscroll to reload (lines; more = slower start)", "3"),
 ]
 CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always": "always", "unfocused": "when the window is not in front",
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
                 "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
                 "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice",
                 "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
-                "two+": "only with two or more worlds"}
+                "two+": "only with two or more worlds",
+                "500": "500 lines", "1000": "1,000 lines", "2000": "2,000 lines", "5000": "5,000 lines",
+                "10000": "10,000 lines", "20000": "20,000 lines", "50000": "50,000 lines", "100000": "100,000 lines"}
 
 
 def clean_settings(cfg):
@@ -1046,6 +1054,7 @@ def clean_settings(cfg):
     for k, default, values, _l, _h in EXTRA_CHOICES:
         if cfg.get(k) not in values:
             cfg[k] = default
+    backscroll.clamp_keep(cfg)                              # what is kept can never be more than the scrollback
     al = cfg.get("aliases")
     cfg["aliases"] = {k: v for k, v in al.items() if isinstance(k, str) and isinstance(v, str)
                       and k and " " not in k} if isinstance(al, dict) else {}
@@ -1589,7 +1598,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1684,6 +1693,8 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
             self.set_fullscreen(True, save=False)
         root.protocol("WM_DELETE_WINDOW", self.on_quit)
         self._apply_entry_mode()
+        self.backscroll_load(self.session)                      # (only when "reload earlier backscroll" is on)
+        self._bs_job = self.root.after(backscroll.SAVE_EVERY_MS, self._backscroll_tick)
         self.input.focus_set()
         self._pump_job = root.after(25, self._pump)
         root.bind("<Destroy>", self._on_root_destroy, add="+")
@@ -1728,6 +1739,9 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 json.dump(self.cfg, f, indent=2)
         except OSError:
             pass
+
+    def _backscroll_dir(self):
+        return os.path.join(os.path.dirname(os.path.abspath(SETTINGS_PATH)), "backscroll")
 
     # ---- ui ----------------------------------------------------------
     def _default_family(self):
@@ -3454,6 +3468,8 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
             self._refresh_world_label()
         if key == "button_dock":
             self._refresh_buttonbar(True)
+        if key in ("scrollback_lines", "keep_lines", "keep_backscroll"):
+            self._backscroll_option_changed(key, value)
         self._save_settings()
 
     def dos_connect_dialog(self):
@@ -5077,8 +5093,9 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
         if self._emoji_pics_on():
             self._emojify(self.out, first)
         lines = int(self.out.index("end-1c").split(".")[0])
-        if lines > MAX_SCROLLBACK_LINES:
-            self.out.delete("1.0", "%d.0" % (lines - MAX_SCROLLBACK_LINES))
+        limit = backscroll.total_lines(self.cfg)
+        if lines > limit:
+            self.out.delete("1.0", "%d.0" % (lines - limit))
         self.out.configure(state="disabled")
         if at_bottom:
             self.out.see("end")
@@ -6528,6 +6545,7 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
             self._save_settings()
         else:
             host, port, tls = self.session.host, self.session.port, self.session.tls
+        self.backscroll_load(self.session)                # a world's earlier text goes back above the new text, once
         self.connecting = True
         self.btn.configure(text="Cancel")
         self.status.configure(text="Connecting…")
@@ -6944,6 +6962,7 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
         self.conn.close()
         if self.logfile:
             self.logfile.close()
+        self.backscroll_save_all()
         self._save_settings()
         self.root.destroy()
 

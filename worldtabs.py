@@ -345,6 +345,7 @@ class WorldTabsMixin:
             if nxt is s:
                 nxt = self.sessions[1]
             self.switch_session(nxt)
+        self.backscroll_save(s)                            # (when "reload earlier backscroll" is on)
         prev, self.session = self.session, s
         try:
             self._cancel_reconnect()
