@@ -80,7 +80,7 @@ assert app.statbar.data["hp"] == (350, 350, "DF")
 texts = [t for t, _ in app.statbar.specs()]
 assert texts == ["ST 0", "WN 0", "LG 0", "M:0", "K:0"], texts
 cols = dict(app.statbar.specs())
-assert cols["M:0"] == dc.ANSI16[10], "ready cooldown is green"
+assert cols["M:0"] == app.theme["ansi"][10], "ready cooldown is green"
 
 # next prompt arrives split across two reads, mid-number
 box[0].sendall(b"\n\rYou are hit.\n\r[2")
@@ -89,7 +89,7 @@ assert app.statbar.data["hp"] == (350, 350, "DF"), "a partial prompt must not ch
 box[0].sendall(b"00/350DF 1ST 2WN 0LG M:3 K:2 (North 1/5:1/5)] (Sprawled) ")
 assert pump(2, lambda: app.statbar.data["hp"][0] == 200)
 specs = dict(app.statbar.specs())
-assert specs["M:3"] == dc.ANSI16[9] and specs["K:2"] == dc.ANSI16[9], "cooling down is red"
+assert specs["M:3"] == app.theme["ansi"][9] and specs["K:2"] == app.theme["ansi"][9], "cooling down is red"
 assert "North 1/5:1/5" in specs and "Sprawled" in specs and specs["ST 1"] == dc.ALERT_FG
 
 # the prompt text itself is still in the scrollback (shown a moment after the bar updates)

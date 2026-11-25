@@ -3,6 +3,8 @@ release notes on GitHub (publish: the footer about downloading is added there). 
 BEFORE releasing it. Each entry is (version, text); text is Markdown-ish: "- " bullets, **bold**, `code`."""
 
 CHANGES = [
+    ("1.3.1", """- **Plain (lifted).** A new skin beside Plain: the same black screen and true colours, but dark colours such as black and dark blue are lightened until they can be read, as Plain did before 1.3.0. Plain stays exactly as the game sends it.
+- **Scanlines note.** The README now says that fine stripes can tire the eyes or bring on a headache in some people, and that `/crt off` switches them off."""),
     ("1.3.0", """- **CRT scanlines.** In the DOS look, Options > *CRT scanlines in the DOS look* (off, light, medium, strong; off by default) lays thin dark lines over the screen like an old monitor. Printing text is no slower, the mouse goes straight through, and `/crt` says whether they are showing.
 - **Ctrl+Tab swaps worlds.** It goes back to the world you were in just before this one, and again to come back, so two worlds you are moving between swap whatever else is open. It can be changed under `/hotkeys` (*Swap with the last world*).
 - **Plain skin is true.** The default skin was washed out: its background was a blue-grey, white text was grey, and dark colours were lightened (black text turned grey, dark blue turned pale). Plain is now a black screen, neutral greys, the standard bright terminal colours and no lightening, so black is black and every colour is shown as the game sent it. If a dark colour is hard to read, `Ctrl+*` raises the minimum contrast (`Ctrl+/` lowers it), and the other skins are unchanged.

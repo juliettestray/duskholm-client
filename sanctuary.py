@@ -254,15 +254,17 @@ def _skin(name, **kw):
     return base
 
 
+_PLAIN = dict(bg="#000000", fg="#e5e5e5", panel="#121212", panel_edge="#333333", input_bg="#0a0a0a",
+              input_fg="#ffffff", echo="#8a8a8a", system="#d7a84a", alert="#e5c07b", dim="#7f7f7f", select="#33466b",
+              button_bg="#262626", button_fg="#ffffff",
+              ansi=["#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
+                    "#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff"])
 BUILTIN_SKINS = {s["name"]: s for s in (
     # Plain is "true": a black screen, neutral greys with no tint, the standard xterm colours, and no contrast lifting, so
     # a colour is shown as the game sent it (black is black). Raise the minimum contrast (Ctrl+*) if a dark colour is hard to read.
-    _skin("Plain", bg="#000000", fg="#e5e5e5", panel="#121212", panel_edge="#333333", input_bg="#0a0a0a",
-          input_fg="#ffffff", echo="#8a8a8a", system="#d7a84a", alert="#e5c07b", dim="#7f7f7f", select="#33466b",
-          button_bg="#262626", button_fg="#ffffff", min_contrast=1.0,
-          ansi=["#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
-                "#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff"],
-          blurb="True colours on black, exactly as the game sends them. The default."),
+    _skin("Plain", min_contrast=1.0, blurb="True colours on black, exactly as the game sends them. The default.", **_PLAIN),
+    _skin("Plain (lifted)", min_contrast=4.0, **dict(_PLAIN, ansi=list(_PLAIN["ansi"])),
+          blurb="Plain, but dark colours (black, dark blue) are lightened until they can be read."),
     _skin("Plain Light", bg="#fafaf7", fg="#1f2328", panel="#ecece6", panel_edge="#d0d0c8",
           input_bg="#ffffff", input_fg="#111111", echo="#7a7f87", system="#8a5a00",
           alert="#9a5b00", dim="#7b8088", select="#cfe0ff", button_bg="#e2e2da",
@@ -335,6 +337,7 @@ _DOS_STYLE = {
     "Retro Amber": _dos("#5a3600", "#ffe0a0", "#1a0f00", "#ffb000", "#ffe680", "#1a0f00", "#ffb000",
                         "#ffb000", "#ffb000", "#0a0500", "#8a5a00", "#050200", "#050300"),
 }
+_DOS_STYLE["Plain (lifted)"] = _DOS_STYLE["Plain"]
 for _n, _d in _DOS_STYLE.items():
     BUILTIN_SKINS[_n].update(_d)
 

@@ -111,6 +111,11 @@ for k in ("bg", "panel", "panel_edge", "input_bg", "echo", "dim", "button_bg"): 
 app.set_skin("Moody")
 mb = dc.BUILTIN_SKINS["Moody"]["bg"]
 assert dc.contrast_ratio(fg_of("redword"), mb) >= 4.0 and dc.contrast_ratio(fg_of("blackword"), mb) >= 4.0
+app.set_skin("Plain (lifted)")
+lf = dc.BUILTIN_SKINS["Plain (lifted)"]; pl = dc.BUILTIN_SKINS["Plain"]
+assert app.theme["min_contrast"] == 4.0 and lf["bg"] == pl["bg"] == "#000000" and lf["ansi"] == pl["ansi"] and lf["ansi"] is not pl["ansi"]
+assert dc.contrast_ratio(fg_of("blackword"), "#000000") >= 4.0 and dc.contrast_ratio(fg_of("blueword"), "#000000") >= 4.0, "lifted"
+assert fg_of("brightword") == "#ff0000", "a colour that is already readable is untouched"
 app.set_skin("Plain")
 
 # ---------------- palette edits --------------------------------------------------------------

@@ -53,7 +53,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   live preview; `Ctrl +/-` and `Ctrl+wheel` still zoom. The choice is saved. The input line
   and stat bar always stay on screen, even at large sizes.
 - **Skins and a user-adjustable palette** (View > Skin, View > Colours…). Six built in:
-  *Plain* (true colours on black, exactly as the game sends them; the default), *Plain Light*, *Moody* (violet-black, tarnished gold,
+  *Plain* (true colours on black, exactly as the game sends them; the default), *Plain (lifted)* (the same, but dark colours such as black and dark blue are lightened until they can be read), *Plain Light*, *Moody* (violet-black, tarnished gold,
   spectral teal), *Retro Phosphor* (green-screen CRT), *Retro Amber* (amber CRT) and *Retro DOS*
   (16-colour VGA, blue panels, chunky buttons). `Ctrl+*` and `Ctrl+/` raise and lower the minimum
   text contrast by half a step. A skin sets every colour, the 16-colour game palette, button
@@ -443,7 +443,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   window laid over the program, so the text underneath is not touched: the mouse goes straight through (select, click
   and scroll as usual), the keyboard stays where it was, and it follows the window when you move, resize or minimise
   it. It shows only in the DOS look (screen reader mode has none) and only on Windows. It makes text a little harder
-  to read, which is why it starts off. Speed: printing text is not slowed (measured: 393 against 386 lines a second
+  to read, which is why it starts off, and fine stripes can tire the eyes or bring on a headache in some people (more
+  so over long sessions or with migraines): if they bother you, switch them off (`/crt off`). Speed: printing text is not slowed (measured: 393 against 386 lines a second
   with strong lines); resizing the window costs about 6 ms a step.
   The lines check themselves every second (and when the window comes back to the front) and put right anything that has
   gone wrong, such as being hidden or left behind the window. `/crt` says whether they are showing and what had to be put
