@@ -228,8 +228,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Scrollback length and reloading it** (Options). *Scrollback length* is how many lines of text each world keeps in the
   window before the oldest go: 5,000, 10,000, 20,000 (the default), 50,000 or 100,000. *Reload earlier backscroll at
   start* (off by default) saves the end of each world's text when you quit (and every five minutes, and when you close a
-  world) and puts it back above the new text the next time you connect to that address (at start-up for the world on
-  screen), with a line saying where the old text ends. *Backscroll to reload* is how many lines are saved and put back:
+  world) and puts it back above the new text the next time you connect to that world (at start-up for the world on
+  screen). Each world has its own file (a saved world by its id), so two worlds on the same address, such as two
+  characters, never mix, with a line saying where the old text ends. *Backscroll to reload* is how many lines are saved and put back:
   500 to 20,000, and never more than the scrollback length (lowering the length lowers it too). **The more lines you
   reload, the longer start-up takes**, which is why this is a choice and why turning it on asks first. It is plain text,
   without colours or highlights, kept in a `backscroll` folder next to the settings (so anyone who can open that folder

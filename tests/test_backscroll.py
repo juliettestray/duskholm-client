@@ -76,6 +76,7 @@ app._set_extra("scrollback_lines", "20000"); app._set_extra("keep_lines", "1000"
 # turning reload on warns (and says why); saying no leaves it off
 app.cfg["host"] = "h.example"; app.cfg["port"] = 4000
 app.session.host, app.session.port = "h.example", 4000
+app.session.name, app.session.wid = "", ""                  # (an address that is not a saved world: it is "World 1" now and after a relaunch)
 app.v_host.set("h.example"); app.v_port.set("4000")          # (switching worlds copies the host box back into the world)
 answer[0] = False
 app._set_extra("keep_backscroll", True); pump(0.1)
@@ -91,7 +92,8 @@ assert "slower start" in [l for k, d, l, dl, h in sc.EXTRA_BOOLS if k == "keep_b
 app.clear()
 feed(3000)
 assert app.backscroll_save(app.session) is True
-path = os.path.join(app._backscroll_dir(), "h.example_4000.txt")
+path = app._bs_path(app.session)
+assert os.path.basename(path).startswith("n_") and path.endswith(".txt"), path
 text = open(path, encoding="utf-8").read()
 assert text.splitlines() == ["L%d" % i for i in range(2001, 3001)], (len(text.splitlines()), text[:30])
 app._set_extra("keep_lines", "500"); app.backscroll_save(app.session)
@@ -105,24 +107,54 @@ assert open(path, encoding="utf-8").read() == "coloured text\nsystem words\n"
 app.clear(); feed(1200)
 app.backscroll_save(app.session)
 
-# loading: above a new world's text, once, with a line saying so; a new world at another address gets nothing
+# loading: each world has a file of its own. A second world on the SAME address does not get the first one's text
 s2 = app.open_new_world("Second"); pump(0.3)
 s2.host, s2.port = "h.example", 4000
 app.session = s2
 app._append([("fresh output\n", None)])
-n = app.backscroll_load(s2)
-assert n == 1000, n
-t = s2.out.get("1.0", "end-1c").splitlines()
-assert t[0] == "L201" and t[999] == "L1200" and "Earlier text" in t[1000] and "1000 lines" in t[1000] and t[1001] == "fresh output", (t[0], t[999], t[1000:1003])
-assert app.backscroll_load(s2) == 0, "once per world"
+assert app._bs_path(s2) != path, "same address, different world, different file"
+assert app.backscroll_load(s2) == 0 and "Earlier text" not in s2.out.get("1.0", "end-1c"), "worlds are not mushed together"
+app.backscroll_save(s2)
+assert open(app._bs_path(s2), encoding="utf-8").read() == "fresh output\n" and open(path, encoding="utf-8").read().splitlines()[0] == "L201"
+# the world's own text comes back, above its new text, once, with a line saying so
+s2b = app.open_new_world("Second again"); pump(0.3)
+s2b.host, s2b.port, s2b.name = "h.example", 4000, "Second"        # (the same world again, as after a relaunch)
+app.session = s2b
+app._append([("newer\n", None)])
+assert app.backscroll_load(s2b) == 1
+t = s2b.out.get("1.0", "end-1c").splitlines()
+assert t[0] == "fresh output" and "Earlier text" in t[1] and "1 lines" in t[1] and t[2] == "newer", t
+assert app.backscroll_load(s2b) == 0, "once per world"
+app.close_world(s2b); pump(0.2)
+# a world that has been saved is keyed by its id: it keeps its text through a rename or a new address
+app.cfg["worlds"] = list(app.cfg["worlds"]) + [sc.clean_world({"name": "Saved One", "host": "h.example", "port": 4000, "tls": False, "note": ""})]
+app.cfg["worlds"][-1]["id"] = "abcdef0123456789"
+s2.name, s2.wid = "Saved One", ""
+nm = app._bs_name(s2); assert nm == "w_abcdef0123456789", nm
+s2.name, s2.host, s2.port = "Saved One (renamed)", "other.example", 1
+s2.wid = "abcdef0123456789"
+assert app._bs_name(s2) == nm, "an id does not change when the world is renamed or moved"
+app.cfg["worlds"] = [w for w in app.cfg["worlds"] if w.get("id") != "abcdef0123456789"]
+# the old file, named after the address, goes to the first world that asks and then is gone
+legacy = os.path.join(app._backscroll_dir(), "old.example_23.txt")
+open(legacy, "w", encoding="utf-8").write("legacy one\nlegacy two\n")
+s4 = app.open_new_world("Fourth"); pump(0.3)
+s4.host, s4.port = "old.example", 23
+app.session = s4
+assert app.backscroll_load(s4) == 2 and not os.path.exists(legacy)
+s5 = app.open_new_world("Fifth"); pump(0.3)
+s5.host, s5.port = "old.example", 23
+app.session = s5
+assert app.backscroll_load(s5) == 0, "only one world inherits it"
 s3 = app.open_new_world("Third"); pump(0.3)
 s3.host, s3.port = "else.example", 23
 app.session = s3
 assert app.backscroll_load(s3) == 0 and s3.out.get("1.0", "end-1c") == ""
 app.session = app._shown
 app.goto_world(0); pump(0.3)
-app.close_world(s3); pump(0.2); app.close_world(s2); pump(0.2)
-assert os.path.exists(os.path.join(app._backscroll_dir(), "h.example_4000.txt"))
+for x in (s5, s4, s3, s2):
+    app.close_world(x); pump(0.2)
+assert os.path.exists(path)
 
 # the timer saves, and starts again
 app.clear(); feed(50, "T")
@@ -156,7 +188,7 @@ app.set_dos_mode(False); pump(0.5)
 app.cfg["keep_lines"] = "1000"
 app.clear(); feed(400, "Z")
 app.on_quit()                                   # saves on the way out (and closes the window)
-assert os.path.exists(os.path.join(tmp, "backscroll", "h.example_4000.txt"))
+assert os.path.exists(os.path.join(tmp, "backscroll", os.path.basename(path)))
 root2 = tk.Tk()
 app2 = sc.App(root2)
 root2.geometry("1250x720+20+20")

@@ -2,8 +2,9 @@
 
 The length is an Option (5,000 to 100,000 lines, default 20,000; the oldest lines go first). Reloading is a separate,
 off-by-default option: when it is on, the last N lines of each world's text are saved as PLAIN TEXT (no colours) in a
-`backscroll` folder next to the settings, and put back above the new session's text the next time that address is
-connected to (or at start-up for the world on screen). N (kept) can never be more than the scrollback length. Loading
+`backscroll` folder next to the settings, one file per WORLD (a saved world by its id, so two worlds on the same address
+keep separate text), and put back above that world's new text the next time it is connected (or at start-up for the world on
+screen). N (kept) can never be more than the scrollback length. Loading
 a long history makes starting up slower, which is why it is a choice. Nothing is saved while the option is off, and
 switching it off deletes what was saved."""
 import os
@@ -59,7 +60,19 @@ def file_key(host, port):
 
 class BackscrollMixin:
     # ---- files -----------------------------------------------------------------------------------------------
+    def _bs_name(self, s):
+        """The file name (without .txt) for world s: a saved world by its id (which survives a rename or a new address); a
+        world that is not saved by its name and address."""
+        wid = self._world_id(s)
+        if wid:
+            return "w_" + re.sub(r"[^0-9a-f]", "", str(wid).lower())
+        return "n_" + file_key("%s@%s" % (self._world_name(s), s.host), s.port)
+
     def _bs_path(self, s):
+        return os.path.join(self._backscroll_dir(), self._bs_name(s) + ".txt")
+
+    def _bs_legacy_path(self, s):
+        """Before 1.2.1 the file was named after the address only."""
         return os.path.join(self._backscroll_dir(), file_key(s.host, s.port) + ".txt")
 
     def backscroll_save(self, s):
@@ -94,10 +107,18 @@ class BackscrollMixin:
         s._bs_done = True
         try:
             path = self._bs_path(s)
+            legacy = False
+            if not os.path.isfile(path):
+                path, legacy = self._bs_legacy_path(s), True        # the old per-address file: the first world to ask has it
             if not os.path.isfile(path) or os.path.getsize(path) > MAX_FILE_BYTES:
                 return 0
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read()
+            if legacy:
+                try:
+                    os.remove(path)                                 # (so a second world on that address does not get it too)
+                except OSError:
+                    pass
         except OSError:
             return 0
         lines = text.split("\n")
