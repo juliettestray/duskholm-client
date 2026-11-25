@@ -178,6 +178,17 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   named after the saved world with the same address, so the tabs say `Duskholm` rather than `World 1`, including when a
   second world is opened. Rules, buttons and clock settings that were set for "only this world" under the placeholder name
   move to the real name. A world with no matching saved world stays `World 1`, and a name you chose is never changed.
+- **Rename a world freely.** Every saved world has a permanent id (kept in the settings; you never see it). Triggers,
+  aliases and buttons set for "only this world", the world's pane layout and its game-clock settings are tied to that id,
+  not to the name, so renaming the world in the Worlds list (Edit) keeps all of them, renames its open tab, and updates the
+  name shown in the lists. Rules saved before this existed are tied to the matching saved world automatically the first
+  time the new version starts. A world that is not in the Worlds list has no id and goes by its name, as before. World
+  files (`.snc`) carry names only, never ids, so importing one never collides with your own.
+- **The AFK prompt.** The game's `[AFK] ` prompt has no line break after it, so it used to stick to the line before it and,
+  when you pressed Enter, to the game's reply, which made triggers and capture panes see (and copy) lines like
+  `Evelyn tells you ... [AFK] You tell Evelyn ...` as one. Pressing Enter at the prompt now ends that row, and the prompt
+  is left out of what triggers and panes see (the screen still shows it as the game sent it). Only `[AFK] ` with a space
+  after it counts, so an `[AFK]` mark in a list is untouched.
 - **Clone** (the *Clone* button, or `Ctrl+D` in the list, or `C` in the DOS look) in the Worlds, Triggers, Aliases and
   Buttons lists copies the selected entry right underneath it under a new name (`Name copy`, `Name copy 2` ...; an alias
   becomes `name2`, so it stays one word you can type). Then edit the copy. A cloned **trigger starts switched off**, so the
@@ -511,6 +522,8 @@ python tests/test_importers.py   # MUSHclient file import (pure): patterns, colo
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
+python tests/test_worldids.py     # world ids: rules, buttons, layouts and clock follow a renamed world; old settings migrate
+python tests/test_afk_prompt.py   # the AFK prompt: no gluing, clean captured lines, screen unchanged
 python tests/test_worldname.py    # a world nobody named takes its saved world's name; rules scoped to 'World 1' follow
 python tests/test_find.py         # Ctrl+F / Ctrl+Shift+F: from the bottom or top, wrapping, the box, /find, worlds, DOS look
 python tests/test_backscroll.py   # scrollback length, kept <= length, warning, save/load plain text, start-up, both looks

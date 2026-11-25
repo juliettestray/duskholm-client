@@ -232,7 +232,8 @@ def learned_from_time_line(g, month, day, h, mi, se, year, now):
 # ---------------------------------------------------------------- the app side
 class GameTimeMixin:
     def _gt_key(self, s=None):
-        return self._world_name(s or self._shown).lower()[:40]
+        s = s or self._shown
+        return (self._world_key(s) or self._world_name(s).lower())[:40]        # the world's id when it is a saved one
 
     def world_time(self, s=None):
         """The game-clock settings of a world (the one on screen by default), Duskholm's unless changed."""

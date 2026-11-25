@@ -81,6 +81,7 @@ import capture                     # capture a repeating log onto a pane without
 import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
 import findtext                    # Ctrl+F / Ctrl+Shift+F
+import worldids                    # stable world ids: what is tied to a world follows it when it is renamed
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
 DEFAULT_HOST = "duskholm.com"
@@ -93,6 +94,9 @@ APP_NAME = "Sanctuary"   # every user-visible mention of the client's name comes
 MIN_FONT, MAX_FONT = 7, 40
 RECONNECT_SECONDS = 30   # wait between automatic reconnect attempts
 QUIT_GRACE = 15          # a close this soon after the user sent "quit" is intentional
+# The game's AFK prompt is "[AFK] " with no line break after it, so it ends up glued to the end of whatever came before it
+# and (when you press Enter at it) to whatever comes next. It is never part of what a trigger or a pane should see.
+AFK_TAIL = re.compile(r"(?:\[AFK\][ \t]+)+$")
 PARTIAL_FLUSH_MS = 120   # an unfinished line (a prompt) is shown after this long without a newline
 
 # telnet
@@ -1064,6 +1068,7 @@ def clean_settings(cfg):
     if not isinstance(cfg.get("geometry"), str) or not re.match(r"^\d+x\d+([+-]-?\d+){0,2}$",
                                                                 cfg.get("geometry", "")):
         cfg.pop("geometry", None)
+    worldids.link(cfg)                          # rules, buttons, pane layouts and clock settings follow their world's id
     return cfg
 
 _COLOUR_NAMES = {"black": 0, "red": 1, "green": 2, "yellow": 3, "blue": 4, "magenta": 5, "cyan": 6, "white": 7}
@@ -1282,14 +1287,17 @@ def clean_world(w):
     note = "".join(ch for ch in note if ch.isprintable()).strip()[:80] if isinstance(note, str) else ""
     last = w.get("last")
     last = last if isinstance(last, int) and not isinstance(last, bool) and 0 <= last < 4102444800 else 0
-    return {"name": name, "host": host, "port": port, "tls": bool(w.get("tls")), "note": note, "last": last}
+    out = {"name": name, "host": host, "port": port, "tls": bool(w.get("tls")), "note": note, "last": last}
+    if worldids.valid_id(w.get("id")):
+        out["id"] = w["id"]                                # (a world that was never saved has none; saving gives it one)
+    return out
 
 
 def clean_worlds(lst):
     """Saved worlds from settings: sanitised, de-duplicated by name (case-insensitive), capped.
     A missing or non-list value gives the default list; an empty list stays empty."""
     if not isinstance(lst, list):
-        return copy.deepcopy(DEFAULT_WORLDS)
+        return worldids.assign_ids(copy.deepcopy(DEFAULT_WORLDS))
     out, seen = [], set()
     for w in lst[:400]:
         c = clean_world(w)
@@ -1298,7 +1306,7 @@ def clean_worlds(lst):
             out.append(c)
         if len(out) >= 200:
             break
-    return out
+    return worldids.assign_ids(out)
 
 
 def parse_dial_target(rest, worlds=(), default_port=None):
@@ -1570,6 +1578,7 @@ class Session:
 
     def __init__(self, name="", host="", port=0, tls=True):
         self.name, self.host, self.port, self.tls = name, host, port, tls
+        self.wid = ""                          # the id of the saved world this is (see worldids.py); '' if not a saved one
         self.unread = False                    # text arrived while another world was on screen
         self._view = None                      # scroll position when it was left (None: at the latest line)
         self.char_name = ""                    # your character here, learned from the game
@@ -1738,6 +1747,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         if getattr(self, "_cfg_owner", None) is not None:
             self._stash_world_panes(self._cfg_owner)      # pane settings are kept per world, automatically
         self.cfg["geometry"] = self.root.geometry()
+        worldids.link(self.cfg)                           # (a rule made or edited with just a world's name gets its id here)
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump(self.cfg, f, indent=2)
@@ -1850,6 +1860,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
     def add_session(self, name):
         """A new, empty world (not yet shown). Returns the Session."""
         s = Session(name, self.cfg["host"], self.cfg["port"], self.cfg["tls"])
+        s.wid = self._saved_id_for_name(name)
         prev, self.session = self.session, s
         try:
             s.q = queue.Queue()
@@ -3934,6 +3945,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         new = dict(lst[index])
         new["name"] = triggers.copy_name(new["name"], [w["name"] for w in lst], 40) if triggers is not None else new["name"] + " copy"
         new["last"] = 0
+        new.pop("id", None)                                    # a clone is a world of its own: it gets its own id
         lst.insert(index + 1, new)
         self._save_worlds(lst)
         return True, "Cloned as '%s'." % new["name"], index + 1
@@ -5611,7 +5623,29 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             n = 0
         return out
 
-    def _finish_line(self, key):
+    @staticmethod
+    def _trim_end(pieces, n):
+        """(the styled pieces without their last n characters, the pieces that were cut off, in order)."""
+        kept, cut = list(pieces), []
+        while kept and n > 0:
+            text, key = kept[-1]
+            if n >= len(text):
+                cut.insert(0, kept.pop())
+                n -= len(text)
+            else:
+                cut.insert(0, (text[len(text) - n:], key))
+                kept[-1] = (text[:len(text) - n], key)
+                n = 0
+        return kept, cut
+
+    def _afk_row_done(self):
+        """You pressed Enter at the game's AFK prompt (and your command was shown): that ends the row, so the line the prompt
+        was glued to is complete now, and what the game says next is a line of its own, not a continuation of it."""
+        if self._pending or not self._line_flushed or not AFK_TAIL.search(self._line_plain):
+            return
+        self._finish_line((None, None, False, False, False, False), newline=False)
+
+    def _finish_line(self, key, newline=True):
         pieces, plain = self._pending, self._line_plain
         flushed, hidden = self._line_flushed, self._line_hidden_len
         drawn, self._line_drawn = self._line_drawn, []
@@ -5635,26 +5669,40 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             plain = plain[hidden:]
             if not pieces:
                 return                                    # nothing but the hidden prompt: drop it and its newline
+        whole, tail_pieces = plain, []
+        m = AFK_TAIL.search(plain)
+        if m:                                             # the AFK prompt glued to the end: shown as it came, never matched or captured
+            pieces, tail_pieces = self._trim_end(pieces, len(plain) - m.start())
+            gone = (len(plain) - m.start()) - sum(len(t) for t, _k in tail_pieces)
+            if gone > 0:
+                drawn = self._trim_end(drawn, gone)[0]
+            plain = plain[:m.start()]
+        if flushed and drawn and pieces:                  # a prompt that was drawn alone, with this line's text glued after it
+            dtext = "".join(t for t, _k in drawn)
+            if AFK_TAIL.fullmatch(dtext) and plain.startswith(dtext):
+                plain, drawn = plain[len(dtext):], []
         if self._iface is not None and self.iface_capture(pieces, plain):
             return                                        # the game's item editor talking: gathered, not scrolled
-        if not plain.strip() and not flushed and getattr(self.out, "_gag_gap", False):
+        if not plain.strip() and not m and not flushed and getattr(self.out, "_gag_gap", False):
             self.out._gag_gap = False                     # the blank line that framed a hidden message: it would now double up
             self._log_raw("\n")
             return
         shown, effects = self._run_triggers(pieces, plain, flushed, drawn)
         if shown is None:                                 # hidden by a trigger
-            self._log_raw(plain + "\n")
+            self._log_raw(whole + "\n")
             # when what is on screen already ends in a blank line, the blank line the game put after the hidden
             # message would leave a gap where it was: that one blank line is dropped too
             self.out._gag_gap = (getattr(self.out, "_gag_gap", False) or
                                  self.out.get("end-3c", "end-1c") in ("\n\n", "\n") or self.out.get("1.0", "end-1c") == "")
         else:
             self.out._gag_gap = False
-            segs = [(t, self._tag_for(k)) for t, k in shown]
+            segs = [(t, self._tag_for(k)) for t, k in list(shown) + tail_pieces]
             if not flushed:
-                segs = self._stamp_seg(plain) + segs
-            segs.append(("\n", self._tag_for(key)))
-            self._append(segs, _internal=True)
+                segs = self._stamp_seg(whole) + segs
+            if newline:
+                segs.append(("\n", self._tag_for(key)))
+            if segs:
+                self._append(segs, _internal=True)
         self.sr_hear(plain, effects)
         for fx in effects:
             self._do_effect(fx)
@@ -5667,7 +5715,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             return pieces, []
         self._guard.begin_line()
         gag, effects, routes, once_routes = False, [], [], []
-        rules = [t for t in triggers.for_world(self.cfg["triggers"], self._world_name(self.session)) if t.get("when") != "sent"]
+        rules = [t for t in triggers.for_world(self.cfg["triggers"], *self._scope(self.session)) if t.get("when") != "sent"]
         for trig, m in triggers.match_line(plain, rules):
             for act in trig["actions"]:
                 kind = act["type"]
@@ -5906,19 +5954,27 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
 
         if self.connected or self.connecting:
             for s in self.sessions:                    # already open in a tab: go there
-                if s.name == w["name"] and (s.connected or s.connecting):
+                if (s.name == w["name"] or (w.get("id") and self._world_id(s) == w["id"])) and (s.connected or s.connecting):
                     self.switch_session(s)
                     return
             if self.open_new_world(w["name"]) is None:
                 return
         else:
-            self._rename_world(self.session, w["name"])
+            self._rename_world(self.session, w["name"], w.get("id"))
             self._refresh_world_ui()
         go()
 
     def _save_worlds(self, worlds):
+        """Store the saved worlds. A world keeps its id when it is renamed (the form passes it through), so open worlds
+        take the new name and everything tied to the world follows (see worldids.py)."""
         self.cfg["worlds"] = clean_worlds(worlds)
+        by_id = {w["id"]: w for w in self.cfg["worlds"]}
+        for s in self.sessions:
+            w = by_id.get(getattr(s, "wid", ""))
+            if w is not None and w["name"] != s.name:
+                self._rename_world(s, w["name"], w["id"])
         self._save_settings()
+        self._refresh_world_ui()
 
     def _note_world_called(self):
         """Remember when a saved world was last connected."""
@@ -6124,6 +6180,8 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
                 lst.append(w)
             else:
                 w["last"] = lst[index]["last"]
+                if lst[index].get("id"):
+                    w["id"] = lst[index]["id"]              # renaming keeps the world's id
                 lst[index] = w
             self._save_worlds(lst)
             refresh(len(lst) - 1 if index is None else index)
@@ -6186,6 +6244,8 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             lst.append(w)
         else:
             w["last"] = lst[index]["last"]
+            if lst[index].get("id"):
+                w["id"] = lst[index]["id"]                  # renaming keeps the world's id
             lst[index] = w
         self._save_worlds(lst)
         return True, "Saved '%s'." % w["name"]
@@ -6371,6 +6431,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
                 self.system("Line cut to %d characters (the game's limit is about 6000)." % MAX_LINE)
             if echo and self.cfg.get("show_echo", True):
                 self._append([(clean + "\n", "echo")])
+                self._afk_row_done()
             # clean is printable ASCII, so no IAC (0xFF) can occur and no escaping is needed
             if not self.conn.send(clean.encode("ascii") + b"\r\n"):
                 self.system("Send failed.")
@@ -6388,7 +6449,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         if triggers is None:
             return [line]
         alias, rest = triggers.find_alias_line(
-            line, triggers.for_world(self.cfg["alias_rules"], self._world_name(self.session)))
+            line, triggers.for_world(self.cfg["alias_rules"], *self._scope(self.session)))
         if alias is None:
             return [line]
         return triggers.expand_alias(alias, rest)

@@ -540,22 +540,32 @@ def _world_part(d):
     if d.get("global", True) is not False:
         return {}
     world = _clean_text(d.get("world"), 60)
-    return {"global": False, "world": world} if world else {}
+    if not world:
+        return {}
+    out = {"global": False, "world": world}
+    wid = d.get("world_id")
+    if isinstance(wid, str) and re.fullmatch(r"[0-9a-f]{8,32}", wid):       # the saved world's id (see worldids.py)
+        out["world_id"] = wid
+    return out
 
 
-def rule_applies(rule, world):
-    """True if a trigger/alias is global, or tied to `world` (compared without regard to case)."""
+def rule_applies(rule, world, world_id=""):
+    """True if a trigger/alias is global, or tied to this world. A rule tied by id applies to the world with that id
+    (whatever either is called now); otherwise the name is compared, without regard to case."""
     try:
         if rule.get("global", True) is not False:
             return True
+        rid = rule.get("world_id")
+        if rid and world_id:
+            return rid == world_id
         return str(rule.get("world", "")).strip().lower() == str(world or "").strip().lower()
     except Exception:
         return True
 
 
-def for_world(rules, world):
-    """The rules that apply in `world` (the same dict objects, in the same order)."""
-    return [r for r in rules if isinstance(r, dict) and rule_applies(r, world)]
+def for_world(rules, world, world_id=""):
+    """The rules that apply in a world (the same dict objects, in the same order)."""
+    return [r for r in rules if isinstance(r, dict) and rule_applies(r, world, world_id)]
 
 
 def _validate_trigger(d):

@@ -9,8 +9,9 @@ import tkinter.font as tkfont
 from tkinter import messagebox
 
 import dosui
+import worldids
 
-MAX_WORLDS = 12                     # Ctrl+F1 .. Ctrl+F12
+MAX_WORLDS = 12                    # Ctrl+F1 .. Ctrl+F12
 TAB_FONT_MAX = 13                   # the tab row never grows past this text size
 EMPTY_LAYOUT = {"regions": [], "min_main_cols": 80}
 
@@ -39,9 +40,29 @@ class WorldTabsMixin:
         self._world_label = None
 
     # ---- pane settings are kept per world ----------------------------------------------
-    @staticmethod
-    def _world_key(s):
-        return (s.name or "").strip().lower()
+    def _saved_id_for_name(self, name):
+        """The id of the saved world with this name ('' when there is none)."""
+        n = (name or "").strip().lower()
+        for w in self.cfg.get("worlds", []):
+            if n and w["name"].strip().lower() == n:
+                return w.get("id", "")
+        return ""
+
+    def _world_id(self, s):
+        """The id of the saved world this world is (kept when the saved world is renamed); '' for one that is not saved."""
+        wid = getattr(s, "wid", "")
+        if wid and any(w.get("id") == wid for w in self.cfg.get("worlds", [])):
+            return wid
+        s.wid = self._saved_id_for_name(s.name)
+        return s.wid
+
+    def _scope(self, s):
+        """(name, id) for the rules that apply in world s (see triggers.for_world)."""
+        return self._world_name(s), self._world_id(s)
+
+    def _world_key(self, s):
+        """What per-world tables (pane layouts, clock settings) are keyed by: the id of a saved world, else its name."""
+        return worldids.key_for(self._world_id(s), s.name)
 
     def _stash_world_panes(self, s):
         """The current pane settings belong to world `s`: remember them under its name."""
@@ -84,25 +105,25 @@ class WorldTabsMixin:
             self._load_world_panes(shown)
             self._cfg_owner = shown
 
-    def _rename_world(self, s, name):
-        """A world that dials a saved one takes its name (and that name's remembered panes, if any)."""
+    def _rename_world(self, s, name, wid=None):
+        """A world that dials a saved one takes its name, its id (looked up by name when not given) and that world's
+        remembered panes, if any."""
         name = (name or "").strip()
-        if not name or name == s.name:
+        if not name or (name == s.name and wid is None):
             return
         old_key = self._world_key(s)
-        had = self.cfg.get("world_panes", {}).get(name.lower())
+        s.name = name
+        s.wid = wid if wid is not None else self._saved_id_for_name(name)
+        new_key = self._world_key(s)
         if s is self._shown:
+            had = self.cfg.get("world_panes", {}).get(new_key) if new_key != old_key else None
             if had is not None:
-                s.name = name
                 self._load_world_panes(s)
                 self._region_active = {}
                 self.schedule_layout(5)
             else:
-                s.name = name
                 self._stash_world_panes(s)
-        else:
-            s.name = name
-        if old_key != self._world_key(s) and old_key.startswith("world "):
+        if old_key != new_key and old_key.startswith("world "):
             self.cfg.get("world_panes", {}).pop(old_key, None)     # a placeholder name is not worth remembering
 
     def _auto_name_world(self, s):
@@ -123,27 +144,29 @@ class WorldTabsMixin:
         if any(o is not s and (o.name or "").strip().lower() == new.lower() for o in self.sessions):
             return False                                   # another open world already has that name
         old = self._world_name(s)
-        self._rename_world(s, new)
+        self._rename_world(s, new, cands[0].get("id", ""))
         s._auto_named = True
         if old.lower().startswith("world "):
-            self._move_world_scope(old, new)
+            self._move_world_scope(old, new, self._world_key(s))
         self._refresh_world_ui()
         return True
 
-    def _move_world_scope(self, old, new):
-        """Per-world rules, buttons and clock settings kept under a placeholder name now belong to `new`."""
-        o, n = old.strip().lower(), new.strip().lower()
+    def _move_world_scope(self, old, new, new_key):
+        """Per-world rules, buttons and clock settings kept under a placeholder name now belong to `new`
+        (rules get the world's id from worldids.link when the settings are saved)."""
+        o = old.strip().lower()
         for key in ("triggers", "alias_rules", "buttons"):
             for r in self.cfg.get(key, []):
                 if r.get("global") is False and (r.get("world") or "").strip().lower() == o:
                     clash = key == "buttons" and any(
-                        x is not r and x.get("global") is False and (x.get("world") or "").strip().lower() == n
+                        x is not r and x.get("global") is False and (x.get("world") or "").strip().lower() == new.strip().lower()
                         and x["name"].lower() == r["name"].lower() for x in self.cfg[key])
                     if not clash:
                         r["world"] = new
+                        r.pop("world_id", None)
         wt = self.cfg.get("world_time")
-        if isinstance(wt, dict) and o in wt and n not in wt:
-            wt[n] = wt.pop(o)
+        if isinstance(wt, dict) and o in wt and new_key not in wt:
+            wt[new_key] = wt.pop(o)
         self._save_settings()
 
     # ---- which world is on screen --------------------------------------------------

@@ -175,7 +175,7 @@ class SentMixin:
         import triggers
         if not self.cfg.get("triggers"):
             return
-        rules = [t for t in triggers.for_world(self.cfg["triggers"], self._world_name(self.session))
+        rules = [t for t in triggers.for_world(self.cfg["triggers"], *self._scope(self.session))
                  if t.get("when") == "sent" and t.get("enabled", True)]
         if not rules:
             return

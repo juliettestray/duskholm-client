@@ -70,7 +70,7 @@ class ButtonsMixin:
     # ---- what shows -------------------------------------------------------------------------------------------------
     def buttons_here(self, enabled_only=True):
         """The buttons that apply in the world on screen, in order."""
-        rules = triggers.for_world(self.cfg.get("buttons", []), self._world_name(self._shown))
+        rules = triggers.for_world(self.cfg.get("buttons", []), *self._scope(self._shown))
         return [b for b in rules if b["enabled"] or not enabled_only]
 
     def _build_buttonbar(self):
@@ -223,7 +223,7 @@ class ButtonsMixin:
                 return None, "%s is used for %s." % (shown, extras.HOTKEYS[action][0])
         for i, other in enumerate(self.cfg.get("buttons", [])):
             if i != exclude and other.get("key") and extras.parse_hotkey(other["key"])[0] == seq \
-                    and triggers.rule_applies(other, self._world_name(self._shown)):
+                    and triggers.rule_applies(other, *self._scope(self._shown)):
                 return None, "%s already runs the button '%s'." % (shown, other["name"])
         return shown, None
 
@@ -310,7 +310,7 @@ class ButtonsMixin:
 
     def _find_button(self, name):
         want = " ".join((name or "").split()).lower()
-        here = triggers.for_world(self.cfg.get("buttons", []), self._world_name(self._shown))
+        here = triggers.for_world(self.cfg.get("buttons", []), *self._scope(self._shown))
         for b in here:
             if b["name"].lower() == want:
                 return self.cfg["buttons"].index(b), b

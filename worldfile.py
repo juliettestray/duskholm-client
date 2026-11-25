@@ -19,11 +19,15 @@ def build(cfg, world, parts):
     """The bundle (a dict) for `world` (a cleaned world dict) with the chosen parts of cfg."""
     b = {"format": FORMAT, "version": VERSION, "world": dict(world)}
     b["world"].pop("last", None)
+    b["world"].pop("id", None)                              # ids belong to one person's settings, not to the file
     parts = set(parts or ())
+
+    def plain(rules):
+        return [{k: v for k, v in r.items() if k != "world_id"} if isinstance(r, dict) else r for r in rules]
     if "triggers" in parts:
-        b["triggers"] = list(cfg.get("triggers", []))
+        b["triggers"] = plain(cfg.get("triggers", []))
     if "aliases" in parts:
-        b["alias_rules"] = list(cfg.get("alias_rules", []))
+        b["alias_rules"] = plain(cfg.get("alias_rules", []))
     if "panes" in parts:
         b["panes"] = list(cfg.get("panes", []))
         b["layout"] = cfg.get("layout")
@@ -66,6 +70,8 @@ def merge(cfg, bundle, tools):
     validate_gradients, validate_designs. Returns a list of sentences telling what happened."""
     said = []
     w = tools["clean_world"](bundle.get("world"))
+    if w is not None:
+        w.pop("id", None)                                   # a new world here: it gets an id of its own
     if w is None:
         said.append("The file's world entry is not usable, so no world was added.")
     else:
@@ -85,6 +91,7 @@ def merge(cfg, bundle, tools):
             t = tools["validate_trigger"](raw)
             if t is None or (t["name"].lower(), t.get("pattern")) in have or len(cfg["triggers"]) >= MAX_TRIGGERS:
                 continue
+            t.pop("world_id", None)                         # tied by name here; the world's id is linked when saved
             if _sends(t):
                 t["enabled"] = False
                 off += 1
@@ -104,6 +111,7 @@ def merge(cfg, bundle, tools):
             a = tools["validate_alias"](raw)
             if a is None or a["name"].lower() in have or len(cfg["alias_rules"]) >= MAX_ALIASES:
                 continue
+            a.pop("world_id", None)
             a["enabled"] = False
             cfg["alias_rules"] = list(cfg["alias_rules"]) + [a]
             have.add(a["name"].lower())
