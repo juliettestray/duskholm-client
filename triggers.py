@@ -517,11 +517,19 @@ def _clean_action(a):
         pane = _clean_text(a.get("pane"), MAX_PANE)
         gag = a.get("gag", False)
         once = a.get("once", False)
-        if pane is None or not isinstance(gag, bool) or not isinstance(once, bool):
+        mine = a.get("mine", False)
+        fmt = a.get("format")
+        if pane is None or not isinstance(gag, bool) or not isinstance(once, bool) or not isinstance(mine, bool):
             return None
         out = {"type": "route", "pane": pane, "gag": gag}
         if once:
             out["once"] = True               # skip a line this pane was already given (a log the game shows again and again)
+        if mine:
+            out["mine"] = True               # my own side of a conversation: only while the pane's "show what I send" is on
+        if fmt is not None:
+            fmt = _clean_text(fmt, MAX_TEXT)  # what the pane gets instead of the line itself: %0-%9 captures, {time}, {name}
+            if fmt is not None:
+                out["format"] = fmt
         return out
     return None
 
@@ -583,6 +591,8 @@ def _validate_trigger(d):
     out = {"name": name, "enabled": _bool(d.get("enabled", True), False), "mode": mode,
            "pattern": pat, "ignore_case": ic, "priority": prio,
            "stop": _bool(d.get("stop", False), False), "actions": acts}
+    if d.get("when") == "sent":
+        out["when"] = "sent"                 # matched against the commands I send, not against what the game shows
     out.update(_world_part(d))
     return out, ""
 

@@ -190,6 +190,15 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   comes along with it, two word-for-word identical texts in the same minute are both kept (and not doubled on the
   next look), and clearing the pane makes the next look fill it again. It is a route action with the box *Skip lines it
   already has* (`once`), so any log the game repeats can be captured the same way.
+  **Your own side:** the game answers a text you send with just "Sent.", so *Capture my texts to a pane* matches the
+  command as you type it (a trigger with *Matches the commands I send, not what the game shows*: it sees what actually
+  goes out, so an alias, a button or a pop-out window's input bar counts too, and never a password) and puts
+  `[Nov 24 18:33]You > Mara: yes, after eight` in the Phone pane, stamped the way the game stamps. Such a rule's
+  *Pane line* box sets what the pane gets (`%1`-`%9`, `{time}`, `{name}`). Every pane has a **Show what I send**
+  switch (the pop-out window's *Show mine* box, the right-click menu on its tab, or `/panesent <pane> [on|off]`, remembered
+  per pane and world): rules marked *My own side* only run while it is on, which includes *Capture your own tells to a
+  pane*, so tells, texts and the rest all turn on and off the same way, and what others send you is never affected. `text history`
+  prints both sides with the game's own names, so those lines can repeat what was shown for what you sent.
   Each pane area has a small fold button (`-`); `Alt+1`..`9` fold away or bring back the area
   holding that pane and `Alt+0` all of them. Folded panes keep collecting; the bar says
   `Unread: OOC*3`. In the DOS look everything sits in one double-line frame whose joins match.
@@ -464,6 +473,7 @@ python tests/test_custom.py       # the customize form's commands and the design
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
 python tests/test_buttons.py      # buttons: bar, hotkeys, per-world scope, docking, manager, both looks

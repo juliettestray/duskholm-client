@@ -1101,6 +1101,10 @@ def trigger_from_values(v):
         route = {"type": "route", "pane": str(v["pane"]).strip(), "gag": bool(v.get("pane_gag"))}
         if v.get("pane_once"):
             route["once"] = True
+        if v.get("pane_mine"):
+            route["mine"] = True
+        if str(v.get("pane_format", "")).strip():
+            route["format"] = str(v["pane_format"]).strip()
         actions.append(route)
     if v.get("beep"):
         actions.append({"type": "beep"})
@@ -1119,6 +1123,8 @@ def trigger_from_values(v):
             "mode": "regex" if v.get("regex") else "plain", "pattern": str(v.get("pattern", "")),
             "ignore_case": bool(v.get("ignore_case", True)), "priority": prio, "stop": bool(v.get("stop")),
             "actions": actions}
+    if v.get("sent"):
+        trig["when"] = "sent"
     if not v.get("glob", True) and v.get("world"):
         trig["global"], trig["world"] = False, str(v["world"])
     ok_trig = triggers.validate_trigger(trig)
@@ -1148,12 +1154,16 @@ _PRESET_DEFS = [
     {"name": "Capture tells to a pane", "mode": "plain", "pattern": "* tells you *", "priority": 0,
      "actions": [{"type": "route", "pane": "Tells"}]},
     {"name": "Capture your own tells to a pane", "mode": "plain", "pattern": "^You tell * '*", "priority": 0,
-     "actions": [{"type": "route", "pane": "Tells"}]},
+     "actions": [{"type": "route", "pane": "Tells", "mine": True}]},
     {"name": "Capture Guide / Newbie to a pane", "mode": "plain", "pattern": "^[Guide]*", "priority": 0,
      "actions": [{"type": "route", "pane": "Guide"}]},
     {"name": "Capture Newbie to a pane", "mode": "plain", "pattern": "^[Newbie]*", "priority": 0,
      "actions": [{"type": "route", "pane": "Guide"}]},
     # a phone shows its whole message log every time you look at it, each message with its own date and time
+    # the game only answers "Sent." to a text, so my side is matched as I type it (and shown like the others, with the time)
+    {"name": "Capture my texts to a pane", "mode": "regex", "when": "sent", "ignore_case": True, "priority": 0,
+     "pattern": "^text (?!history |clear)(@?\\w+) (.+)$",
+     "actions": [{"type": "route", "pane": "Phone", "mine": True, "format": "[{time}]You > %1: %2"}]},
     {"name": "Capture phone texts (no repeats)", "mode": "regex", "ignore_case": False, "priority": 0,
      "pattern": "^\\[[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}\\]",
      "actions": [{"type": "route", "pane": "Phone", "once": True}]},
@@ -1171,13 +1181,13 @@ def values_from_trigger(t):
     """The editors' simple values for an existing trigger (None for a new one)."""
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
          "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "every": False, "hide": False, "send": "",
-         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "pane_once": False, "status": "",
+         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "pane_once": False, "pane_mine": False, "pane_format": "", "sent": False, "status": "",
          "speak": "", "speak_int": False, "silence": False, "glob": True, "world": ""}
     if not t:
         return v
     v.update(name=t["name"], enabled=t["enabled"], regex=t["mode"] == "regex", pattern=t["pattern"],
              ignore_case=t["ignore_case"], priority=str(t["priority"]), stop=t["stop"],
-             glob=t.get("global", True) is not False, world=t.get("world", ""))
+             glob=t.get("global", True) is not False, world=t.get("world", ""), sent=t.get("when") == "sent")
     for a in t["actions"]:
         k = a["type"]
         if k == "highlight":
@@ -1198,7 +1208,8 @@ def values_from_trigger(t):
         elif k == "silence":
             v["silence"] = True
         elif k == "route":
-            v.update(pane=a["pane"], pane_gag=bool(a.get("gag")), pane_once=bool(a.get("once")))
+            v.update(pane=a["pane"], pane_gag=bool(a.get("gag")), pane_once=bool(a.get("once")),
+                     pane_mine=bool(a.get("mine")), pane_format=a.get("format", ""))
         else:
             v["keep"].append(a)
     return v
@@ -1577,7 +1588,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -3017,6 +3028,7 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
                 lbl.bind("<ButtonPress-1>", lambda e, k=key: self._tab_press(k, e))       # a click selects it; dragging it
                 lbl.bind("<B1-Motion>", lambda e, k=key: self._tab_motion(k, e))          # out of the area tears it off
                 lbl.bind("<ButtonRelease-1>", lambda e, k=key: self._tab_release(k, e))
+                lbl.bind("<Button-3>", lambda e, k=key: self._pane_menu(e, k))
                 ui["labels"][key] = lbl
         if "hide" not in ui:
             hb = tk.Label(ui["frame"], text=" \u25bc " if not self.dos else " - ", padx=2, cursor="hand2")
@@ -3995,9 +4007,9 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
         win.title("Edit trigger" if existing else "Add trigger")
         win.transient(parent)
         v0 = values_from_trigger(existing)
-        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "status", "speak")}
+        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "pane_format", "status", "speak")}
         bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole", "every",
-                                                           "hide", "echo", "beep", "pane_gag", "pane_once", "speak_int", "silence",
+                                                           "hide", "echo", "beep", "pane_gag", "pane_once", "pane_mine", "sent", "speak_int", "silence",
                                                            "glob")}
         r = 0
 
@@ -4013,6 +4025,9 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
         tk.Checkbutton(mode, text="Regular expression  (plain: * is a wildcard)", variable=bv["regex"]).pack(side="left")
         tk.Checkbutton(mode, text="Ignore case", variable=bv["ignore_case"]).pack(side="left", padx=10)
         row("Match", mode)
+        sent = tk.Checkbutton(win, text="Matches the commands I send, not what the game shows (for capturing my side)",
+                              variable=bv["sent"])
+        row("", sent)
         opts = tk.Frame(win)
         tk.Checkbutton(opts, text="Enabled", variable=bv["enabled"]).pack(side="left")
         tk.Checkbutton(opts, text="Stop other triggers", variable=bv["stop"]).pack(side="left", padx=10)
@@ -4040,6 +4055,10 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
         tk.Checkbutton(cap, text="Also hide from the main window", variable=bv["pane_gag"]).pack(side="left", padx=8)
         tk.Checkbutton(cap, text="Skip lines it already has", variable=bv["pane_once"]).pack(side="left", padx=8)
         row("Send to pane", cap)
+        fmt = tk.Frame(win)
+        tk.Entry(fmt, textvariable=sv["pane_format"], width=40).pack(side="left")
+        tk.Checkbutton(fmt, text="My own side (the pane's \"show what I send\" switch)", variable=bv["pane_mine"]).pack(side="left", padx=8)
+        row("Pane line", fmt)
         row("Client note", tk.Entry(win, textvariable=sv["note"], width=64))
         row("Status line", tk.Entry(win, textvariable=sv["status"], width=64))
         spk = tk.Frame(win)
@@ -4233,7 +4252,8 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
         c = lambda k, label: {"key": k, "label": label, "type": "check", "value": bool(values[k])}
         if page == 1:
             fields = [t("name", "Name", 30), t("pattern", "Pattern", 46), c("regex", "Regular expression"),
-                      c("ignore_case", "Ignore case"), c("enabled", "Enabled"), c("glob", "Global (all worlds)"),
+                      c("ignore_case", "Ignore case"), c("sent", "Matches what I send, not game text"),
+                      c("enabled", "Enabled"), c("glob", "Global (all worlds)"),
                       c("stop", "Stop other triggers"), t("priority", "Priority", 6), t("sample", "Test line", 46)]
             buttons = [("Actions >", "next"), ("Test", "test"), ("Cancel", "cancel")]
             title = "Trigger: match"
@@ -4245,6 +4265,7 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
                       t("send", "Send command", 40), c("echo", "Show sent command"), c("beep", "Beep"),
                       t("pane", "Send to pane", 24), c("pane_gag", "...and hide from main window"),
                       c("pane_once", "...skip lines it already has"),
+                      t("pane_format", "Pane line", 40), c("pane_mine", "...it is my own side"),
                       t("note", "Client note", 40), t("status", "Status line text", 40)]
             buttons = [("Save", "save"), ("< Back", "back"), ("Cancel", "cancel")]
             title = "Trigger: actions"
@@ -5562,7 +5583,8 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
             return pieces, []
         self._guard.begin_line()
         gag, effects, routes, once_routes = False, [], [], []
-        for trig, m in triggers.match_line(plain, triggers.for_world(self.cfg["triggers"], self._world_name(self.session))):
+        rules = [t for t in triggers.for_world(self.cfg["triggers"], self._world_name(self.session)) if t.get("when") != "sent"]
+        for trig, m in triggers.match_line(plain, rules):
             for act in trig["actions"]:
                 kind = act["type"]
                 if kind == "highlight" and not flushed:
@@ -5577,6 +5599,8 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
                 elif kind == "gag":
                     gag = True
                 elif kind == "route":
+                    if act.get("mine") and not self._pane_shows_mine(act["pane"]):
+                        continue                                  # my own side, and this pane is not showing it
                     (once_routes if act.get("once") else routes).append(act["pane"])
                     gag = gag or bool(act.get("gag"))        # copy by default; "hide from main" is per rule
                 elif kind == "send":
@@ -6248,6 +6272,8 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
             if not self.conn.send(clean.encode("ascii") + b"\r\n"):
                 self.system("Send failed.")
                 return
+            if not secret:
+                self._capture_sent(clean)
         self.last_send = time.time()
         if self.cfg.get("scroll_on_send", True) and not secret:
             self.out.see("end")
@@ -6290,6 +6316,7 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
                 or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
                 or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg) \
                 or self._stamps_command(cmd, arg) or self._import_command(cmd, arg) or self._buttons_command(cmd, arg) \
+                or self._panesent_command(cmd, arg) \
                 or self._popout_command(cmd, arg):
             return
         if cmd == "export":

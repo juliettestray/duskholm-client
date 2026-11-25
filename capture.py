@@ -130,3 +130,90 @@ class CaptureMixin:
                 self.root.after_cancel(st["job"])
             except Exception:
                 pass
+
+
+# ---- my own side of a conversation: shown in the pane when the pane's "show what I send" switch is on -------------------------------
+MINE_STYLE = (14, None, False, False, False, False)        # bright cyan, like the commands you send
+
+
+class SentMixin:
+    def _pane_shows_mine(self, pane):
+        """Is the pane showing my own side? Yes unless it was switched off (a pane nobody has made yet shows it)."""
+        def look():
+            d = self._find_pane_def(pane)
+            return not (d is not None and d.get("show_sent") is False)
+        return self._in_world_cfg(look)
+
+    def set_pane_sent(self, name, on):
+        """The pane's "show what I send" switch (remembered with the pane)."""
+        d = self._find_pane_def(name)
+        if d is None:
+            return False
+        if on:
+            d.pop("show_sent", None)
+        else:
+            d["show_sent"] = False
+        pane = self._panes.get(d["name"].lower()) or self._panes.get(str(name).strip().lower())
+        view = pane.get("popout") if pane else None
+        if view and view.get("mine_var") is not None:
+            view["mine_var"].set(bool(on))
+        self._save_settings()
+        return True
+
+    def _game_stamp(self):
+        """The time the way the game stamps a text, 'Nov 24 18:31' (the day is padded with a space), in the world's own clock."""
+        import gametime
+        try:
+            dt = gametime.local_dt(self.world_time(self.session), time.time())
+            return "%s %2d %02d:%02d" % (dt.strftime("%b"), dt.day, dt.hour, dt.minute)
+        except Exception:
+            t = time.localtime()
+            return time.strftime("%b", t) + " %2d %02d:%02d" % (t.tm_mday, t.tm_hour, t.tm_min)
+
+    def _capture_sent(self, line):
+        """A command was just sent: rules that match what I send route their own side to a pane."""
+        import triggers
+        if not self.cfg.get("triggers"):
+            return
+        rules = [t for t in triggers.for_world(self.cfg["triggers"], self._world_name(self.session))
+                 if t.get("when") == "sent" and t.get("enabled", True)]
+        if not rules:
+            return
+        for trig, m in triggers.match_line(line, rules):
+            for act in trig["actions"]:
+                if act["type"] != "route":
+                    continue
+                if not self._pane_shows_mine(act["pane"]):
+                    continue
+                text = triggers.expand(act.get("format") or "%0", m["captures"])
+                text = text.replace("{time}", self._game_stamp()).replace("{name}", self._char_name() or "You")
+                self.pane_append(act["pane"], [(text, MINE_STYLE)])
+
+    def _panesent_command(self, cmd, arg):
+        """/panesent <pane> [on|off]: whether a pane shows what I send (no on/off: flip it)."""
+        if cmd != "panesent":
+            return False
+        words = (arg or "").split()
+        d = self._find_pane_def(words[0]) if words else None
+        if d is None:
+            self.system("Say which pane: /panesent <pane> [on|off]." if not words else "No pane called '%s'." % words[0])
+            return True
+        now = d.get("show_sent") is not False
+        want = (words[1].lower() in ("on", "yes", "1")) if len(words) > 1 and words[1].lower() in (
+            "on", "off", "yes", "no", "1", "0") else (not now)
+        self.set_pane_sent(d["name"], want)
+        self.system("%s shows what I send: %s." % (d["name"], "on" if want else "off"))
+        return True
+
+    def _pane_menu(self, event, key):
+        """Right-click on a pane's tab."""
+        import tkinter as tk
+        d = self._find_pane_def(key)
+        if d is None:
+            return
+        m = tk.Menu(self.root, tearoff=0)
+        var = tk.BooleanVar(value=d.get("show_sent") is not False)
+        m.add_checkbutton(label="Show what I send", variable=var, command=lambda: self.set_pane_sent(key, var.get()))
+        m.add_command(label="Pop out", command=lambda: self.pop_out_pane(key))
+        m.add_command(label="Clear", command=lambda: self.pane_clear(key))
+        self._popup_menu(m, event.x_root, event.y_root)

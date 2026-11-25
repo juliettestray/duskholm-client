@@ -62,6 +62,8 @@ def validate_pane(d):
         'max_lines': _clamp_int(d.get('max_lines'), 100, 20000, 2000),
         'timestamps': ts if isinstance(ts, bool) else False,
     }
+    if d.get('show_sent') is False:             # "show what I send" is on unless it was turned off
+        out['show_sent'] = False
     win = d.get('window')                       # where the pane's own window was, and whether it was out
     if isinstance(win, dict):
         w = {}

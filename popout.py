@@ -253,6 +253,9 @@ class PopOutMixin:
         inp_var = tk.BooleanVar(value=inp)
         tk.Checkbutton(bar, text="Input", variable=inp_var,
                        command=lambda: self.set_popout_input(key, inp_var.get())).pack(side="left", padx=(10, 3))
+        mine_var = tk.BooleanVar(value=d.get("show_sent") is not False)
+        tk.Checkbutton(bar, text="Show mine", variable=mine_var,
+                       command=lambda: self.set_pane_sent(key, mine_var.get())).pack(side="left", padx=(6, 3))
         try:
             win.attributes("-topmost", top)
         except tk.TclError:
@@ -276,7 +279,7 @@ class PopOutMixin:
         sb.configure(command=text.yview)
         text.configure(yscrollcommand=sb.set)
         view = {"key": key, "session": self.session, "win": win, "text": text, "sb": sb, "follow": True,
-                "settling": False, "unread": 0, "save_job": None, "top_var": top_var, "inp_var": inp_var, "inbar": inbar,
+                "settling": False, "unread": 0, "save_job": None, "top_var": top_var, "inp_var": inp_var, "mine_var": mine_var, "inbar": inbar,
                 "entry": entry, "pre": pre, "box": box, "prefix_var": prefix_var, "hist": [], "hist_pos": 0}
         pane["popout"] = view                                # (from here the text counts among the text areas)
         for w, role in ((win, "panel"), (bar, "panel"), (box, "frame"), (text, "text"), (sb, "scroll"), (inbar, "panel"),
