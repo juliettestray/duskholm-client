@@ -21,18 +21,18 @@ def pump(t=0.3):
 assert not any("walk" in p["name"].lower() for p in sc.trigger_presets()), "built in, not a preset"
 app.connected = True; app._online_since = time.time()
 app._on_data(b"Your credit walk string is now: strides boldly\n\r"); pump(0.3)
-assert app._notice_text == "Preview: Someone strides boldly in from the north", app._notice_text
+assert app._notice_text == "Walk: Someone strides boldly in from the right.", app._notice_text
 assert app.notice.cget("text") == app._notice_text
 app._on_data(b"Your ego form walk string is now: slinks\n\r"); pump(0.3)
-assert app._notice_text == "Preview: Someone slinks in from the north"
+assert app._notice_text == "Walk: Someone slinks in from the right."
 app._on_data(b"Your changeling form walk is now: stalks predatorily\n\r"); pump(0.3)
-assert app._notice_text == "Preview (changeling form): Someone stalks predatorily in from the north", app._notice_text
+assert app._notice_text == "Walk (changeling form): Someone stalks predatorily in from the right.", app._notice_text
 app._on_data(b"Your true form walk is now: strides\n\r"); pump(0.2)
-assert app._notice_text == "Preview (true form): Someone strides in from the north"
+assert app._notice_text == "Walk (true form): Someone strides in from the right."
 app._on_data(b"[350/350DF 0ST 0WN 0LG M:0 K:0 ()] Your manticore walk is now: prowls\n\r"); pump(0.2)
-assert app._notice_text == "Preview (manticore): Someone prowls in from the north", "even with a prompt stuck to the front"
+assert app._notice_text == "Walk (manticore): Someone prowls in from the right.", "even with a prompt stuck to the front"
 app._on_data(b"Your walk is fine\n\r"); pump(0.1)
-assert app._notice_text.startswith("Preview (manticore)"), "other lines do not change it"
+assert app._notice_text.startswith("Walk (manticore)"), "other lines do not change it"
 app.cfg["walk_preview"] = False; app.set_notice("")
 app._on_data(b"Your credit walk string is now: x\n\r"); pump(0.2)
 assert app._notice_text == "", "it can be switched off"
@@ -49,7 +49,7 @@ app.session.walk_text = ""; app.set_notice(""); assert not any("Someone" in x[0]
 app.set_dos_mode(False)
 # the walk stays up (no timeout), through other notices, look changes and switching worlds
 app._on_data(b"Your changeling form walk is now: stalks\n\r"); pump(0.2)
-want = "Preview (changeling form): Someone stalks in from the north"
+want = "Walk (changeling form): Someone stalks in from the right."
 assert app._notice_text == want and app._notice_until == 0.0 and app._notice_job is None, "no expiry"
 app.set_notice("Time's up: tea", 30); assert app._notice_text.startswith("Time's up")
 app.set_notice("", 0); assert app._notice_text == want, "a short notice gives way to it again"
@@ -59,21 +59,21 @@ first = app.session
 w2 = app.open_new_world("Two"); pump(0.3)
 assert app._notice_text == "", "another world has its own"
 app._on_data(b"[Walk        ] - Ywellia strides in from the right.\n\r"); pump(0.2)
-assert app._notice_text == "Preview: Ywellia strides in from the north", "read from the display command: " + app._notice_text
+assert app._notice_text == "Walk: Ywellia strides in from the right.", "read from the display command: " + app._notice_text
 app._on_data(b"[Name        ] - Ywellia\n\r[Intro       ] - a tall woman with long silver hair\n\r"); pump(0.2)
-assert app._notice_text == "Preview: Ywellia strides in from the north", app._notice_text
+assert app._notice_text == "Walk: Ywellia strides in from the right.", app._notice_text
 app._on_data(b"[Walk        ] - A tall woman with long silver hair glides gracefully in from the right.\n\r"
              b"[Intro       ] - a tall woman with long silver hair\n\r"); pump(0.3)
-assert app._notice_text == "Preview: Ywellia glides gracefully in from the north", "the long intro becomes your name: " + app._notice_text
+assert app._notice_text == "Walk: Ywellia glides gracefully in from the right.", "the long intro becomes your name: " + app._notice_text
 app.switch_session(first); pump(0.2)
 assert app._notice_text == want, "and the first world's walk is back"
 app.switch_session(w2); pump(0.2)
-assert app._notice_text.startswith("Preview: Ywellia glides")
+assert app._notice_text.startswith("Walk: Ywellia glides")
 app.close_world(w2); pump(0.2)
 assert app.session is first and app._notice_text == want
 # a walk set with no form named
 app._on_data(b"Your new walk is: ambles\n\r"); pump(0.2)
-assert app._notice_text == "Preview: Ywellia ambles in from the north" and app.session.form == "credit"
+assert app._notice_text == "Walk: Ywellia ambles in from the right." and app.session.form == "credit"
 # a new login clears it
 app._handle_event("connected", None); pump(0.2)
 assert app._notice_text == "" and not app.session.walks, "cleared on login"

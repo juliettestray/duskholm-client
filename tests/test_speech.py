@@ -84,9 +84,10 @@ b.close()
 fb = sp.FakeBackend(); s2 = sp.Speech(fb); s2.stop(); s2.set_backend(sp.NullBackend())
 assert ("stop",) in fb.events and ("close",) in fb.events
 try:
-    sp.JAWSBackend()
-except OSError:
-    pass
+    jb = sp.JAWSBackend()
+    jb.close()
+except OSError as e:
+    assert "JAWS" in str(e) and "pywin32" not in str(e), "no JAWS here: a plain message, never 'needs pywin32'"
 sp.NullBackend().speak("x"); sp.NullBackend().stop()
 
 # fuzz: never raises, never returns control characters

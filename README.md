@@ -291,7 +291,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   defenses.` and the rest) fill the DF gauge at once.
 - **Status line message.** A trigger can show a short message on the status line (*Status line*
   field). Separately, setting any walk (credit, ego form, changeling form, true form, ...) shows
-  `Preview: <your name> <walk> in from the north` on the status line (next to TLS in the DOS bar),
+  `Walk: <your name> <walk> in from the right.` on the status line (worded like the game's `display` command) (next to TLS in the DOS bar),
   so you can see how it will read. Options > Walk preview turns that off.
 - **Links.** `http(s)` links in the output (and in panes) are underlined and clickable, in both
   looks. Pictures (`.png .jpg .gif .webp .bmp`) open in a pane at the right, scaled
@@ -375,7 +375,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   (`OOC: ...`), links as "link example.com", emoji by name. It announces stun at 50/75/100, health
   falling below 50/25/10 percent, and when the move or attack timer is ready. It talks through NVDA
   when NVDA is running (it uses NVDA's controller library, found in NVDA's folder), through JAWS
-  when you choose it (needs the `pywin32` package), or otherwise through the Windows voice, which
+  when you choose it (`/sr voice jaws`; it uses JAWS's COM interface through PowerShell, so nothing
+  needs installing, or through `pywin32` if that happens to be installed), or otherwise through the Windows voice, which
   needs nothing installed. Speech runs on its own thread, so it can never freeze the window; a flood
   of lines is cut short with "N lines skipped".
   Keys (all changeable under `/hotkeys`): `Alt+Up` / `Alt+Down` step back and forward through recent

@@ -347,20 +347,53 @@ class NVDABackend(_Threaded):
         self._dll.nvdaController_speakText(ctypes.c_wchar_p(text))
 
 
+_JAWS_PS_PROBE = ("try { $j = New-Object -ComObject FreedomSci.JawsApi; "
+                  "if ($j) { 'ok' } } catch { 'no' }")
+_JAWS_PS_SCRIPT = (
+    "$j = New-Object -ComObject FreedomSci.JawsApi;"
+    "while (($l = [Console]::In.ReadLine()) -ne $null) {"
+    " if ($l -eq '<<STOP>>') { [void]$j.StopSpeech() }"
+    " elseif ($l.StartsWith('<<NOW>>')) { [void]$j.SayString($l.Substring(7), $true) }"
+    " else { [void]$j.SayString($l, $false) } }"
+)
+
+
 class JAWSBackend(_Threaded):
-    """JAWS, through its COM interface (needs the pywin32 package)."""
+    """JAWS, through its COM interface. With the pywin32 package it talks to JAWS directly; without it (as in the
+    packaged program) it uses a small PowerShell helper, so nothing needs installing either way."""
     name = "jaws"
 
     def __init__(self):
         _Threaded.__init__(self)
+        self._api = None
+        self._proc = None
+        self._ps = False
         try:
             import pythoncom          # noqa: F401
             import win32com.client    # noqa: F401
         except ImportError:
-            raise OSError("JAWS needs the pywin32 package")
-        self._api = None
+            if not sys.platform.startswith("win"):
+                raise OSError("JAWS is only on Windows")
+            self._ps = True
+            try:
+                r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _JAWS_PS_PROBE],
+                                   capture_output=True, text=True, timeout=15,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except (OSError, subprocess.SubprocessError):
+                raise OSError("JAWS could not be reached (PowerShell did not run)")
+            if "ok" not in (r.stdout or ""):
+                raise OSError("JAWS is not installed or not running")
 
     def _setup(self):
+        if self._ps:
+            try:
+                self._proc = subprocess.Popen(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command", _JAWS_PS_SCRIPT],
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), text=True, encoding="utf-8")
+            except (OSError, ValueError):
+                self._proc = None
+            return
         try:
             import pythoncom
             import win32com.client
@@ -370,12 +403,27 @@ class JAWSBackend(_Threaded):
             self._api = None
 
     def _do(self, kind, text, interrupt):
+        if self._ps:
+            if self._proc is None or self._proc.stdin is None:
+                return
+            line = "<<STOP>>" if kind == "stop" else ("<<NOW>>" if interrupt else "") + " ".join(text.split())
+            self._proc.stdin.write(line + "\n")
+            self._proc.stdin.flush()
+            return
         if self._api is None:
             return
         if kind == "stop":
             self._api.StopSpeech()
         else:
             self._api.SayString(text, bool(interrupt))
+
+    def _teardown(self):
+        try:
+            if self._proc:
+                self._proc.stdin.close()
+                self._proc.terminate()
+        except Exception:
+            pass
 
 
 _PS_SCRIPT = (

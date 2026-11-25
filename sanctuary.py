@@ -5715,14 +5715,14 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
                 s.form = label.lower()                     # the game says which form this walk belongs to
                 s.walks[s.form] = walk
                 form = "" if s.form in ("credit", "ego form", "ego") else " (%s)" % label
-                s.walk_text = "Preview%s: %s %s in from the north" % (form, who, walk)
+                s.walk_text = "Walk%s: %s %s in from the right." % (form, who, walk)
                 self.set_notice("", 0)
                 return
         if rest.startswith("[Walk"):
             m = self._DISPLAY_WALK_RE.match(rest)          # `display` states the walk you have right now
             if m:
                 self.session.walk_raw = m.group(1)         # "<intro> <walk>": shown as is until the Intro line follows
-                self.session.walk_text = "Preview: %s in from the north" % m.group(1)
+                self.session.walk_text = "Walk: %s in from the right." % m.group(1)
                 self.set_notice("", 0)
                 return
         if rest.startswith("[Intro") and self.session.walk_raw:
@@ -5731,7 +5731,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             if m and raw.lower().startswith(m.group(1).lower()) and len(raw) > len(m.group(1)):
                 # the intro can be long: show your name where it was, then just the walk
                 walk = raw[len(m.group(1)):].strip()
-                self.session.walk_text = "Preview: %s %s in from the north" % (self._char_name() or "Someone", walk)
+                self.session.walk_text = "Walk: %s %s in from the right." % (self._char_name() or "Someone", walk)
                 self.set_notice("", 0)
                 return
         if plain.startswith("The time is "):
