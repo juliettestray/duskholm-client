@@ -201,6 +201,7 @@ class EntryBoxMixin:
 
     def _pack_input(self):
         self.input.pack(fill="x", padx=(4, 8), ipady=2 if self.dos else 5)       # side padding keeps the end of a line clear
+        self._apply_keep_box()                                                   # (the 'Keep text' checkbox, if switched on)
 
     def _apply_entry_mode(self):
         """Show the growing box or the plain one, whichever the setting and the game's echo call for."""

@@ -671,6 +671,12 @@ class ExtrasMixin:
                 ok, msg = self.add_timer(m.group(1), m.group(2)) if m else (False, "Usage: /timer 10m [label]")
                 self.system(msg)
             return True
+        if cmd in ("changes", "whatsnew"):
+            self._whatsnew_command(arg)
+            return True
+        if cmd == "keep":
+            self._keep_command(arg)
+            return True
         if cmd == "moon":
             self.open_moon()
             return True

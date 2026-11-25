@@ -166,7 +166,7 @@ app.find_set_from("bottom")
 app.root.event_generate("<Control-f>"); pump(0.4)
 d = app._overlay
 labels = [f.get("label") for f in d._fields]
-assert d is not None and labels == ["Find", "Start from the top (off: from the bottom)", "Match case"], labels
+assert d is not None and labels == ["Find", "Start from the top (off: from the bottom)", "Match case", "Search panes"], labels
 d.close()
 d._on_result("find", {"term": "fish", "top": True}); pump(0.4)
 assert app.find_from() == "top" and hit() == (1, "fish"), (app.find_from(), hit())

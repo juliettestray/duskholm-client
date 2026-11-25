@@ -217,6 +217,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   works down. Both choices are remembered. Past the last match it says so and starts again from the far end. The match is
   shown in reverse colours and scrolled into view; the status line says what happened. In the DOS look the box is a
   dialog with a *Start from the top* tick. Both keys can be changed in the Hotkeys form.
+  **Search panes** (a tick beside *Match case*, off by default) makes Find look in the world's capture panes and pop-out
+  windows too, main window first, then each pane in turn; the status line says which pane a match is in and that pane
+  comes to the front. Left off, panes are not searched, so a line you also capture to a pane does not show up twice.
 - **Copy without my commands.** Right-click in the main text > *Copy without my commands*, or select and type
   `/copyplain`: the selection goes to the clipboard with the lines you typed (the commands the client echoed) left out.
   Ordinary `Ctrl+C` is unchanged and copies everything.
@@ -396,9 +399,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   This mode has only been exercised with a fake voice so far; feedback from people who use a
   screen reader every day is very welcome.
 - **World settings files** (File > Export / Import world settings, `/export`, `/import`): one
-  `.snc` file holds a world and, optionally, its triggers, aliases, pane layout, prompt formats,
-  gradients and designs. Importing is careful: triggers that send commands and all aliases arrive
-  switched off for you to check; nothing is overwritten.
+  `.snc` file holds a world and, optionally, its triggers, aliases, buttons, pane layout, prompt formats,
+  gradients and designs. The buttons that go out are the ones for every world and the ones tied to that world.
+  Importing is careful: triggers that send commands, all aliases and all buttons arrive switched off for you
+  to check (Alt+B for the buttons; a hotkey you already use stays with your own button); nothing is overwritten.
 - **Import from another client** (File > Import from another client..., or `/import file`). Reads a
   **MUSHclient** world (`.MCL`), plugin or trigger file and brings across its triggers and aliases. First it
   tells you in the output window what is in the file: what can be imported, what cannot and why, and what
@@ -426,6 +430,12 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   colour and prompt patterns, timers, keys, scripts and buttons. More clients (TinTin++) are planned.
 - **Hotkeys** (`/hotkeys`, Help menu): the Ctrl/Alt command keys can be changed (including the world keys
   and `Ctrl+A`, below); F-keys are fixed.
+- **Keep text after Enter** (for walking the same way many times: type `east` once, then just press Enter).
+  It is a toggle for a toggle, so the window stays clean: Options > *Show a 'Keep text' checkbox by the input
+  box* (off by default) puts a small **Keep text** checkbox at the right end of the input box; tick it with the
+  mouse (or Tab to it and press Space) and Enter sends what is in the box and leaves it there. Untick it, or turn
+  the option off, and Enter clears the box again. `/keep [on|off]` does the same from the keyboard (and in the
+  DOS look, which has no checkbox). A password is never kept.
 - **An entry box that grows as you type** (Options > Entry box grows to (lines): off, 2, 3, 5 or 8; off by
   default). The line wraps at the window edge and the box gets taller with it, up to the limit you chose, and goes
   back down when you send. **Shift+Enter** or **Ctrl+Enter** puts a line break in the box; Enter sends. A box with
@@ -452,6 +462,11 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 Settings live in `~/.sanctuary.json`.
 
 ## Updating, and making a release
+
+**What's new.** The first time you start after an update, a window lists what changed. If you skipped
+several versions it lists every one you missed, newest first, once. `/changes` shows this version's news again,
+`/changes all` every version, `/changes 1.1.4` that version and after; it is also in the Help menu. In the DOS
+look it is printed in the main text. A brand-new install shows nothing. The text lives in `changes.py`.
 
 **Updating.** `/update` (or Help > Check for updates) asks GitHub whether a newer release exists.
 It never runs by itself unless you switch on *Options > Check for updates when Sanctuary starts*,
@@ -536,6 +551,10 @@ python tests/test_colortools.py   # hex to xterm, gradients (fuzzed)
 python tests/test_custom.py       # the customize form's commands and the design book
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
+python tests/test_worldbuttons.py # buttons in .snc files: which go out, arriving switched off, the cap
+python tests/test_findpanes.py    # Find with 'Search panes': order, which pane, pop-outs
+python tests/test_keeptext.py     # the Keep text checkbox and /keep
+python tests/test_whatsnew.py     # what's new after an update: skipped versions, once, /changes
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords

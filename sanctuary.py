@@ -81,6 +81,7 @@ import capture                     # capture a repeating log onto a pane without
 import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
 import findtext                    # Ctrl+F / Ctrl+Shift+F
+import whatsnew                   # what changed since the version last shown
 import worldids                    # stable world ids: what is tied to a world follows it when it is renamed
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
@@ -950,6 +951,7 @@ EXTRA_BOOLS = [
     ("sr_alerts", True, "Screen reader: announce stun, health and ready timers", "Reader alerts", "T"),
     ("update_check", False, "Check for updates when Sanctuary starts", "Check for updates at start", "G"),
     ("walk_preview", True, "Preview my walk on the status line when I set it", "Walk preview", "P"),
+    ("keep_box", False, "Show a 'Keep text' checkbox by the input box", "Keep-text checkbox", "H"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
@@ -1014,6 +1016,9 @@ def clean_settings(cfg):
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
     cfg["find_from"] = "top" if cfg.get("find_from") == "top" else "bottom"
     cfg["find_case"] = cfg.get("find_case") is True
+    cfg["find_panes"] = cfg.get("find_panes") is True
+    cs = cfg.get("changes_seen")
+    cfg["changes_seen"] = cs if isinstance(cs, str) and re.fullmatch(r"[0-9.]{1,20}", cs) else ""
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
     us = cfg.get("update_skip")
     cfg["update_skip"] = us if isinstance(us, str) and re.fullmatch(r"[vV]?[0-9.]{1,20}", us) else ""
@@ -1054,7 +1059,7 @@ def clean_settings(cfg):
                              if isinstance(so, dict) else {})
     for k, default in (("tls", True), ("verify", True), ("bell", True), ("keepalive", True),
                        ("auto_reconnect", False), ("statbar", True), ("fullscreen", False),
-                       ("dos_autofit", True), ("dos_flourish", True), ("dos_fit", True)):
+                       ("dos_autofit", True), ("dos_flourish", True), ("dos_fit", True), ("keep_text", False)):
         if not isinstance(cfg.get(k), bool):
             cfg[k] = default
     for k, default, _l, _d, _h in EXTRA_BOOLS:
@@ -1612,7 +1617,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1719,6 +1724,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             self.root.after(400, lambda: self.set_screen_reader(True, announce=True))
         if self.cfg.get("update_check"):
             self.root.after(6000, lambda: self.check_for_updates(manual=False))
+        self.root.after(1500, self.maybe_show_whatsnew)         # after an update: what changed
 
     # ---- settings ----------------------------------------------------
     def _load_settings(self):
@@ -1736,6 +1742,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
+                self._had_settings = True                   # (not a brand-new install: see whatsnew.py)
                 cfg.update(loaded)
                 # from a version with one font for both looks: the DOS look starts from what you had
                 if "dos_font_family" not in loaded:
@@ -1963,8 +1970,12 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             cw = max(1, self.f_norm.measure("0"))
             if inner < 60:
                 return
-            k = max(8, (inner - self._IN_LEFT - self._IN_RIGHT) // cw)
-            right = max(self._IN_RIGHT, inner - self._IN_LEFT - k * cw)
+            chk = getattr(self, "_keep_chk", None)
+            if chk is not None and chk.winfo_manager() == "place":          # (its width follows the font size)
+                self._keep_room = chk.winfo_reqwidth() + 6
+            reserve = self._IN_RIGHT + getattr(self, "_keep_room", 0)      # the Keep text checkbox sits in this strip
+            k = max(8, (inner - self._IN_LEFT - reserve) // cw)
+            right = max(reserve, inner - self._IN_LEFT - k * cw)
             if (self._IN_LEFT, right) != getattr(self, "_in_pad", None):
                 self._in_pad = (self._IN_LEFT, right)
                 self.input.pack_configure(padx=(self._IN_LEFT, right))
@@ -2005,6 +2016,10 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         if role == "inbox":
             return dict(bg=th["input_bg"], highlightbackground=th["panel_edge"], highlightcolor=th["select"],
                         relief="flat" if flat else "sunken", borderwidth=0 if flat else 2)
+        if role == "inchk":
+            return dict(bg=th["input_bg"], fg=th["input_fg"], selectcolor=th["input_bg"],
+                        activebackground=th["input_bg"], activeforeground=th["input_fg"],
+                        highlightthickness=0, borderwidth=0, padx=2, pady=0)
         if role == "check":
             return dict(bg=th["panel"], fg=th["fg"], selectcolor=th["input_bg"],
                         activebackground=th["panel"], activeforeground=th["fg"])
@@ -2065,6 +2080,10 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
 
         self._inbox = self._reg(tk.Frame(self.root, highlightthickness=1), "inbox")
         self.input = self._reg(tk.Entry(self._inbox, font=self.f_norm, highlightthickness=0, borderwidth=0), "input")
+        self._keep_var = tk.BooleanVar(value=bool(self.cfg.get("keep_text")))
+        self._keep_chk = self._reg(tk.Checkbutton(self._inbox, text="Keep text", variable=self._keep_var,
+                                                  command=self._keep_clicked, anchor="e"), "inchk")
+        self._keep_chk.bind("<ButtonRelease-1>", lambda e: self.root.after_idle(self._refocus_input), add="+")
         self._inbox.bind("<Configure>", lambda e: self.root.after_idle(self._fit_input))
         self.input.bind("<FocusIn>", lambda e: self._inbox_focus(True), add="+")
         self.input.bind("<FocusOut>", lambda e: self._inbox_focus(False), add="+")
@@ -2159,7 +2178,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         ("verify", "keepalive", "auto_reconnect", "update_check"),
         ("links", "link_images", "emoji", "emoji_pics", "emoji_pics_dos", "connect_boxes", "hide_prompt",
          "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow"),
-        ("scroll_on_send", "show_echo", "custom_form"),
+        ("scroll_on_send", "show_echo", "keep_box", "custom_form"),
         ("bell", "bell_new"),
         ("log_echo", "scrollback_lines", "keep_backscroll", "keep_lines"),
         ("screen_reader", "sr_alerts", "sr_voice", "@sr_interval", "@sr_combat"),
@@ -2279,6 +2298,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         h.add_command(label="Help   F1", command=self.open_help)
         h.add_command(label="Hotkeys...", command=self.open_hotkeys)
         h.add_separator()
+        h.add_command(label="What's new...", command=self.open_whatsnew)
         h.add_command(label="Check for updates...", command=self.check_for_updates)
         h.add_command(label="About...   F12", command=self.open_about)
         m.add_cascade(label="Help", menu=h)
@@ -3599,6 +3619,8 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             self._emoji_refresh()
         if key == "entry_grow":
             self._apply_entry_mode()
+        if key == "keep_box":
+            self._apply_keep_box()
         if key == "world_tabs":
             self._refresh_tabbar(True)
             self._refresh_world_label()
@@ -3672,6 +3694,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         ("/popout <pane>", "put a capture pane in a window of its own;  /dock <pane> brings it back;  /ontop <pane>;  /popinput <pane>"),
         ("/import [file]", "import triggers and aliases from a MUSHclient file (or a Sanctuary world file)"),
         ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
+        ("/keep [on|off]", "keep what you typed after Enter (needs 'Keep text checkbox' in Options)"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
         ("/gametime", "this world's game clock: zone, IC:OOC ratio (zone, ratio, set, reset)"),
         ("/emoji [words]", "an emoji picker (Alt+E); Windows' own panel cannot reach this box"),
@@ -3680,7 +3703,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         ("/moon  /notes", "the moon window; the notepad"),
         ("/hex ff8800", "nearest xterm colour;  /gradient [text]  /customize"),
         ("/export  /import", "world settings files (.snc)"),
-        ("/update", "check for a newer Sanctuary"),
+        ("/update", "check for a newer Sanctuary;  /changes [all]  what changed in this version (or in all)"),
         ("/sr on|off|help", "screen reader mode;  /hotkeys changes keys"),
         ("/log [file]  /clear", "logging; clear the screen"),
         ("//text", "send '/text' to the game"),
@@ -5965,9 +5988,64 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
                     return
 
     # ---- input -------------------------------------------------------
+    def keep_text_on(self):
+        """True when Enter should leave what was typed in the box: the checkbox has to be switched on in Options
+        AND ticked. (Never for a password.)"""
+        return bool(self.cfg.get("keep_box") and self.cfg.get("keep_text")) and not self.term.echo_off
+
+    def _apply_keep_box(self):
+        """Show the small 'Keep text' checkbox at the right end of the input box (only when Options asks for it, and not
+        in the DOS look, which has /keep instead), making room for it in the strip beside the typing area."""
+        chk = getattr(self, "_keep_chk", None)
+        if chk is None:
+            return
+        try:
+            if self.cfg.get("keep_box") and not self.dos:
+                self._keep_var.set(bool(self.cfg.get("keep_text")))
+                chk.configure(font=self.f_norm)
+                chk.update_idletasks()
+                self._keep_room = chk.winfo_reqwidth() + 6
+                chk.place(relx=1.0, x=-4, rely=0.5, anchor="e")
+                chk.lift()
+            else:
+                self._keep_room = 0
+                chk.place_forget()
+            self._in_pad = None
+            self.root.after_idle(self._fit_input)
+        except tk.TclError:
+            pass
+
+    def _keep_clicked(self):
+        self.cfg["keep_text"] = bool(self._keep_var.get())
+        self._save_settings()
+
+    def _refocus_input(self):
+        try:
+            self.input.focus_set()
+        except tk.TclError:
+            pass
+
+    def _keep_command(self, arg):
+        """/keep [on|off]: the same as the checkbox (and the only way to reach it in the DOS look)."""
+        if not self.cfg.get("keep_box"):
+            self.system("Keep text is not switched on: turn on 'Keep text checkbox' in Options first.")
+            return
+        a = arg.strip().lower()
+        new = (not self.cfg.get("keep_text")) if not a else (True if a in ("on", "yes", "1") else False if a in ("off", "no", "0") else None)
+        if new is None:
+            self.system("Usage: /keep [on|off]")
+            return
+        self.cfg["keep_text"] = new
+        self._keep_var.set(new)
+        self._save_settings()
+        self.input.delete(0, "end")                    # the '/keep' just typed is not something to keep
+        self.system("Keep text %s: Enter %s what you typed." % ("on" if new else "off", "leaves" if new else "clears"))
+
     def _on_enter(self, _e):
         text = self.input.get()
-        self.input.delete(0, "end")
+        keep = self.keep_text_on()
+        if not keep:
+            self.input.delete(0, "end")
         secret = self.term.echo_off
         if secret or "\n" not in text:
             self._submit_line(text, secret)
@@ -6150,7 +6228,8 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
     # ---- world settings files (.snc) -----------------------------------------------------
     def _world_tools(self):
         return {"clean_world": clean_world, "validate_trigger": triggers.validate_trigger,
-                "validate_alias": triggers.validate_alias, "validate_prompt": prompts.validate_profile,
+                "validate_alias": triggers.validate_alias, "validate_button": buttons.validate_button,
+                "max_buttons": buttons.MAX_BUTTONS, "validate_prompt": prompts.validate_profile,
                 "validate_panes": layout.validate_panes if layout else (lambda x: []),
                 "validate_layout": (lambda d, k=None: layout.validate_layout(d, known_panes=k)) if layout
                 else (lambda d, k=None: {"regions": [], "min_main_cols": 80}),
@@ -6211,7 +6290,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         return True, said or ["Nothing new in that file."]
 
     def open_export(self):
-        labels = {"triggers": "Triggers", "aliases": "Aliases", "panes": "Pane layout", "prompts": "Prompt formats",
+        labels = {"triggers": "Triggers", "aliases": "Aliases", "buttons": "Buttons", "panes": "Pane layout", "prompts": "Prompt formats",
                   "gradients": "Gradient patterns", "designs": "Design book"}
         if self.dos:
             fields = [{"key": "path", "label": "File", "type": "text", "value": self.default_export_path(), "width": 50}]

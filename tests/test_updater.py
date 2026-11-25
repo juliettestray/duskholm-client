@@ -28,10 +28,10 @@ for bad in (None, 5, [], {}, {"tag_name": 5}, {"tag_name": "latest"}):
         up.parse_release(bad); assert False, bad
     except up.UpdateError:
         pass
-r = up.parse_release({"tag_name": "v1.2.0", "name": "N", "body": "notes", "html_url": "https://github.com/x/y/releases/v1.2.0",
+r = up.parse_release({"tag_name": "v9.2.0", "name": "N", "body": "notes", "html_url": "https://github.com/x/y/releases/v9.2.0",
                       "assets": [{"name": "a.zip", "browser_download_url": "https://github.com/a", "size": 5, "digest": "sha256:" + sha.upper()},
                                  "junk", {"name": 5}, {"name": "b", "browser_download_url": "https://github.com/b", "size": True}]})
-assert r["version"] == (1, 2, 0) and len(r["assets"]) == 2 and r["assets"][0]["sha256"] == sha and r["assets"][1]["size"] == 0
+assert r["version"] == (9, 2, 0) and len(r["assets"]) == 2 and r["assets"][0]["sha256"] == sha and r["assets"][1]["size"] == 0
 for names in ([], ["readme.txt"], ["Sanctuary-1.0.0-win32.zip"], ["../Sanctuary-1.0.0-win64.zip"]):
     try:
         up.pick_assets({"assets": [{"name": n, "url": "u", "size": 0, "sha256": ""} for n in names]}); assert False, names
@@ -66,13 +66,13 @@ class Fake(http.server.BaseHTTPRequestHandler):
             if STATE.get("api_fail"):
                 return self._send(500, b"oops")
             z = STATE["zip"]
-            assets = [{"name": "Sanctuary-1.2.0-win64.zip", "browser_download_url": base + "/dl/zip", "size": len(z)}]
+            assets = [{"name": "Sanctuary-9.2.0-win64.zip", "browser_download_url": base + "/dl/zip", "size": len(z)}]
             if STATE.get("sumfile"):
-                assets.append({"name": "Sanctuary-1.2.0-win64.zip.sha256", "browser_download_url": base + "/dl/sum", "size": 100})
+                assets.append({"name": "Sanctuary-9.2.0-win64.zip.sha256", "browser_download_url": base + "/dl/sum", "size": 100})
             if STATE.get("digest"):
                 assets[0]["digest"] = "sha256:" + STATE["digest"]
-            body = json.dumps({"tag_name": STATE.get("tag", "v1.2.0"), "name": "Release", "body": "What is new: everything.",
-                               "html_url": "https://github.com/juliettestray/sanctuary/releases/tag/v1.2.0", "assets": assets})
+            body = json.dumps({"tag_name": STATE.get("tag", "v9.2.0"), "name": "Release", "body": "What is new: everything.",
+                               "html_url": "https://github.com/juliettestray/sanctuary/releases/tag/v9.2.0", "assets": assets})
             return self._send(200, body.encode(), "application/json")
         if self.path == "/dl/zip":
             if STATE.get("redirect"):
@@ -94,7 +94,7 @@ def setup(zipbytes, sumfile=True, digest=None, **kw):
     STATE.update(zip=zipbytes, **kw)
     good = hashlib.sha256(zipbytes).hexdigest()
     if sumfile:
-        STATE["sumfile"] = (sumfile if isinstance(sumfile, str) else good + "  Sanctuary-1.2.0-win64.zip\n")
+        STATE["sumfile"] = (sumfile if isinstance(sumfile, str) else good + "  Sanctuary-9.2.0-win64.zip\n")
     if digest:
         STATE["digest"] = digest
     return good
@@ -102,7 +102,7 @@ def setup(zipbytes, sumfile=True, digest=None, **kw):
 
 good = setup(make_zip(None))
 rel = up.fetch_latest(API, True)
-assert rel["tag"] == "v1.2.0" and up.is_newer(rel["tag"], "1.0.0") and rel["notes"].startswith("What is new")
+assert rel["tag"] == "v9.2.0" and up.is_newer(rel["tag"], "1.0.0") and rel["notes"].startswith("What is new")
 work = tempfile.mkdtemp()
 exe = up.prepare(rel, work, True)
 assert os.path.basename(exe) == "Sanctuary.new.exe" and open(exe, "rb").read(2) == b"MZ", "good download installs"
@@ -120,7 +120,7 @@ def fails(why, **kw):
     except up.UpdateError as e:
         return str(e)
 
-assert "checksum" in fails("wrong checksum", sumfile="%s  Sanctuary-1.2.0-win64.zip" % ("0" * 64))
+assert "checksum" in fails("wrong checksum", sumfile="%s  Sanctuary-9.2.0-win64.zip" % ("0" * 64))
 assert "does not publish a checksum" in fails("no checksum", sumfile=False)
 assert "checksum" in fails("garbage checksum file", sumfile="nonsense")
 assert "does not match" in fails("wrong digest field", sumfile=False, digest="1" * 64)
@@ -262,8 +262,8 @@ app.check_for_updates(manual=True); wait(lambda: "is available" in txt()); pump(
 tops = [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
 assert tops and tops[-1].title() == "Update available", "from source: offers the download page"
 tops[-1].destroy()
-app._upd_choice("page", up.fetch_latest(API, True)); assert opened == ["https://github.com/juliettestray/sanctuary/releases/tag/v1.2.0"]
-app._upd_choice("skip", {"tag": "v1.2.0", "page": ""}); assert app.cfg["update_skip"] == "v1.2.0"
+app._upd_choice("page", up.fetch_latest(API, True)); assert opened == ["https://github.com/juliettestray/sanctuary/releases/tag/v9.2.0"]
+app._upd_choice("skip", {"tag": "v9.2.0", "page": ""}); assert app.cfg["update_skip"] == "v9.2.0"
 before = txt().count("is available")
 app.check_for_updates(manual=False); wait(lambda: not app._upd_busy); pump(0.3)
 assert txt().count("is available") == before, "a skipped version is not mentioned by the quiet check"
@@ -298,7 +298,7 @@ app.check_for_updates(manual=True); wait(lambda: app._overlay_open()); pump(0.2)
 assert app._overlay_open(); app.dos_close_overlay()
 app.set_dos_mode(False); pump(0.3)
 assert sc.clean_settings({"host": "x", "update_skip": "<script>"})["update_skip"] == ""
-assert sc.clean_settings({"host": "x", "update_skip": "v1.2.0"})["update_skip"] == "v1.2.0"
+assert sc.clean_settings({"host": "x", "update_skip": "v9.2.0"})["update_skip"] == "v9.2.0"
 assert sc.clean_settings({"host": "x"})["update_check"] is False, "never checks by itself unless switched on"
 app._local("/update"); pump(0.2)
 

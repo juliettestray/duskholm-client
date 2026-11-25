@@ -1,18 +1,18 @@
 """World settings files (.snc): export a world's setup and import someone else's, safely.
 
-A file holds the world (name, host, port, TLS, note) and, optionally, the triggers, aliases, pane
+A file holds the world (name, host, port, TLS, note) and, optionally, the triggers, aliases, buttons, pane
 layout, custom prompt formats, gradients and designs that go with it. It is plain JSON. Importing
 never runs anything: every part is re-validated, and anything that could send commands to the game
-(triggers with a send action, aliases) arrives switched OFF for the person to look over."""
+(triggers with a send action, aliases, buttons) arrives switched OFF for the person to look over."""
 import json
 
-from triggers import MAX_TRIGGERS, MAX_ALIASES
+from triggers import MAX_TRIGGERS, MAX_ALIASES, rule_applies
 
 FORMAT = "sanctuary-world"
 VERSION = 1
 MAX_BYTES = 1_000_000
 EXT = ".snc"
-PARTS = ("triggers", "aliases", "panes", "prompts", "gradients", "designs")
+PARTS = ("triggers", "aliases", "buttons", "panes", "prompts", "gradients", "designs")
 
 
 def build(cfg, world, parts):
@@ -28,6 +28,9 @@ def build(cfg, world, parts):
         b["triggers"] = plain(cfg.get("triggers", []))
     if "aliases" in parts:
         b["alias_rules"] = plain(cfg.get("alias_rules", []))
+    if "buttons" in parts:                                  # the ones that show in this world: every world's, and this world's own
+        mine = [x for x in cfg.get("buttons", []) if isinstance(x, dict) and rule_applies(x, world.get("name"), world.get("id", ""))]
+        b["buttons"] = plain(mine)
     if "panes" in parts:
         b["panes"] = list(cfg.get("panes", []))
         b["layout"] = cfg.get("layout")
@@ -66,7 +69,7 @@ def _sends(trigger):
 
 def merge(cfg, bundle, tools):
     """Merge a loaded bundle into cfg (changed in place). `tools` provides the cleaners:
-    clean_world, validate_trigger, validate_alias, validate_prompt, validate_panes, validate_layout,
+    clean_world, validate_trigger, validate_alias, validate_button, max_buttons, validate_prompt, validate_panes, validate_layout,
     validate_gradients, validate_designs. Returns a list of sentences telling what happened."""
     said = []
     w = tools["clean_world"](bundle.get("world"))
@@ -119,6 +122,34 @@ def merge(cfg, bundle, tools):
         if added:
             said.append("Added %d alias%s, switched off (turn on the ones you want in Alt+A)."
                         % (added, "" if added == 1 else "es"))
+    if isinstance(bundle.get("buttons"), list):
+        def scope(x):
+            return (x["name"].lower(), str(x.get("world", "")).strip().lower() if x.get("global", True) is False else "")
+        cap = tools.get("max_buttons", 48)
+        have = {scope(x) for x in cfg.get("buttons", [])}
+        keys = {x["key"] for x in cfg.get("buttons", []) if x.get("key")}
+        file_world = str((bundle.get("world") or {}).get("name", "")).strip().lower() if isinstance(bundle.get("world"), dict) else ""
+        added = 0
+        for raw in bundle["buttons"][:cap]:
+            x = tools["validate_button"](raw)
+            if x is None or len(cfg.get("buttons", [])) >= cap:
+                continue
+            x.pop("world_id", None)
+            if w is not None and x.get("global", True) is False and str(x.get("world", "")).strip().lower() == file_world:
+                x["world"] = w["name"]                      # tied to the file's world: it follows that world here, even renamed
+            if scope(x) in have:
+                continue
+            if x.get("key") in keys:
+                x["key"] = ""                               # a hotkey you already use stays yours
+            if x.get("key"):
+                keys.add(x["key"])
+            x["enabled"] = False
+            cfg["buttons"] = list(cfg.get("buttons", [])) + [x]
+            have.add(scope(x))
+            added += 1
+        if added:
+            said.append("Added %d button%s, switched off (turn on the ones you want in Alt+B)."
+                        % (added, "" if added == 1 else "s"))
     if isinstance(bundle.get("panes"), list):
         panes = tools["validate_panes"](bundle["panes"])
         mine = {p["name"].lower() for p in cfg.get("panes", [])}
