@@ -99,12 +99,19 @@ app.root.event_generate("<Control-slash>"); app.root.update()
 assert app.theme["min_contrast"] == before, "Ctrl-/ lowers it"
 app.reset_skin_edits(); app.set_skin(name)                       # leave no edits behind
 
-# the default skin rescues the hard cases without touching colours that already pass
+# the default skin, Plain, is "true": black is black, and every colour is shown exactly as the game sent it
 app.set_skin("Plain")
+assert app.theme["bg"] == "#000000" and app.theme["min_contrast"] == 1.0 and app.theme["ansi"][0] == "#000000"
 app._on_data((E + "1;31mbrightword" + E + "0m\n\r").encode()); pump(0.1)
-assert fg_of("brightword") == "#f14c4c"                       # already readable: untouched
-assert dc.contrast_ratio(fg_of("redword"), "#101114") >= 4.0  # dim red is nudged up to the minimum
-assert dc.contrast_ratio(fg_of("blackword"), "#101114") >= 4.0 # black text on black: lifted
+assert fg_of("brightword") == "#ff0000" and fg_of("redword") == "#cd0000" and fg_of("blueword") == "#0000ee"
+assert fg_of("blackword") == "#000000" and fg_of("navyword") == "#00005f", "nothing is lifted"
+for k in ("bg", "panel", "panel_edge", "input_bg", "echo", "dim", "button_bg"):    # neutral greys: no blue tint
+    c = app.theme[k]; assert c[1:3] == c[3:5] == c[5:7], (k, c)
+# a skin with a minimum contrast still rescues the hard cases
+app.set_skin("Moody")
+mb = dc.BUILTIN_SKINS["Moody"]["bg"]
+assert dc.contrast_ratio(fg_of("redword"), mb) >= 4.0 and dc.contrast_ratio(fg_of("blackword"), mb) >= 4.0
+app.set_skin("Plain")
 
 # ---------------- palette edits --------------------------------------------------------------
 app._set_override(("ansi", 4), "#ff00ff")
@@ -116,7 +123,7 @@ assert app.out.cget("bg").lower() == "#202030"
 app._set_override(("bg",), dc.BUILTIN_SKINS["Plain"]["bg"])         # back to the skin's value
 app._set_override(("ansi", 4), dc.BUILTIN_SKINS["Plain"]["ansi"][4])
 assert "Plain" not in app.cfg["skin_overrides"], "edits equal to the skin must not be stored"
-assert fg_of("blueword") == expected(4) and dc.contrast_ratio(fg_of("blueword"), "#101114") >= 4.0
+assert fg_of("blueword") == expected(4) == "#0000ee"
 
 # contrast slider semantics: 1.0 = exactly as sent, higher lifts
 app._set_override(("min_contrast",), 1.0)
@@ -125,7 +132,7 @@ app._set_override(("min_contrast",), 7.0)
 for w in ("blackword", "blueword", "navyword", "redword"):
     assert dc.contrast_ratio(fg_of(w), app.theme["bg"]) >= 7.0 - 0.01, w
 app.reset_skin_edits()
-assert app.theme["min_contrast"] == 4.0 and "Plain" not in app.cfg["skin_overrides"]
+assert app.theme["min_contrast"] == 1.0 and "Plain" not in app.cfg["skin_overrides"]
 
 # ---------------- persistence ------------------------------------------------------------------
 app.set_skin("Moody")

@@ -53,7 +53,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   live preview; `Ctrl +/-` and `Ctrl+wheel` still zoom. The choice is saved. The input line
   and stat bar always stay on screen, even at large sizes.
 - **Skins and a user-adjustable palette** (View > Skin, View > Colours…). Six built in:
-  *Plain* (neutral dark, the default), *Plain Light*, *Moody* (violet-black, tarnished gold,
+  *Plain* (true colours on black, exactly as the game sends them; the default), *Plain Light*, *Moody* (violet-black, tarnished gold,
   spectral teal), *Retro Phosphor* (green-screen CRT), *Retro Amber* (amber CRT) and *Retro DOS*
   (16-colour VGA, blue panels, chunky buttons). `Ctrl+*` and `Ctrl+/` raise and lower the minimum
   text contrast by half a step. A skin sets every colour, the 16-colour game palette, button

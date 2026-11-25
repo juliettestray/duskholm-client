@@ -255,7 +255,14 @@ def _skin(name, **kw):
 
 
 BUILTIN_SKINS = {s["name"]: s for s in (
-    _skin("Plain", blurb="Neutral dark. The default."),
+    # Plain is "true": a black screen, neutral greys with no tint, the standard xterm colours, and no contrast lifting, so
+    # a colour is shown as the game sent it (black is black). Raise the minimum contrast (Ctrl+*) if a dark colour is hard to read.
+    _skin("Plain", bg="#000000", fg="#e5e5e5", panel="#121212", panel_edge="#333333", input_bg="#0a0a0a",
+          input_fg="#ffffff", echo="#8a8a8a", system="#d7a84a", alert="#e5c07b", dim="#7f7f7f", select="#33466b",
+          button_bg="#262626", button_fg="#ffffff", min_contrast=1.0,
+          ansi=["#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
+                "#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff"],
+          blurb="True colours on black, exactly as the game sends them. The default."),
     _skin("Plain Light", bg="#fafaf7", fg="#1f2328", panel="#ecece6", panel_edge="#d0d0c8",
           input_bg="#ffffff", input_fg="#111111", echo="#7a7f87", system="#8a5a00",
           alert="#9a5b00", dim="#7b8088", select="#cfe0ff", button_bg="#e2e2da",
@@ -315,8 +322,8 @@ def _dos(bar, bar_fg, bar2, bar2_fg, key, menu, menu_fg, border, sel, sel_fg, di
 
 
 _DOS_STYLE = {
-    "Plain": _dos("#2a2d35", "#d8d8d8", "#1a1c21", "#c8c8c8", "#e5c07b", "#1a1c21", "#e8e8e8",
-                  "#8a93a3", "#c8c8c8", "#101114", "#6f7a8a", "#05060a", "#0b0c0e"),
+    "Plain": _dos("#2b2b2b", "#e5e5e5", "#141414", "#e5e5e5", "#e5c07b", "#141414", "#e5e5e5",
+                  "#8a8a8a", "#e5e5e5", "#000000", "#7f7f7f", "#000000", "#000000"),
     "Plain Light": _dos("#d6d6ce", "#1f2328", "#ecece6", "#1f2328", "#8a4f00", "#ffffff", "#111111",
                         "#1f2328", "#1f2328", "#fafaf7", "#7b8088", "#b8b8b0", "#d0d0c8"),
     "Moody": _dos("#2a2438", "#d8d2e6", "#14121d", "#b9b4c8", "#d4a84e", "#14121d", "#d8d2e6",
