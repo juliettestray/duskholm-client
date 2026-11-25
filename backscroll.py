@@ -108,16 +108,31 @@ class BackscrollMixin:
             return 0
         out = s.out
         try:
-            at_bottom = out.yview()[1] >= 0.999
             out.configure(state="normal")
             out.insert("1.0", "[Earlier text from your last session is above this line: %d lines]\n" % len(lines), "system")
             out.insert("1.0", "\n".join(lines) + "\n")
             out.configure(state="disabled")
-            if at_bottom:
-                out.see("end")
+            out.see("end")                              # a new session always starts at the bottom, with the newest text
+            self._backscroll_to_bottom(out)
         except tk.TclError:
             return 0
         return len(lines)
+
+    def _backscroll_to_bottom(self, out):
+        """The text was just put in before the window had been laid out, so 'end' was not yet in view and the new
+        session began at the top of the old text. Move to the bottom again once the size is known, and once more a
+        moment later (the window may still be settling), unless new text has already taken us there."""
+        def go():
+            try:
+                if out.winfo_exists() and out.yview()[1] < 0.999:
+                    out.yview_moveto(1.0)
+            except tk.TclError:
+                pass
+        for delay in (0, 150, 500):
+            try:
+                self.root.after(delay, go) if delay else self.root.after_idle(go)
+            except tk.TclError:
+                pass
 
     def backscroll_clear_files(self):
         """Delete every saved backscroll file (our own cache folder only). Returns how many went."""

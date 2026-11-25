@@ -159,11 +159,18 @@ app.on_quit()                                   # saves on the way out (and clos
 assert os.path.exists(os.path.join(tmp, "backscroll", "h.example_4000.txt"))
 root2 = tk.Tk()
 app2 = sc.App(root2)
-end = time.time() + 0.5
+root2.geometry("1250x720+20+20")
+end = time.time() + 0.8
 while time.time() < end:
     root2.update(); time.sleep(0.01)
 t = app2.out.get("1.0", "end-1c").splitlines()
 assert t[0] == "Z1" and t[399] == "Z400" and "Earlier text" in t[400], (t[:2], t[398:402])
+assert app2.out.yview()[1] >= 0.999, "a new session starts at the bottom, with the newest text, not at the top of the old"
+app2._append([("brand new line\n", None)])
+end = time.time() + 0.3
+while time.time() < end:
+    root2.update(); time.sleep(0.01)
+assert app2.out.yview()[1] >= 0.999 and app2.out.bbox("end-2l") is not None, "and new text keeps following"
 assert app2.cfg["keep_backscroll"] is True and app2.cfg["keep_lines"] == "1000"
 saved = json.load(open(sc.SETTINGS_PATH, encoding="utf-8"))
 assert saved["scrollback_lines"] == "20000" and saved["keep_backscroll"] is True
