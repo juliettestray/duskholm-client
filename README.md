@@ -174,12 +174,23 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   when the window is narrow, and shows only when the world has buttons. In the DOS look the buttons are text-mode labels.
   `/button add Sneak = sneak;hide`, `/button key Sneak Alt-F5` (or `none`), `/button run|del|on|off Sneak`,
   `/button list`, `/button dock top|bottom|off`. The list window adds, edits, switches on and off, removes and reorders.
+- **World names.** A world you did not dial from the Worlds list (the Connect button, or the address it started with) is
+  named after the saved world with the same address, so the tabs say `Duskholm` rather than `World 1`, including when a
+  second world is opened. Rules, buttons and clock settings that were set for "only this world" under the placeholder name
+  move to the real name. A world with no matching saved world stays `World 1`, and a name you chose is never changed.
 - **Clone** (the *Clone* button, or `Ctrl+D` in the list, or `C` in the DOS look) in the Worlds, Triggers, Aliases and
   Buttons lists copies the selected entry right underneath it under a new name (`Name copy`, `Name copy 2` ...; an alias
   becomes `name2`, so it stays one word you can type). Then edit the copy. A cloned **trigger starts switched off**, so the
   two do not both fire until you have changed it; a cloned **button has no hotkey** (two buttons cannot share one); a cloned
   **world** has the same address and note but no "last call" (its triggers, aliases and buttons are separate: a rule that
   belongs to one world stays with that world).
+- **Find** (`Ctrl+F`, or `/find [words]`). A small Find box looks through the main text of the world on screen (plain
+  words, ignoring case unless *Match case* is ticked; the selected text is filled in for you). *Enter* finds the next match and `Ctrl+Shift+F` (or
+  `/findnext`) does the same with the box closed. **Start from the bottom** (the default) begins at the newest line and
+  works up, so the first match is the latest and each next one is older; **from the top** begins at the oldest line and
+  works down. Both choices are remembered. Past the last match it says so and starts again from the far end. The match is
+  shown in reverse colours and scrolled into view; the status line says what happened. In the DOS look the box is a
+  dialog with a *Start from the top* tick. Both keys can be changed in the Hotkeys form.
 - **Copy without my commands.** Right-click in the main text > *Copy without my commands*, or select and type
   `/copyplain`: the selection goes to the clipboard with the lines you typed (the commands the client echoed) left out.
   Ordinary `Ctrl+C` is unchanged and copies everything.
@@ -500,6 +511,8 @@ python tests/test_importers.py   # MUSHclient file import (pure): patterns, colo
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
+python tests/test_worldname.py    # a world nobody named takes its saved world's name; rules scoped to 'World 1' follow
+python tests/test_find.py         # Ctrl+F / Ctrl+Shift+F: from the bottom or top, wrapping, the box, /find, worlds, DOS look
 python tests/test_backscroll.py   # scrollback length, kept <= length, warning, save/load plain text, start-up, both looks
 python tests/test_clone_echo.py   # clone worlds / triggers / aliases / buttons, log without my commands, copy without them, no gap
 python tests/test_buttons.py      # buttons: bar, hotkeys, per-world scope, docking, manager, both looks

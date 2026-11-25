@@ -80,6 +80,7 @@ import buttons                     # a bar of clickable buttons that send comman
 import capture                     # capture a repeating log onto a pane without doubling lines
 import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
+import findtext                    # Ctrl+F / Ctrl+Shift+F
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
 
 DEFAULT_HOST = "duskholm.com"
@@ -1005,6 +1006,8 @@ def clean_settings(cfg):
             break
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
+    cfg["find_from"] = "top" if cfg.get("find_from") == "top" else "bottom"
+    cfg["find_case"] = cfg.get("find_case") is True
     cfg["keys"] = extras.clean_keys(cfg.get("keys"))
     us = cfg.get("update_skip")
     cfg["update_skip"] = us if isinstance(us, str) and re.fullmatch(r"[vV]?[0-9.]{1,20}", us) else ""
@@ -1598,7 +1601,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1693,6 +1696,7 @@ class App(backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, b
             self.set_fullscreen(True, save=False)
         root.protocol("WM_DELETE_WINDOW", self.on_quit)
         self._apply_entry_mode()
+        self._auto_name_world(self.session)                     # (the first world is named after the saved world it points at)
         self.backscroll_load(self.session)                      # (only when "reload earlier backscroll" is on)
         self._bs_job = self.root.after(backscroll.SAVE_EVERY_MS, self._backscroll_tick)
         self.input.focus_set()
@@ -6415,7 +6419,7 @@ class App(backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, b
                 or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
                 or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg) \
                 or self._stamps_command(cmd, arg) or self._import_command(cmd, arg) or self._buttons_command(cmd, arg) \
-                or self._panesent_command(cmd, arg) or self._copyplain_command(cmd, arg) \
+                or self._panesent_command(cmd, arg) or self._copyplain_command(cmd, arg) or self._find_command(cmd, arg) \
                 or self._popout_command(cmd, arg):
             return
         if cmd == "export":
@@ -6545,6 +6549,7 @@ class App(backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, b
             self._save_settings()
         else:
             host, port, tls = self.session.host, self.session.port, self.session.tls
+        self._auto_name_world(self.session)
         self.backscroll_load(self.session)                # a world's earlier text goes back above the new text, once
         self.connecting = True
         self.btn.configure(text="Cancel")

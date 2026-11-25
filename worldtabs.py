@@ -105,6 +105,47 @@ class WorldTabsMixin:
         if old_key != self._world_key(s) and old_key.startswith("world "):
             self.cfg.get("world_panes", {}).pop(old_key, None)     # a placeholder name is not worth remembering
 
+    def _auto_name_world(self, s):
+        """A world nobody has named (it would show as 'World 1') takes the name of the saved world with its address,
+        so the tabs say 'Duskholm' rather than 'World 1'. A name it was given this way follows it if the address changes;
+        a name you chose (by dialling a saved world) is left alone. Rules, buttons and clock settings that were
+        scoped to the placeholder name move over to the new one. Returns True if the name changed."""
+        if s.name and not getattr(s, "_auto_named", False):
+            return False
+        try:
+            host, port = (s.host or "").strip().lower(), int(s.port)
+        except (TypeError, ValueError):
+            return False
+        cands = [w for w in self.cfg.get("worlds", []) if w["host"].lower() == host and w["port"] == port]
+        if not cands or (s.name and any(w["name"] == s.name for w in cands)):
+            return False
+        new = cands[0]["name"]
+        if any(o is not s and (o.name or "").strip().lower() == new.lower() for o in self.sessions):
+            return False                                   # another open world already has that name
+        old = self._world_name(s)
+        self._rename_world(s, new)
+        s._auto_named = True
+        if old.lower().startswith("world "):
+            self._move_world_scope(old, new)
+        self._refresh_world_ui()
+        return True
+
+    def _move_world_scope(self, old, new):
+        """Per-world rules, buttons and clock settings kept under a placeholder name now belong to `new`."""
+        o, n = old.strip().lower(), new.strip().lower()
+        for key in ("triggers", "alias_rules", "buttons"):
+            for r in self.cfg.get(key, []):
+                if r.get("global") is False and (r.get("world") or "").strip().lower() == o:
+                    clash = key == "buttons" and any(
+                        x is not r and x.get("global") is False and (x.get("world") or "").strip().lower() == n
+                        and x["name"].lower() == r["name"].lower() for x in self.cfg[key])
+                    if not clash:
+                        r["world"] = new
+        wt = self.cfg.get("world_time")
+        if isinstance(wt, dict) and o in wt and n not in wt:
+            wt[n] = wt.pop(o)
+        self._save_settings()
+
     # ---- which world is on screen --------------------------------------------------
     def _here(self):
         """True when the world being handled right now is the one on screen."""
@@ -331,6 +372,12 @@ class WorldTabsMixin:
         if len(self.sessions) >= MAX_WORLDS:
             self.system("No more than %d worlds at once." % MAX_WORLDS)
             return None
+        cur = self._shown                                  # the world already open gets its real name before a second one appears
+        try:
+            cur.host, cur.port = self.v_host.get().strip(), int(self.v_port.get())
+        except ValueError:
+            pass
+        self._auto_name_world(cur)
         s = self.add_session(name or "World %d" % (len(self.sessions) + 1))
         self.switch_session(s)
         return s

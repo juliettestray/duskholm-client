@@ -310,5 +310,15 @@ os.environ["_PYI_APPLICATION_HOME_DIR"] = "zz"
 assert not any(k.upper().startswith(("_MEI", "_PYI")) for k in up.clean_env()), "default: the real environment"
 del os.environ["_PYI_APPLICATION_HOME_DIR"]
 
+# the new program is started a few seconds after the swap, so the old one has finished removing its temp folder
+_d = tempfile.mkdtemp()
+_bat = up.write_swap_script(os.path.join(_d, "Sanctuary.exe"), os.path.join(_d, "Sanctuary.new.exe"), 99999999, start=True)
+_lines = open(_bat, encoding="mbcs").read().splitlines()
+_st = [i for i, l in enumerate(_lines) if l.startswith('start ""')]
+assert len(_st) == 1 and up.RELAUNCH_DELAY >= 3
+assert "PING.EXE" in _lines[_st[0] - 1] and "-n %d " % (up.RELAUNCH_DELAY + 1) in _lines[_st[0] - 1], _lines[_st[0] - 2:_st[0] + 1]
+_bat2 = up.write_swap_script(os.path.join(_d, "Sanctuary.exe"), os.path.join(_d, "Sanctuary.new.exe"), 99999999, start=False)
+assert not any(l.startswith('start ""') for l in open(_bat2, encoding="mbcs").read().splitlines())
+
 root.update(); root.destroy(); srv.shutdown()
 print("updater tests OK")

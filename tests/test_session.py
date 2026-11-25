@@ -58,9 +58,9 @@ CR = chr(13) + chr(10)
 assert app.session is first and app._shown is first
 app.set_dos_mode(False) if getattr(app, "dos", False) else None
 pump(0.3)
-assert app.world_tabs_text() == "[1 World 1]  2 two", app.world_tabs_text()
+assert app.world_tabs_text() == "[1 Duskholm]  2 two", app.world_tabs_text()
 hints = app.world_hints()
-assert [h[0] for h in hints] == ["^F1", "^F2"] and hints[0][1] == "[World 1]" and hints[1][1] == "two"
+assert [h[0] for h in hints] == ["^F1", "^F2"] and hints[0][1] == "[Duskholm]" and hints[1][1] == "two"
 # new text in the hidden world marks it (once) and does not touch the shown world
 first._last_prompt = None
 w2.q.put((w2.conn.gen, "data", ("news from two" + CR).encode())); pump(0.5)

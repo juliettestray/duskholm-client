@@ -59,6 +59,7 @@ def pane_lines(key):
 
 
 def type_main(text):
+    app.input.focus_force()                            # (a key event only reaches the box that has the keyboard)
     app.input.delete(0, "end"); app.input.insert(0, text)
     app.input.event_generate("<Return>"); pump(0.3)
 

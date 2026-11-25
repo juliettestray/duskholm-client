@@ -152,6 +152,7 @@ HOTKEYS = {
     "gradient": ("Gradient maker", "Alt-G"), "hex": ("Hex to xterm", "Alt-H"), "customize": ("Customize form", "Alt-K"),
     "emoji": ("Emoji picker", "Alt-E"), "buttons": ("Buttons", "Alt-B"),
     "select_input": ("Select the whole entry line", "Ctrl-A"),
+    "find": ("Find in the text", "Ctrl-F"), "find_next": ("Find next", "Ctrl-Shift-F"),
     "world_next": ("Next world", "Ctrl-PageDown"), "world_prev": ("Previous world", "Ctrl-PageUp"),
     "close_world": ("Close this world", "Ctrl-Shift-W"),
     "world_1": ("Show world 1", "Ctrl-F1"),
@@ -520,6 +521,7 @@ class ExtrasMixin:
                    "timers": self.open_timers, "dos_toggle": self.toggle_dos_mode,
                    "gradient": self.open_gradient, "hex": self.open_hex, "customize": self.open_customize,
                    "emoji": self.open_emoji_picker, "buttons": self.open_buttons, "select_input": self._select_input_line,
+                   "find": self.open_find, "find_next": self.find_next_key,
                    "world_next": lambda: self.cycle_world(+1), "world_prev": lambda: self.cycle_world(-1),
                    "close_world": self.close_world_ask}
         for n in range(1, 13):

@@ -37,7 +37,7 @@ pump(0.5)
 # ---- always on by default, centred, with a plus: a single world already shows it ----------------------------------------------------
 assert app.cfg["world_tabs"] == "always" and app._tabbar.winfo_ismapped()
 t, plus = tabs()
-assert len(t) == 1 and t[0][0].endswith("1  World 1") or "1  " in t[0][0], t[0][0]
+assert len(t) == 1 and t[0][0].endswith("1  Duskholm"), t[0][0]
 assert plus, "a plus to open another world"
 bar_w = app._tabbar.winfo_width()
 inner = app._tabs_inner
@@ -51,7 +51,7 @@ assert app._holder.winfo_y() > app._tabbar.winfo_y(), "above the text"
 second = app.open_new_world("Second"); pump(0.3)
 third = app.open_new_world("Third"); pump(0.3)
 t, plus = tabs()
-assert [x[0].split("  ", 1)[-1] for x in t] == ["World 1", "Second", "Third"] or len(t) == 3, [x[0] for x in t]
+assert [x[0].split("  ", 1)[-1] for x in t] == ["Duskholm", "Second", "Third"], [x[0] for x in t]
 assert app._shown is third
 shown_bg = t[2][1].cget("bg")
 assert shown_bg == app.theme["bg"] and t[0][1].cget("bg") != shown_bg, "the shown tab looks different"

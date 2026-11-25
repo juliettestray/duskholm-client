@@ -207,6 +207,9 @@ def running_exe():
     return None
 
 
+RELAUNCH_DELAY = 4          # seconds between the swap and starting the new program
+
+
 def _bat(path):
     return str(path).replace("%", "%%")
 
@@ -246,6 +249,9 @@ def write_swap_script(current, new, pid, start=True):
         'if errorlevel 1 (move /y "%s" "%s" >NUL 2>NUL & goto giveup)' % (old, current),
     ]
     if start:
+        # Give the old program time to finish removing its temporary folder before the new one makes its own:
+        # starting at once can land in the middle of that clean-up and fail to unpack (ping -n N waits N-1 seconds).
+        lines.append('"%s\\PING.EXE" -n %d 127.0.0.1 >NUL' % (sysdir, RELAUNCH_DELAY + 1))
         lines.append('start "" "%s"' % current)
     lines += [":giveup", '(goto) 2>NUL & del "%~f0"']
     with open(bat, "w", encoding="mbcs", newline="\r\n") as f:
