@@ -41,6 +41,9 @@ def screen():
 
 
 pump(0.5)
+for _n in ('Tells', 'Greet', 'Who'):
+    app.pane_ensure(_n)                                    # (so the client's one-time note about new panes stays out of the way)
+pump(0.3)
 app.cfg["triggers"] = [
     {"name": "in", "mode": "plain", "pattern": "*tells you*", "enabled": True, "priority": 0, "actions": [{"type": "route", "pane": "Tells"}]},
     {"name": "out", "mode": "plain", "pattern": "^You tell *", "enabled": True, "priority": 0, "actions": [{"type": "route", "pane": "Tells"}]},

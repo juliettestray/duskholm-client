@@ -189,6 +189,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `Evelyn tells you ... [AFK] You tell Evelyn ...` as one. Pressing Enter at the prompt now ends that row, and the prompt
   is left out of what triggers and panes see (the screen still shows it as the game sent it). Only `[AFK] ` with a space
   after it counts, so an `[AFK]` mark in a list is untouched.
+- **Lines the game leaves unfinished.** Some of the game's messages, a tell you receive among them, arrive with no line
+  break at the end. The text is shown straight away, but a trigger or capture pane only sees a finished line, so it used
+  to wait for the next thing the game sent or for you to press Enter. Now an unfinished line that is text (not a prompt)
+  and has been quiet for about 0.4 seconds is treated as a whole line (the screen does not change, and your next command
+  still goes on its own row). Prompts are left alone: a line ending in a space (`Password: `, `> `, `[AFK] `) or
+  matching your prompt format waits for what you type, as before. If a long line stalls half way, it is one row on screen
+  but captured in two pieces.
 - **Clone** (the *Clone* button, or `Ctrl+D` in the list, or `C` in the DOS look) in the Worlds, Triggers, Aliases and
   Buttons lists copies the selected entry right underneath it under a new name (`Name copy`, `Name copy 2` ...; an alias
   becomes `name2`, so it stays one word you can type). Then edit the copy. A cloned **trigger starts switched off**, so the
@@ -523,6 +530,7 @@ python tests/test_sent_capture.py # my own side of a conversation: rules on what
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
 python tests/test_worldids.py     # world ids: rules, buttons, layouts and clock follow a renamed world; old settings migrate
+python tests/test_idle_line.py    # a line with no line break is captured after a short quiet, prompts are not
 python tests/test_afk_prompt.py   # the AFK prompt: no gluing, clean captured lines, screen unchanged
 python tests/test_worldname.py    # a world nobody named takes its saved world's name; rules scoped to 'World 1' follow
 python tests/test_find.py         # Ctrl+F / Ctrl+Shift+F: from the bottom or top, wrapping, the box, /find, worlds, DOS look

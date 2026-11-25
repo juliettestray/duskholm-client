@@ -97,6 +97,7 @@ QUIT_GRACE = 15          # a close this soon after the user sent "quit" is inten
 # The game's AFK prompt is "[AFK] " with no line break after it, so it ends up glued to the end of whatever came before it
 # and (when you press Enter at it) to whatever comes next. It is never part of what a trigger or a pane should see.
 AFK_TAIL = re.compile(r"(?:\[AFK\][ \t]+)+$")
+PARTIAL_FINISH_MS = 300  # an unfinished line that is text (not a prompt) and has stayed quiet this long after being shown is a whole line
 PARTIAL_FLUSH_MS = 120   # an unfinished line (a prompt) is shown after this long without a newline
 
 # telnet
@@ -5438,6 +5439,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
                 if text:
                     self._pending.append((text, key))
                     self._line_plain += text
+                    self.out._row_open = False         # (the unfinished line itself tells whether its row is open now)
                 return
             head = text[:i]
             if head:
@@ -5464,6 +5466,11 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         do not run into it. A PROMPT is the exception: the game's stat prompt, or a login question such as
         'Password: ' (it ends in a space), is meant to be followed by what you type."""
         plain = self._line_plain
+        if not plain and getattr(self.out, "_row_open", False):
+            self.out._row_open = False                 # a line that was completed on a timer: its row still has no end
+            if self.out.get("end-2c", "end-1c") not in ("\n", ""):
+                self._append([("\n", None)], _internal=True)
+            return
         if not plain or self._line_hidden_len:
             return
         if self._flush_job is not None:
@@ -5498,6 +5505,33 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         self._append(stamp + [(t, self._tag_for(k)) for t, k in pieces], _internal=True)
         self._line_flushed = True
         self._line_drawn = self._line_drawn + pieces
+        plain = self._line_plain
+        m = AFK_TAIL.search(plain)
+        if m:
+            if m.start() > 0:                          # the text before an AFK prompt is a complete line: no need to wait
+                self._finish_idle_line(row_open=False)
+        elif self._line_is_text(plain):
+            # some of the game's messages (a tell you receive, for one) have no line break at the end. Without it the line
+            # would wait for the next thing the game sends or for you to press Enter before a trigger or a pane saw it.
+            # Once it has been quiet for a moment it is treated as a whole line (the screen already shows it).
+            self._after_session(PARTIAL_FINISH_MS, lambda snap=plain: self._finish_if_idle(snap))
+
+    def _line_is_text(self, plain):
+        """True for an unfinished line that is text the game left without its line break, not a prompt waiting for you
+        (a prompt ends with a space, as 'Password: ' and '[AFK] ' do, or is the stat prompt)."""
+        if not plain.strip() or plain[-1:].isspace():
+            return False
+        return prompts.parse_prompt(plain, self.current_profile()) is None
+
+    def _finish_if_idle(self, snap):
+        if self._line_plain == snap and not self._pending and self._line_flushed and self._line_is_text(snap):
+            self._finish_idle_line(row_open=True)
+
+    def _finish_idle_line(self, row_open):
+        """Complete the unfinished line that is already on screen, without drawing a line break. `row_open`: the screen's
+        row has no end yet, so pressing Enter must end it before your command is shown."""
+        self._finish_line((None, None, False, False, False, False), newline=False)
+        self.out._row_open = bool(row_open)
 
     # the lines the game prints when your defence (DF) is back to full (regened_message in fight.c)
     DF_FULL_LINES = frozenset([
@@ -5646,6 +5680,8 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         self._finish_line((None, None, False, False, False, False), newline=False)
 
     def _finish_line(self, key, newline=True):
+        if newline:
+            self.out._row_open = False                    # (a line break is being drawn: nothing is left open)
         pieces, plain = self._pending, self._line_plain
         flushed, hidden = self._line_flushed, self._line_hidden_len
         drawn, self._line_drawn = self._line_drawn, []
