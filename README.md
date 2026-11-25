@@ -124,7 +124,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   an ordinary list window. *Duskholm* is saved by default.
 - **Several worlds at once.** Dialing a saved world while this one is connected opens it in its own
   tab (up to 12); dialing one that is already open switches to it. `Ctrl+F1` .. `Ctrl+F12` show
-  the 1st .. 12th world, `Ctrl+PageDown` / `Ctrl+PageUp` the next and previous one, `/world [n|name]`,
+  the 1st .. 12th world, `Ctrl+PageDown` / `Ctrl+PageUp` the next and previous one, **`Ctrl+Tab`** swaps between the last two worlds
+  you looked at (go to world 3, then 5: Ctrl+Tab goes back to 3, and again to 5, whatever else is open), `/world [n|name]`,
   `/newworld [name]` and `/closeworld` do the same by command (all of these keys can be changed under
   `/hotkeys`: one row sets the prefix for all twelve, e.g. `Ctrl-Alt-F`; world 1-12 can also be set
   one by one in the settings file). **Close this world** (main menu, or `Ctrl+Shift+W`) hangs up, after asking, and closes the tab. In the normal look the worlds are a row of **clickable tabs**, centred under the toolbar (click one to
@@ -437,6 +438,16 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   mouse (or Tab to it and press Space) and Enter sends what is in the box and leaves it there. Untick it, or turn
   the option off, and Enter clears the box again. `/keep [on|off]` does the same from the keyboard (and in the
   DOS look, which has no checkbox). A password is never kept.
+- **CRT scanlines** (Options > *CRT scanlines in the DOS look*: off, light, medium or strong; off by default). Thin dark
+  horizontal lines, one every other screen row, over the whole DOS window, like an old monitor. They are a see-through
+  window laid over the program, so the text underneath is not touched: the mouse goes straight through (select, click
+  and scroll as usual), the keyboard stays where it was, and it follows the window when you move, resize or minimise
+  it. It shows only in the DOS look (screen reader mode has none) and only on Windows. It makes text a little harder
+  to read, which is why it starts off. Speed: printing text is not slowed (measured: 393 against 386 lines a second
+  with strong lines); resizing the window costs about 6 ms a step.
+  The lines check themselves every second (and when the window comes back to the front) and put right anything that has
+  gone wrong, such as being hidden or left behind the window. `/crt` says whether they are showing and what had to be put
+  right; `/crt off|light|medium|strong` sets them.
 - **An entry box that grows as you type** (Options > Entry box grows to (lines): off, 2, 3, 5 or 8; off by
   default). The line wraps at the window edge and the box gets taller with it, up to the limit you chose, and goes
   back down when you send. **Shift+Enter** or **Ctrl+Enter** puts a line break in the box; Enter sends. A box with
@@ -555,6 +566,8 @@ python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_worldbuttons.py # buttons in .snc files: which go out, arriving switched off, the cap
 python tests/test_findpanes.py    # Find with 'Search panes': order, which pane, pop-outs
 python tests/test_keeptext.py     # the Keep text checkbox and /keep
+python tests/test_worldswap.py    # Ctrl+Tab: swap between the last two worlds
+python tests/test_crt.py          # CRT scanlines: shows only in the DOS look, click-through, follows the window
 python tests/test_whatsnew.py     # what's new after an update: skipped versions, once, /changes
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch

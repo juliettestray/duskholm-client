@@ -3,6 +3,9 @@ release notes on GitHub (publish: the footer about downloading is added there). 
 BEFORE releasing it. Each entry is (version, text); text is Markdown-ish: "- " bullets, **bold**, `code`."""
 
 CHANGES = [
+    ("1.3.0", """- **CRT scanlines.** In the DOS look, Options > *CRT scanlines in the DOS look* (off, light, medium, strong; off by default) lays thin dark lines over the screen like an old monitor. Printing text is no slower, the mouse goes straight through, and `/crt` says whether they are showing.
+- **Ctrl+Tab swaps worlds.** It goes back to the world you were in just before this one, and again to come back, so two worlds you are moving between swap whatever else is open. It can be changed under `/hotkeys` (*Swap with the last world*).
+- **Keep text in the DOS look.** The hotkey for *Keep-text checkbox* in the DOS Options menu was the same as another option; it is now `5`."""),
     ("1.2.2", """- **A smaller download.** The program is about half the size (12 MB instead of 25 MB): a library Sanctuary never used was being packed into it. Nothing you can see has changed."""),
     ("1.2.1", """- **Backscroll is kept per world.** Reloaded backscroll used to be saved by server address, so two worlds on the same address (two characters on one game, say) shared one file and their text got mixed. Each world now has its own, and a saved world keeps its history through a rename or a new address. Text saved by an older version goes to the first world that asks for it."""),
     ("1.2.0", """- **What's new.** After an update Sanctuary shows what changed, and if you skipped several versions it lists every one you missed, newest first. `/changes` shows the latest again, `/changes all` shows them all, and it is in the Help menu.

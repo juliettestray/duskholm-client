@@ -448,6 +448,8 @@ class WorldTabsMixin:
         self._themed = [(w, r) for (w, r) in self._themed
                         if not any(w is p[k] for p in s._panes.values() for k in ("text", "sb"))]
         self.sessions.remove(s)
+        if getattr(self, "_prev_world", None) is s:
+            self._prev_world = None                        # (the world Ctrl+Tab would have gone back to is closed)
         if self._world_key(s).startswith("world "):
             self.cfg.get("world_panes", {}).pop(self._world_key(s), None)
         self._themed = [(w, r) for (w, r) in self._themed if w not in (s.out, s._sb, s._mid)]
@@ -482,6 +484,19 @@ class WorldTabsMixin:
             return False
         i = self.sessions.index(self._shown)
         self.switch_session(self.sessions[(i + step) % len(self.sessions)])
+        return True
+
+    def swap_world(self):
+        """Ctrl+Tab: back to the world you were in just before this one; pressed again, back again. Two worlds you move
+        between (the last two you looked at) swap, whatever else is open. False when there is nowhere to go yet."""
+        if len(self.sessions) < 2:
+            self.system("Only one world is open.")
+            return False
+        prev = getattr(self, "_prev_world", None)
+        if prev is None or prev not in self.sessions or prev is self._shown:
+            self.system("No earlier world to swap to yet: switch to another world first (Ctrl+Tab then swaps between the last two).")
+            return False
+        self.switch_session(prev)
         return True
 
     def _worlds_command(self, cmd, arg):

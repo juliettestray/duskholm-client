@@ -81,6 +81,7 @@ import capture                     # capture a repeating log onto a pane without
 import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
 import findtext                    # Ctrl+F / Ctrl+Shift+F
+import crt                         # CRT scanlines over the DOS look (an option)
 import whatsnew                   # what changed since the version last shown
 import worldids                    # stable world ids: what is tied to a world follows it when it is renamed
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
@@ -951,7 +952,7 @@ EXTRA_BOOLS = [
     ("sr_alerts", True, "Screen reader: announce stun, health and ready timers", "Reader alerts", "T"),
     ("update_check", False, "Check for updates when Sanctuary starts", "Check for updates at start", "G"),
     ("walk_preview", True, "Preview my walk on the status line when I set it", "Walk preview", "P"),
-    ("keep_box", False, "Show a 'Keep text' checkbox by the input box", "Keep-text checkbox", "H"),
+    ("keep_box", False, "Show a 'Keep text' checkbox by the input box", "Keep-text checkbox", "5"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
@@ -960,6 +961,7 @@ EXTRA_CHOICES = [
     ("timestamps", "off", ("off", "hh:mm", "hh:mm:ss"), "Time stamps (main text)", "X"),
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
     ("entry_grow", "off", ("off", "2", "3", "5", "8"), "Entry box grows to (lines)", "K"),
+    ("crt_lines", "off", ("off", "light", "medium", "strong"), "CRT scanlines in the DOS look", "4"),
     ("world_tabs", "always", ("always", "two+", "off"), "World tabs", "W"),
     ("button_dock", "top", ("top", "bottom", "off"), "Button bar", "B"),
     ("scrollback_lines", backscroll.DEFAULT_TOTAL, backscroll.TOTAL_CHOICES, "Scrollback length (lines)", "1"),
@@ -970,7 +972,7 @@ CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always"
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
                 "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
                 "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice",
-                "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
+                "light": "light", "medium": "medium", "strong": "strong", "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
                 "two+": "only with two or more worlds",
                 "500": "500 lines", "1000": "1,000 lines", "2000": "2,000 lines", "5000": "5,000 lines",
                 "10000": "10,000 lines", "20000": "20,000 lines", "50000": "50,000 lines", "100000": "100,000 lines"}
@@ -1617,7 +1619,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1724,7 +1726,8 @@ class App(whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin
             self.root.after(400, lambda: self.set_screen_reader(True, announce=True))
         if self.cfg.get("update_check"):
             self.root.after(6000, lambda: self.check_for_updates(manual=False))
-        self.root.after(1500, self.maybe_show_whatsnew)         # after an update: what changed
+        self.root.after(1500, self.maybe_show_whatsnew)
+        self.root.after(400, self._apply_crt)                   # (scanlines, when the DOS look starts with them on)         # after an update: what changed
 
     # ---- settings ----------------------------------------------------
     def _load_settings(self):
@@ -1920,6 +1923,7 @@ class App(whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin
         if s is self.session or s not in self.sessions:
             return
         old = self.session
+        self._prev_world = old                         # (Ctrl+Tab goes back to it)
         try:                                           # what was typed in the host box belongs to the world we leave
             old.host, old.port, old.tls = (self.v_host.get().strip(), int(self.v_port.get()), bool(self.v_tls.get()))
         except ValueError:
@@ -2177,7 +2181,7 @@ class App(whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin
     OPTION_GROUPS = [
         ("verify", "keepalive", "auto_reconnect", "update_check"),
         ("links", "link_images", "emoji", "emoji_pics", "emoji_pics_dos", "connect_boxes", "hide_prompt",
-         "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow"),
+         "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow", "crt_lines"),
         ("scroll_on_send", "show_echo", "keep_box", "custom_form"),
         ("bell", "bell_new"),
         ("log_echo", "scrollback_lines", "keep_backscroll", "keep_lines"),
@@ -3621,6 +3625,8 @@ class App(whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin
             self._apply_entry_mode()
         if key == "keep_box":
             self._apply_keep_box()
+        if key == "crt_lines":
+            self._apply_crt()
         if key == "world_tabs":
             self._refresh_tabbar(True)
             self._refresh_world_label()
@@ -5037,6 +5043,7 @@ class App(whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin
                     pass
                 self._dos_job = None
         self.update_dosbar()
+        self._apply_crt()                                   # (scanlines show in the DOS look only)
         self._emoji_refresh()
         self._save_settings()
 
