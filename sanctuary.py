@@ -934,6 +934,7 @@ EXTRA_BOOLS = [
     ("connect_boxes", False, "Join ASCII boxes into solid lines", "Join ASCII boxes", "J"),
     ("scroll_on_send", True, "Jump to the bottom when I send", "Jump to bottom on send", "S"),
     ("show_echo", True, "Show the commands I send", "Show my commands", "M"),
+    ("log_echo", True, "Put the commands I send in the log file", "Log my commands", "Z"),
     ("custom_form", True, "Fill-in form when I type 'customize'", "Customize form", "F"),
     ("screen_reader", False, "Screen reader mode", "Screen reader mode", "Y"),
     ("sr_alerts", True, "Screen reader: announce stun, health and ready timers", "Reader alerts", "T"),
@@ -3882,6 +3883,41 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
             del lst[index]
             (self._save_triggers if kind == "trigger" else self._save_aliases)(lst)
 
+    def clone_rule(self, kind, index):
+        """Copy a trigger or alias right under the original, with a new name. A cloned trigger starts switched off (two
+        identical live triggers would both fire); an alias clone is on. Returns (ok, message, index of the copy)."""
+        key = "triggers" if kind == "trigger" else "alias_rules"
+        lst = [copy.deepcopy(x) for x in self.cfg[key]]
+        if not 0 <= (index if index is not None else -1) < len(lst):
+            return False, "Nothing is selected to clone.", index
+        cap, noun = (triggers.MAX_TRIGGERS, "triggers") if kind == "trigger" else (triggers.MAX_ALIASES, "aliases")
+        if len(lst) >= cap:
+            return False, "Too many %s (%d maximum)." % (noun, cap), index
+        new = copy.deepcopy(lst[index])
+        new["name"] = triggers.copy_name(new["name"], [x["name"] for x in lst], triggers.MAX_NAME, words=(kind == "trigger"))
+        if kind == "trigger":
+            new["enabled"] = False
+        lst.insert(index + 1, new)
+        (self._save_triggers if kind == "trigger" else self._save_aliases)(lst)
+        got = self.cfg[key]
+        if index + 1 >= len(got) or got[index + 1]["name"] != new["name"]:
+            return False, "That name cannot be used for a copy. Edit the original's name first.", index
+        return True, "Cloned as '%s'%s." % (new["name"], " (switched off until you turn it on)" if kind == "trigger" else ""), index + 1
+
+    def clone_world(self, index):
+        """Copy a saved world right under the original (same address, new name, no 'last call'). Returns (ok, message, index)."""
+        lst = [dict(w) for w in self.cfg["worlds"]]
+        if not 0 <= (index if index is not None else -1) < len(lst):
+            return False, "Nothing is selected to clone.", index
+        if len(lst) >= 200:
+            return False, "Too many saved worlds (200 maximum).", index
+        new = dict(lst[index])
+        new["name"] = triggers.copy_name(new["name"], [w["name"] for w in lst], 40) if triggers is not None else new["name"] + " copy"
+        new["last"] = 0
+        lst.insert(index + 1, new)
+        self._save_worlds(lst)
+        return True, "Cloned as '%s'." % new["name"], index + 1
+
     def _rules_list_window(self, kind):
         """The ordinary list window shared by the trigger and alias managers."""
         attr = "_trig_win" if kind == "trigger" else "_alias_win"
@@ -3948,6 +3984,18 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 refresh(i)
             return "break"
 
+        def clone(_e=None):
+            i = current()
+            if i is None:
+                return "break"
+            ok, msg, j = self.clone_rule(kind, i)
+            if not ok:
+                messagebox.showinfo("Clone", msg, parent=top)
+            else:
+                self.system(msg)
+            refresh(j)
+            return "break"
+
         def preset():
             menu = tk.Menu(top, tearoff=0)
             for pr in trigger_presets():
@@ -3969,17 +4017,19 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
         tk.Button(btns, text="Edit...", width=8,
                   command=lambda: edit(current()) if current() is not None else None).pack(side="left", padx=6)
         tk.Button(btns, text="On / Off", width=8, command=toggle).pack(side="left")
+        tk.Button(btns, text="Clone", width=8, command=clone).pack(side="left", padx=(6, 0))
         tk.Button(btns, text="Delete", width=8, command=delete).pack(side="left", padx=6)
         if kind == "trigger":
             tk.Button(btns, text="Presets...", width=9, command=preset).pack(side="left")
         tk.Button(btns, text="Close", width=8, command=top.destroy).pack(side="right")
         lb.bind("<Double-Button-1>", lambda e: edit(current()) if current() is not None else None)
         lb.bind("<space>", toggle)
+        lb.bind("<Control-d>", clone)
         lb.bind("<Delete>", delete)
         lb.bind("<Insert>", lambda e: edit(None))
         top.bind("<Escape>", lambda e: top.destroy())
         top._actions = dict(listbox=lb, refresh=refresh, edit=edit, toggle=toggle, delete=delete, kind=kind,
-                            add_preset=add_preset)
+                            add_preset=add_preset, clone=clone)
         refresh()
         self._theme_tree(top)
         lb.focus_set()
@@ -4184,11 +4234,11 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
         if kind == "trigger":
             cols = [{"title": "On", "width": 3}, {"title": "Name", "width": 18}, {"title": "Mode", "width": 5},
                     {"title": "Pattern", "width": 0}, {"title": "Actions", "width": 22}]
-            hints = [("Enter", "Edit"), ("A", "Add"), ("Space", "On/Off"), ("Del", "Remove"), ("P", "Presets"),
+            hints = [("Enter", "Edit"), ("A", "Add"), ("C", "Clone"), ("Space", "On/Off"), ("Del", "Remove"), ("P", "Presets"),
                      ("Esc", "Close")]
         else:
             cols = [{"title": "On", "width": 3}, {"title": "Name", "width": 14}, {"title": "Expands to", "width": 0}]
-            hints = [("Enter", "Edit"), ("A", "Add"), ("Space", "On/Off"), ("Del", "Remove"), ("Esc", "Close")]
+            hints = [("Enter", "Edit"), ("A", "Add"), ("C", "Clone"), ("Space", "On/Off"), ("Del", "Remove"), ("Esc", "Close")]
 
         def rows():
             out = []
@@ -4211,6 +4261,10 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
             elif name == "toggle" and idx is not None:
                 self._toggle_rule(kind, idx)
                 table.set_rows(rows(), selected=idx)
+            elif name == "clone" and idx is not None:
+                _ok, msg, j = self.clone_rule(kind, idx)
+                self.system(msg)
+                table.set_rows(rows(), selected=j)
             elif name == "remove" and idx is not None:
                 table.close()
                 victim = self.cfg[key][idx]["name"]
@@ -4223,7 +4277,7 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 self._dos_trigger_presets()
 
         keys = {"Return": "select", "KP_Enter": "select", "Escape": "close", "a": "add", "Insert": "add",
-                "e": "edit", "Delete": "remove", "r": "remove", "space": "toggle"}
+                "e": "edit", "Delete": "remove", "r": "remove", "space": "toggle", "c": "clone"}
         if kind == "trigger":
             keys["p"] = "presets"
         table = dosui.DosTable(self.root, "Triggers" if kind == "trigger" else "Aliases", cols, rows(), self._dc(),
@@ -5013,7 +5067,7 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 self.out.insert("end", text, tag)
             else:
                 self.out.insert("end", text)
-            if self.logfile:
+            if self.logfile and not (tag == "echo" and not self.cfg.get("log_echo", True)):
                 try:
                     self.logfile.write(text)
                 except OSError:
@@ -5562,10 +5616,19 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 return                                    # nothing but the hidden prompt: drop it and its newline
         if self._iface is not None and self.iface_capture(pieces, plain):
             return                                        # the game's item editor talking: gathered, not scrolled
+        if not plain.strip() and not flushed and getattr(self.out, "_gag_gap", False):
+            self.out._gag_gap = False                     # the blank line that framed a hidden message: it would now double up
+            self._log_raw("\n")
+            return
         shown, effects = self._run_triggers(pieces, plain, flushed, drawn)
         if shown is None:                                 # hidden by a trigger
             self._log_raw(plain + "\n")
+            # when what is on screen already ends in a blank line, the blank line the game put after the hidden
+            # message would leave a gap where it was: that one blank line is dropped too
+            self.out._gag_gap = (getattr(self.out, "_gag_gap", False) or
+                                 self.out.get("end-3c", "end-1c") in ("\n\n", "\n") or self.out.get("1.0", "end-1c") == "")
         else:
+            self.out._gag_gap = False
             segs = [(t, self._tag_for(k)) for t, k in shown]
             if not flushed:
                 segs = self._stamp_seg(plain) + segs
@@ -6057,20 +6120,34 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 refresh(i)
             return "break"
 
+        def clone(_e=None):
+            i = current()
+            if i is None:
+                return "break"
+            ok, msg, j = self.clone_world(i)
+            if not ok:
+                messagebox.showinfo("Worlds", msg, parent=top)
+            else:
+                self.system(msg)
+            refresh(j)
+            return "break"
+
         btns = tk.Frame(top)
         btns.pack(fill="x", padx=10, pady=(4, 10))
         tk.Button(btns, text="Connect", width=10, command=connect).pack(side="left")
         tk.Button(btns, text="Add...", width=8, command=lambda: edit_form(None)).pack(side="left", padx=6)
         tk.Button(btns, text="Edit...", width=8,
                   command=lambda: edit_form(current()) if current() is not None else None).pack(side="left")
+        tk.Button(btns, text="Clone", width=8, command=clone).pack(side="left", padx=(6, 0))
         tk.Button(btns, text="Delete", width=8, command=delete).pack(side="left", padx=6)
         tk.Button(btns, text="Close", width=8, command=top.destroy).pack(side="right")
         lb.bind("<Double-Button-1>", connect)
         lb.bind("<Return>", connect)
         lb.bind("<Delete>", delete)
         lb.bind("<Insert>", lambda e: edit_form(None))
+        lb.bind("<Control-d>", clone)
         top.bind("<Escape>", lambda e: top.destroy())
-        top._actions = dict(connect=connect, delete=delete, add=lambda: edit_form(None),
+        top._actions = dict(connect=connect, delete=delete, add=lambda: edit_form(None), clone=clone,
                             edit=lambda: edit_form(current()), refresh=refresh, listbox=lb, save=save)
         refresh()
         self._theme_tree(top)
@@ -6106,7 +6183,7 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
         cols = [{"title": "#", "width": 3, "align": "r"}, {"title": "Name", "width": 18},
                 {"title": "Host", "width": 0}, {"title": "Port", "width": 5, "align": "r"},
                 {"title": "TLS", "width": 3}, {"title": "Last call", "width": 10}]
-        hints = [("Enter", "Dial"), ("A", "Add"), ("E", "Edit"), ("Del", "Remove"), ("Esc", "Close")]
+        hints = [("Enter", "Dial"), ("A", "Add"), ("E", "Edit"), ("C", "Clone"), ("Del", "Remove"), ("Esc", "Close")]
 
         def act(name, idx, table):
             worlds = self.cfg["worlds"]
@@ -6114,6 +6191,10 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 w = worlds[idx]
                 table.close()
                 self.dial_world(w)
+            elif name == "clone" and idx is not None:
+                _ok, msg, j = self.clone_world(idx)
+                self.system(msg)
+                table.set_rows(self._worlds_rows(), selected=j)
             elif name == "add":
                 table.close()
                 self._dos_world_form(None, None)
@@ -6128,7 +6209,8 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                     lambda r, v: self._remove_world(idx) if r == "yes" else self._reopen(self.dos_worlds, idx))
 
         table = dosui.DosTable(self.root, "Dialing directory", cols, self._worlds_rows(), self._dc(),
-                               self.f_norm, act, hints=hints, min_width=64, selected=selected)
+                               self.f_norm, act, keys=dict(dosui._TABLE_KEYS, c="clone"), hints=hints, min_width=64,
+                               selected=selected)
         self._overlay = table
         table.open()
         return table
@@ -6316,7 +6398,7 @@ class App(capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybo
                 or self._update_command(cmd, arg) or self._worlds_command(cmd, arg) or self._panesize_command(cmd, arg) \
                 or self._emojipick_command(cmd, arg) or self._gametime_command(cmd, arg) \
                 or self._stamps_command(cmd, arg) or self._import_command(cmd, arg) or self._buttons_command(cmd, arg) \
-                or self._panesent_command(cmd, arg) \
+                or self._panesent_command(cmd, arg) or self._copyplain_command(cmd, arg) \
                 or self._popout_command(cmd, arg):
             return
         if cmd == "export":

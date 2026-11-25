@@ -93,8 +93,52 @@ class EditMenuMixin:
             out.append(("Open link", "O", True, lambda: self.open_link(url)))
             out.append(("Copy link", "K", True, lambda: self._to_clipboard(url)))
         out.append(("Copy", "C", has_sel, lambda: w.event_generate("<<Copy>>")))
+        if w is getattr(self._shown, "out", None):                 # only the main text has my commands in it
+            out.append(("Copy without my commands", "W", has_sel, lambda: self.copy_without_echo(w)))
         out.append(("Select all", "A", True, lambda: w.tag_add("sel", "1.0", "end-1c")))
         return out
+
+    # ---- copy without the commands I typed ------------------------------------------------------------
+    def selection_without_echo(self, w):
+        """The selected text of w with every stretch tagged as my own typed command left out (the whole line goes,
+        its line break included). '' when nothing is selected."""
+        out = []
+        ranges = w.tag_ranges("sel")
+        for i in range(0, len(ranges), 2):
+            a, b = str(ranges[i]), str(ranges[i + 1])
+            echo = "echo" in w.tag_names(a)
+            for key, val, _idx in w.dump(a, b, text=True, tag=True):
+                if key == "tagon" and val == "echo":
+                    echo = True
+                elif key == "tagoff" and val == "echo":
+                    echo = False
+                elif key == "text" and not echo:
+                    out.append(val)
+        return "".join(out)
+
+    def copy_without_echo(self, w=None):
+        """Copy the selection to the clipboard, leaving out the commands I sent. Returns the text copied, or None
+        when nothing was selected."""
+        areas = [w] if w is not None else self._visible_text_areas()
+        for a in areas:
+            try:
+                if a.tag_ranges("sel"):
+                    text = self.selection_without_echo(a)
+                    self._to_clipboard(text)
+                    return text
+            except tk.TclError:
+                continue
+        return None
+
+    def _copyplain_command(self, cmd, arg):
+        """/copyplain: copy what is selected in the text, without the commands I sent."""
+        if cmd != "copyplain":
+            return False
+        if self.copy_without_echo() is None:
+            self.system("Nothing is selected. Drag over some text first, then type /copyplain.")
+        else:
+            self.system("Copied, without the commands you sent.")
+        return True
 
     def _link_at(self, w, x, y):
         try:

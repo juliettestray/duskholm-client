@@ -174,6 +174,20 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   when the window is narrow, and shows only when the world has buttons. In the DOS look the buttons are text-mode labels.
   `/button add Sneak = sneak;hide`, `/button key Sneak Alt-F5` (or `none`), `/button run|del|on|off Sneak`,
   `/button list`, `/button dock top|bottom|off`. The list window adds, edits, switches on and off, removes and reorders.
+- **Clone** (the *Clone* button, or `Ctrl+D` in the list, or `C` in the DOS look) in the Worlds, Triggers, Aliases and
+  Buttons lists copies the selected entry right underneath it under a new name (`Name copy`, `Name copy 2` ...; an alias
+  becomes `name2`, so it stays one word you can type). Then edit the copy. A cloned **trigger starts switched off**, so the
+  two do not both fire until you have changed it; a cloned **button has no hotkey** (two buttons cannot share one); a cloned
+  **world** has the same address and note but no "last call" (its triggers, aliases and buttons are separate: a rule that
+  belongs to one world stays with that world).
+- **Copy without my commands.** Right-click in the main text > *Copy without my commands*, or select and type
+  `/copyplain`: the selection goes to the clipboard with the lines you typed (the commands the client echoed) left out.
+  Ordinary `Ctrl+C` is unchanged and copies everything.
+- **Logging** (`/log`, F3): Options > *Put the commands I send in the log file* (on by default) can be switched off to keep
+  what you typed out of the log; the game's text and the client's notes are still logged.
+- **No gap where a message was hidden.** When a trigger hides a message and the screen already ends in a blank line, the
+  blank line the game puts after the message is dropped with it (one blank line only), so hiding something does not
+  leave a hole.
 - **Capture panes** (`Ctrl+P`, File > Panes / layout). Lines can be copied into small in-client
   panes (OOC, Tells, Guide ...) docked to the top, bottom, left or right of the main text. In the
   DOS look they are plain regions of the screen with a tab row, not windows. A trigger's *Send to
@@ -418,6 +432,7 @@ Local commands start with `/` (the game has none). `//text` sends `/text`.
 | `/alias name a;b %*` | define an alias (`/alias "two words" ...` for a longer name); `;` separates commands, `$*` is the arguments (otherwise they are appended to the last command) |
 | `/unalias name`, `/aliases` | remove / list aliases |
 | `/log [file]` | start or stop logging |
+| `/copyplain` | copy the selected text without the commands you sent |
 | `/timer 10m [label]`, `/timer list`, `/timer cancel [n]` | timers (also `21:30`, `game 21:30`) |
 | `/moon`, `/notes`, `/hotkeys` | the moon window, notepad, hotkey editor |
 | `/hex ff8800`, `/gradient text`, `/customize` | colour tools and the customize form |
@@ -476,6 +491,7 @@ python tests/test_importers.py   # MUSHclient file import (pure): patterns, colo
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
+python tests/test_clone_echo.py   # clone worlds / triggers / aliases / buttons, log without my commands, copy without them, no gap
 python tests/test_buttons.py      # buttons: bar, hotkeys, per-world scope, docking, manager, both looks
 python tests/test_worldtabs_ui.py  # the row of world tabs, and clickable key hints in the DOS look
 python tests/test_entrybox.py     # the growing entry box: lines, Shift+Enter, history, passwords, both looks

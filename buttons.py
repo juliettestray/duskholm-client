@@ -267,6 +267,26 @@ class ButtonsMixin:
             return j
         return index
 
+    def clone_button(self, index):
+        """Copy a button right after the original under a new label. The hotkey is not copied (two buttons cannot
+        share one); give the copy its own. Returns (ok, message, index of the copy)."""
+        lst = list(self.cfg.get("buttons", []))
+        if not 0 <= (index if index is not None else -1) < len(lst):
+            return False, "Nothing is selected to clone.", index
+        if len(lst) >= MAX_BUTTONS:
+            return False, "Too many buttons (%d at most)." % MAX_BUTTONS, index
+        src = lst[index]
+        same_scope = [o["name"] for o in lst if scope_key(o) == scope_key(src)]
+        new = dict(src, name=triggers.copy_name(src["name"], same_scope, MAX_LABEL), key="")
+        b = validate_button(new)
+        if b is None:
+            return False, "That label cannot be used for a copy. Edit the original's label first.", index
+        lst.insert(index + 1, b)
+        self.cfg["buttons"] = lst
+        self._save_settings()
+        self._refresh_buttonbar(True)
+        return True, "Cloned as '%s'%s." % (b["name"], " (no hotkey: give it one if you want)" if src["key"] else ""), index + 1
+
     def toggle_button(self, index):
         lst = list(self.cfg.get("buttons", []))
         if 0 <= index < len(lst):
@@ -417,18 +437,32 @@ class ButtonsMixin:
             if i is not None:
                 self.toggle_button(i)
                 refresh(i)
+
+        def clone(_e=None):
+            i = current()
+            if i is None:
+                return "break"
+            ok, msg, j = self.clone_button(i)
+            if not ok:
+                messagebox.showinfo("Clone", msg, parent=top)
+            else:
+                self.system(msg)
+            refresh(j)
+            return "break"
         row = tk.Frame(top)
         row.pack(fill="x", padx=10, pady=(0, 10))
         for label, fn in (("Add", lambda: self._button_form(top, None, refresh)), ("Edit", edit), ("On/off", toggle),
-                          ("Remove", remove), ("Up", lambda: move(-1)), ("Down", lambda: move(+1))):
+                          ("Clone", clone), ("Remove", remove), ("Up", lambda: move(-1)), ("Down", lambda: move(+1))):
             tk.Button(row, text=label, width=8, command=fn).pack(side="left", padx=(0, 4))
         tk.Button(row, text="Close", width=8, command=top.destroy).pack(side="right")
         lb.bind("<Double-1>", edit)
+        lb.bind("<Control-d>", clone)
         top.bind("<Escape>", lambda e: top.destroy())
         top.protocol("WM_DELETE_WINDOW", top.destroy)
         refresh()
         top._list = lb
         top._refresh = refresh
+        top._clone = clone
         self._theme_tree(top)
         return top
 
@@ -480,7 +514,7 @@ class ButtonsMixin:
     def dos_buttons(self, selected=0):
         cols = [{"title": "On", "width": 3}, {"title": "Label", "width": 16}, {"title": "Key", "width": 10},
                 {"title": "Where", "width": 10}, {"title": "Sends", "width": 0}]
-        hints = [("Enter", "Edit"), ("A", "Add"), ("Space", "On/Off"), ("U/D", "Move"), ("Del", "Remove"), ("Esc", "Close")]
+        hints = [("Enter", "Edit"), ("A", "Add"), ("C", "Clone"), ("Space", "On/Off"), ("U/D", "Move"), ("Del", "Remove"), ("Esc", "Close")]
 
         def rows():
             return [{"cells": ["yes" if b["enabled"] else "", b["name"], b["key"],
@@ -497,6 +531,10 @@ class ButtonsMixin:
             elif name == "toggle" and idx is not None:
                 self.toggle_button(idx)
                 table.set_rows(rows(), selected=idx)
+            elif name == "clone" and idx is not None:
+                _ok, msg, j = self.clone_button(idx)
+                self.system(msg)
+                table.set_rows(rows(), selected=j)
             elif name in ("up", "down") and idx is not None:
                 j = self.move_button(idx, -1 if name == "up" else 1)
                 table.set_rows(rows(), selected=j)
@@ -508,7 +546,7 @@ class ButtonsMixin:
                     lambda r, v: (self.delete_button(idx), self._reopen(self.dos_buttons, max(0, idx - 1)))
                     if r == "yes" else self._reopen(self.dos_buttons, idx))
         keys = {"Return": "select", "KP_Enter": "select", "Escape": "close", "a": "add", "Insert": "add", "e": "edit",
-                "Delete": "remove", "r": "remove", "space": "toggle", "u": "up", "d": "down"}
+                "Delete": "remove", "r": "remove", "space": "toggle", "u": "up", "d": "down", "c": "clone"}
         table = dosui.DosTable(self.root, "Buttons", cols, rows(), self._dc(), self.f_norm, act, keys=keys, hints=hints,
                                min_width=70, selected=selected)
         self._overlay = table

@@ -89,7 +89,7 @@ e.delete(0, "end")
 # ---- the main text and the panes -----------------------------------------------------------------------
 app._on_data(("A line with a link https://example.com/x in it" + CR).encode()); pump(0.4)
 it = items(app.out, 5, 5)
-assert list(it) == ["Copy", "Select all"] and not it["Copy"][0], "no link under the pointer, nothing selected"
+assert list(it) == ["Copy", "Copy without my commands", "Select all"] and not it["Copy"][0] and not it["Copy without my commands"][0], "no link under the pointer, nothing selected"
 it["Select all"][1](); pump(0.1)
 assert items(app.out, 5, 5)["Copy"][0]
 items(app.out, 5, 5)["Copy"][1](); pump(0.2)
@@ -99,7 +99,7 @@ app.out.tag_remove("sel", "1.0", "end")
 pos = app.out.search("https://example.com/x", "1.0")
 bb = app.out.bbox(pos + "+3c")
 it = items(app.out, bb[0] + 1, bb[1] + 1)
-assert list(it) == ["Open link", "Copy link", "Copy", "Select all"], list(it)
+assert list(it) == ["Open link", "Copy link", "Copy", "Copy without my commands", "Select all"], list(it)
 it["Copy link"][1](); assert clip() == "https://example.com/x"
 opened = []
 sc.webbrowser.open = lambda u, *a, **k: opened.append(u)

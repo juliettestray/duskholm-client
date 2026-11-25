@@ -899,3 +899,17 @@ PRESETS = [p for p in (
 def get_presets():
     """Deep copy of PRESETS (safe to edit)."""
     return copy.deepcopy(PRESETS)
+
+
+def copy_name(name, taken, limit=MAX_NAME, words=True):
+    """A name for a clone of `name` that none of `taken` (compared ignoring case) already uses, at most `limit`
+    characters: 'Name copy', 'Name copy 2', ... With words=False (an alias, whose name is what you type) it is
+    'name2', 'name3', ... instead, so it stays one word."""
+    taken = set(str(t).lower() for t in taken)
+    n = 1 if words else 2
+    while True:
+        suffix = ((" copy" if n == 1 else " copy %d" % n) if words else str(n))
+        cand = str(name)[:max(1, limit - len(suffix))].rstrip() + suffix
+        if cand.lower() not in taken:
+            return cand
+        n += 1
