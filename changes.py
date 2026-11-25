@@ -3,6 +3,7 @@ release notes on GitHub (publish: the footer about downloading is added there). 
 BEFORE releasing it. Each entry is (version, text); text is Markdown-ish: "- " bullets, **bold**, `code`."""
 
 CHANGES = [
+    ("1.2.1", """- **Backscroll is kept per world.** Reloaded backscroll used to be saved by server address, so two worlds on the same address (two characters on one game, say) shared one file and their text got mixed. Each world now has its own, and a saved world keeps its history through a rename or a new address. Text saved by an older version goes to the first world that asks for it."""),
     ("1.2.0", """- **What's new.** After an update Sanctuary shows what changed, and if you skipped several versions it lists every one you missed, newest first. `/changes` shows the latest again, `/changes all` shows them all, and it is in the Help menu.
 - **Keep text.** Options > *Show a 'Keep text' checkbox by the input box* puts a small checkbox at the right end of the input box. Tick it and Enter sends what you typed and leaves it there, so you can walk the same way many times by pressing Enter. Untick it to go back. `/keep [on|off]` does the same from the keyboard. Passwords are never kept.
 - **Search panes.** Find has a new *Search panes* box (off by default). With it ticked, Find looks in your capture panes and pop-out windows as well as the main text, main window first, and says which pane a match is in. With it off, panes are left out, so nothing shows up twice.
