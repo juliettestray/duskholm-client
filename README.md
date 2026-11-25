@@ -286,8 +286,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   `Preview: <your name> <walk> in from the north` on the status line (next to TLS in the DOS bar),
   so you can see how it will read. Options > Walk preview turns that off.
 - **Links.** `http(s)` links in the output (and in panes) are underlined and clickable, in both
-  looks. Pictures (`.png .jpg .gif .webp .bmp`) open in a viewer that fills the main area, scaled
-  to fit (`Esc` closes it; `O` or a click opens the original in your browser); every
+  looks. Pictures (`.png .jpg .gif .webp .bmp`) open in a pane at the right, scaled
+  to fit, while you keep typing. *Enlarge* makes it cover the main area (*Shrink* puts it back), *Close*
+  dismisses it, *Open original* opens it in your browser. After clicking the picture, `E` enlarges,
+  `Esc` closes and `O` opens the original; every
   other link opens in your browser. Both are options (Options menu).
 - **Emoji** (option, off by default). `:smile:` in incoming text is shown as the emoji and any
   emoji you type is sent as `:smile:`, since the game only takes plain ASCII. About 100 familiar

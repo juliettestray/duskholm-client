@@ -2396,15 +2396,18 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         bar = tk.Frame(frame, bd=0, highlightthickness=0, bg=th["panel"])
         bar.pack(fill="x")
         head = tk.Label(bar, anchor="w", padx=8, font=self.f_bold, bg=th["panel"], fg=th["fg"],
-                        text="%s  (%d x %d)    Esc: close    O: open the original in your browser"
-                        % (name, size[0], size[1]))
-        head.pack(side="left", fill="x", expand=True)
-        tk.Button(bar, text="Close", command=self.close_image_view, takefocus=0).pack(side="right", padx=4, pady=2)
-        tk.Button(bar, text="Open original", command=lambda: webbrowser.open(url), takefocus=0).pack(
+                        text="%s  (%d x %d)" % (name, size[0], size[1]))
+        head.pack(fill="x")
+        btns = tk.Frame(bar, bd=0, highlightthickness=0, bg=th["panel"])
+        btns.pack(fill="x")
+        tk.Button(btns, text="Close", command=self.close_image_view, takefocus=0).pack(side="right", padx=4, pady=2)
+        big_btn = tk.Button(btns, text="Enlarge", takefocus=0)
+        big_btn.pack(side="right", padx=2, pady=2)
+        tk.Button(btns, text="Open original", command=lambda: webbrowser.open(url), takefocus=0).pack(
             side="right", padx=2, pady=2)
         cv = tk.Canvas(frame, bg=th["bg"], highlightthickness=0, bd=0, takefocus=1)
         cv.pack(fill="both", expand=True)
-        view = {"frame": frame, "cv": cv, "url": url, "photo": None, "job": None}
+        view = {"frame": frame, "cv": cv, "url": url, "photo": None, "job": None, "big": False, "btn": big_btn}
 
         def render(_e=None):
             view["job"] = None
@@ -2437,14 +2440,46 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         cv.bind("<Escape>", lambda e: (self.close_image_view(), "break")[1])
         cv.bind("<Key-o>", lambda e: (webbrowser.open(url), "break")[1])
         cv.bind("<Key-O>", lambda e: (webbrowser.open(url), "break")[1])
+        cv.bind("<Key-e>", lambda e: (self.image_view_enlarge(), "break")[1])
+        cv.bind("<Key-E>", lambda e: (self.image_view_enlarge(), "break")[1])
         cv.bind("<Button-1>", lambda e: (cv.focus_set(), "break")[1])      # a click only takes the focus
-        frame.place(x=0, y=0, relwidth=1.0, relheight=1.0)
-        frame.lift()
+        big_btn.configure(command=self.image_view_enlarge)
         self._image_view = view
-        cv.focus_set()
-        self.system("Image opened: %s, %d by %d pixels. Escape closes it, O opens the original in your browser."
-                    % (name, size[0], size[1]))
+        self._place_image_view()
+        self.system("Image opened at the right: %s, %d by %d pixels. Click Enlarge to make it big, Close (or Escape "
+                    "after clicking it) to dismiss it." % (name, size[0], size[1]))
         return True
+
+    IMAGE_SIDE_FRACTION = 0.36                         # how much of the width the side picture takes
+    IMAGE_SIDE_MIN = 240
+
+    def _place_image_view(self):
+        """The picture sits in a pane at the right (you keep typing); Enlarge makes it cover the main area."""
+        v = getattr(self, "_image_view", None)
+        if not v:
+            return
+        try:
+            if v["big"]:
+                v["frame"].place(x=0, y=0, width="", relwidth=1.0, relheight=1.0)
+                v["btn"].configure(text="Shrink")
+                v["cv"].focus_set()
+            else:
+                w = max(self._holder.winfo_width(), 1)
+                pw = min(w, max(self.IMAGE_SIDE_MIN, int(w * self.IMAGE_SIDE_FRACTION)))
+                v["frame"].place(x=w - pw, y=0, width=pw, relwidth="", relheight=1.0)
+                v["btn"].configure(text="Enlarge")
+            v["frame"].lift()
+        except tk.TclError:
+            pass
+
+    def image_view_enlarge(self):
+        """Switch the picture between its side pane and the whole main area."""
+        v = getattr(self, "_image_view", None)
+        if v:
+            v["big"] = not v["big"]
+            self._place_image_view()
+            if not v["big"]:
+                self.root.after_idle(self.input.focus_set)
 
     def _raise_overlays(self):
         """The picture viewer and the notepad cover the main area: keep them above the pane headers,
@@ -2801,6 +2836,8 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             self._layout_job = None
 
     def _on_holder_configure(self, e):
+        if e.widget is self._holder and getattr(self, "_image_view", None) and not self._image_view["big"]:
+            self._place_image_view()                           # the side picture follows the window's width
         if e.widget is self._holder and (self._panes_active or self.cfg["layout"]["regions"]):
             self.schedule_layout()
 
@@ -5373,7 +5410,8 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
             if self._overlay_open():
                 self._overlay._cv.focus_set()
                 return
-            if getattr(self, "_notepad", None) or getattr(self, "_image_view", None):
+            iv = getattr(self, "_image_view", None)
+            if getattr(self, "_notepad", None) or (iv and iv["big"]):
                 return
             fg = self.root.focus_get()
             if fg is None or fg is self.root or fg is self.out:

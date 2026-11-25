@@ -85,11 +85,22 @@ while time.time() < end and app._image_view is None:
 pump(0.6)
 v = app._image_view
 assert v is not None and v["frame"].winfo_ismapped(), "the image opens in a viewer"
-assert v["frame"].winfo_width() >= app._holder.winfo_width() - 4 and v["frame"].winfo_height() >= app._holder.winfo_height() - 4, "that covers the main area"
+hw, hh = app._holder.winfo_width(), app._holder.winfo_height()
+fw = v["frame"].winfo_width()
+assert not v["big"] and hw * 0.2 < fw < hw * 0.6 and v["frame"].winfo_height() >= hh - 4, "a side pane at the right, full height"
+assert v["frame"].winfo_x() + fw >= hw - 4, "flush with the right edge"
 assert v["photo"] is not None and v["photo"].width() > 0, "and the picture is drawn"
 assert "images" not in app._panes, "no pane is created for it"
 assert "Image opened" in app.out.get("1.0", "end")
 assert opened == ["https://example.com/page"], "opening a picture does not go to the browser"
+app.input.focus_force(); pump(0.1)
+assert app.root.focus_get() is app.input, "typing keeps working while the picture is at the side"
+v["btn"].invoke(); pump(0.4)                       # Enlarge: now it covers the main area
+assert v["big"] and v["frame"].winfo_width() >= hw - 4 and v["frame"].winfo_height() >= hh - 4, "Enlarge covers the main area"
+assert v["btn"].cget("text") == "Shrink"
+v["btn"].invoke(); pump(0.4)                       # back to the side
+assert not v["big"] and v["frame"].winfo_width() < hw * 0.6
+v["cv"].focus_force(); pump(0.1)
 v["cv"].event_generate("<Key-o>"); pump(0.2)
 assert opened[-1] == base + "/pic.png", "O opens the original"
 v["cv"].event_generate("<Escape>"); pump(0.3)
