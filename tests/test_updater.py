@@ -302,5 +302,13 @@ assert sc.clean_settings({"host": "x", "update_skip": "v1.2.0"})["update_skip"] 
 assert sc.clean_settings({"host": "x"})["update_check"] is False, "never checks by itself unless switched on"
 app._local("/update"); pump(0.2)
 
+# the relaunched exe must not inherit the old one's PyInstaller temp-folder variables ("Failed to load Python DLL")
+e = up.clean_env({"PATH": "x", "_MEIPASS2": "C:\\t\\_MEI1", "_PYI_APPLICATION_HOME_DIR": "a", "_pyi_archive_file": "b",
+                  "_PYI_PARENT_PROCESS_LEVEL": "0", "HOME": "h", "MEIPASS": "keep"})
+assert e == {"PATH": "x", "HOME": "h", "MEIPASS": "keep"}, e
+os.environ["_PYI_APPLICATION_HOME_DIR"] = "zz"
+assert not any(k.upper().startswith(("_MEI", "_PYI")) for k in up.clean_env()), "default: the real environment"
+del os.environ["_PYI_APPLICATION_HOME_DIR"]
+
 root.update(); root.destroy(); srv.shutdown()
 print("updater tests OK")

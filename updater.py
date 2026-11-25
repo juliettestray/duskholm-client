@@ -253,10 +253,23 @@ def write_swap_script(current, new, pid, start=True):
     return bat
 
 
+def clean_env(env=None):
+    """A copy of the environment without PyInstaller's bookkeeping variables (_MEIPASS2, _PYI_*).
+    The running one-file exe sets them to point at its own temporary folder; a new Sanctuary.exe
+    started with them still set believes it is a child of this one, tries to use that folder, and
+    fails with 'Failed to load Python DLL ... python310.dll' once this program has exited and
+    removed it."""
+    env = dict(os.environ if env is None else env)
+    for k in list(env):
+        if k.upper().startswith(("_MEI", "_PYI")):
+            del env[k]
+    return env
+
+
 def launch_swap(current, new, start=True):
     bat = write_swap_script(current, new, os.getpid(), start)
     # CREATE_NO_WINDOW alone: the helper has a hidden console that its commands share. (Adding
     # DETACHED_PROCESS gives every command its own visible console window.)
     subprocess.Popen(["cmd", "/c", bat], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True,
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=clean_env())
     return bat
