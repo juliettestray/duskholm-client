@@ -200,6 +200,12 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   tab leaves the main window while it is out, and an area whose panes are all out goes away (the main text gets the
   room). A pane belongs to a world and keeps updating while that world is not on screen; closing the world closes its
   windows. Where the window was, and whether it was out, is remembered per world and comes back next time.
+  **Input bar:** the "Input" box in the window (or `/popinput <pane> [on|off]`) gives it an input bar of its own, so a pane
+  pinned to a second monitor can be answered from there: what you type is sent to that window's world as if typed in the
+  main window (aliases, `/commands` and the history all work; a line starting with `/` stays local), and the "Send:" box
+  beside it is put in front of every line (`text Mara`, for a Phone window; `/popinput <pane> prefix <text>` sets it
+  too). Up and Down recall what you typed there, a password prompt in its world shows as dots and is never kept, and the
+  bar and its prefix are remembered with the pane.
   **Tear-off:** while the pane sizes are unlocked (`/panelock off`), drag a pane's tab out of its area and let go
   anywhere outside the header: it becomes a window right there (the pointer changes while you are far enough out;
   letting go over the header is just a click, and while locked the status line says how to unlock). **On top:** the
@@ -458,6 +464,7 @@ python tests/test_custom.py       # the customize form's commands and the design
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
 python tests/test_buttons.py      # buttons: bar, hotkeys, per-world scope, docking, manager, both looks
 python tests/test_worldtabs_ui.py  # the row of world tabs, and clickable key hints in the DOS look

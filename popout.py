@@ -10,7 +10,10 @@ remembered with the pane (per world) and comes back next time.
 
 Ways in: the arrow at the right of a pane area's header, `/popout <pane>`, or dragging a pane's tab out of its area
 (tear-off; only while the pane sizes are unlocked, /panelock off); back: the Dock button, closing the window, or
-`/dock <pane>`. The "On top" box in the window (or `/ontop <pane>`) keeps it above other windows."""
+`/dock <pane>`. The "On top" box in the window (or `/ontop <pane>`) keeps it above other windows. The "Input" box gives the
+window an input bar of its own (or `/popinput <pane> on|off|prefix <text>`): what you type there is sent to the game as
+if typed in the main window, with the window's "Send:" text in front of it (`text Mara ` for a phone window, say), so a
+pane pinned to a second monitor can be answered from there. Both are remembered with the pane."""
 import re
 import tkinter as tk
 
@@ -41,6 +44,8 @@ class PopOutMixin:
         """/popout <pane>   /dock <pane>   (with no name: which panes there are)"""
         if cmd == "ontop":
             return self._ontop_command(arg)
+        if cmd == "popinput":
+            return self._popinput_command(arg)
         if cmd not in ("popout", "dock"):
             return False
         name = (arg or "").strip()
@@ -72,6 +77,123 @@ class PopOutMixin:
         self.system("%s stays on top of other windows: %s%s." % (d["name"], "on" if want else "off",
                                                                   "" if self._popped(d["name"]) else " (when it is in its own window)"))
         return True
+
+    def _popinput_command(self, arg):
+        """/popinput <pane> [on|off]   /popinput <pane> prefix <text>   (prefix with no text clears it)"""
+        words = (arg or "").split(None, 2)
+        d = self._find_pane_def(words[0]) if words else None
+        if d is None:
+            self.system("Say which pane: /popinput <pane> [on|off|prefix <text>]." if not words
+                        else "No pane called '%s'." % words[0])
+            return True
+        w = d.get("window") or {}
+        if len(words) > 1 and words[1].lower() == "prefix":
+            text = words[2] if len(words) > 2 else ""
+            self.set_popout_prefix(d["name"], text)
+            now = (d.get("window") or {}).get("prefix")
+            self.system("%s: what you type in its input bar is sent after '%s'." % (d["name"], now) if now
+                        else "%s: its input bar sends exactly what you type." % d["name"])
+            return True
+        want = (words[1].lower() in ("on", "yes", "1")) if len(words) > 1 and words[1].lower() in (
+            "on", "off", "yes", "no", "1", "0") else (not w.get("input"))
+        self.set_popout_input(d["name"], want)
+        self.system("%s has an input bar: %s%s." % (d["name"], "on" if want else "off",
+                                                    "" if self._popped(d["name"]) else " (when it is in its own window)"))
+        return True
+
+    def set_popout_input(self, name, on):
+        """Give the pane's window an input bar of its own (remembered with the pane)."""
+        key = str(name).strip().lower()
+        d = self._find_pane_def(key)
+        if d is None:
+            return False
+        d["window"] = dict(d.get("window") or {}, input=bool(on))
+        pane = self._panes.get(key)
+        view = pane.get("popout") if pane else None
+        if view:
+            try:
+                view["inp_var"].set(bool(on))
+                if on:
+                    view["inbar"].pack(side="bottom", fill="x", before=view["box"])
+                    view["entry"].focus_set()
+                else:
+                    view["inbar"].pack_forget()
+            except tk.TclError:
+                pass
+        self._save_settings()
+        return True
+
+    def set_popout_prefix(self, name, text):
+        """What the window's input bar puts in front of what you type, e.g. 'text Mara' (remembered with the pane)."""
+        key = str(name).strip().lower()
+        d = self._find_pane_def(key)
+        if d is None:
+            return False
+        text = " ".join("".join(ch for ch in str(text) if ch.isprintable()).split())[:40]
+        w = dict(d.get("window") or {})
+        if text:
+            w["prefix"] = text
+        else:
+            w.pop("prefix", None)
+        d["window"] = w
+        pane = self._panes.get(key)
+        view = pane.get("popout") if pane else None
+        if view:
+            view["prefix_var"].set(text)
+        self._save_settings()
+        return True
+
+    def _popout_input_commit(self, view):
+        """Remember the 'Send:' text the window has now."""
+        d = self._find_pane_def(view["key"])
+        if d is None:
+            return
+        text = " ".join("".join(ch for ch in view["prefix_var"].get() if ch.isprintable()).split())[:40]
+        if text != (d.get("window") or {}).get("prefix", ""):
+            self.set_popout_prefix(view["key"], text)
+
+    def _popout_mask(self, view):
+        """A password prompt in this window's world: what is typed in its input bar shows as dots."""
+        try:
+            view["entry"].configure(show="*" if getattr(view["session"].term, "echo_off", False) else "")
+        except tk.TclError:
+            pass
+
+    def _popout_send(self, view):
+        """Enter in a window's input bar: send the line to that window's world, as if typed in the main window."""
+        sess = view["session"]
+        if sess not in self.sessions:
+            return "break"
+        self._popout_mask(view)
+        text = view["entry"].get()
+        if not text.strip():
+            return "break"
+        secret = bool(getattr(sess.term, "echo_off", False))
+        prefix = " ".join(view["prefix_var"].get().split())
+        line = text if (secret or not prefix or text.startswith("/")) else prefix + " " + text.lstrip()
+        view["entry"].delete(0, "end")
+        if not secret:
+            view["hist"].append(text)
+            del view["hist"][:-100]
+        view["hist_pos"] = len(view["hist"])
+        self._popout_input_commit(view)
+        prev, self.session = self.session, sess
+        try:
+            self._submit_line(line, secret)
+        finally:
+            self.session = prev
+        return "break"
+
+    def _popout_hist(self, view, step):
+        hist = view["hist"]
+        if not hist:
+            return "break"
+        pos = max(0, min(len(hist), view["hist_pos"] + step))
+        view["hist_pos"] = pos
+        view["entry"].delete(0, "end")
+        if pos < len(hist):
+            view["entry"].insert(0, hist[pos])
+        return "break"
 
     def set_popout_top(self, name, on):
         """Keep the pane's window above all other windows (remembered with the pane)."""
@@ -127,12 +249,25 @@ class PopOutMixin:
         top_var = tk.BooleanVar(value=top)
         tk.Checkbutton(bar, text="On top", variable=top_var,
                        command=lambda: self.set_popout_top(key, top_var.get())).pack(side="left", padx=(10, 3))
+        inp = bool((d.get("window") or {}).get("input"))
+        inp_var = tk.BooleanVar(value=inp)
+        tk.Checkbutton(bar, text="Input", variable=inp_var,
+                       command=lambda: self.set_popout_input(key, inp_var.get())).pack(side="left", padx=(10, 3))
         try:
             win.attributes("-topmost", top)
         except tk.TclError:
             pass
         box = tk.Frame(win)
+        inbar = tk.Frame(win)                                # the input bar: shown when asked for, above the text in packing order
+        prefix_var = tk.StringVar(value=str((d.get("window") or {}).get("prefix") or ""))
+        tk.Label(inbar, text="Send:").pack(side="left", padx=(6, 2))
+        pre = tk.Entry(inbar, textvariable=prefix_var, width=14)
+        pre.pack(side="left", padx=(0, 4), pady=4)
+        entry = tk.Entry(inbar, font=self.f_norm)
+        entry.pack(side="left", fill="x", expand=True, padx=(0, 6), pady=4)
         box.pack(side="top", fill="both", expand=True)
+        if inp:
+            inbar.pack(side="bottom", fill="x", before=box)
         sb = tk.Scrollbar(box)
         sb.pack(side="right", fill="y")
         text = tk.Text(box, font=self.f_norm, wrap="word", state="disabled", borderwidth=0, highlightthickness=0,
@@ -141,10 +276,21 @@ class PopOutMixin:
         sb.configure(command=text.yview)
         text.configure(yscrollcommand=sb.set)
         view = {"key": key, "session": self.session, "win": win, "text": text, "sb": sb, "follow": True,
-                "settling": False, "unread": 0, "save_job": None, "top_var": top_var}
+                "settling": False, "unread": 0, "save_job": None, "top_var": top_var, "inp_var": inp_var, "inbar": inbar,
+                "entry": entry, "pre": pre, "box": box, "prefix_var": prefix_var, "hist": [], "hist_pos": 0}
         pane["popout"] = view                                # (from here the text counts among the text areas)
-        for w, role in ((win, "panel"), (bar, "panel"), (box, "frame"), (text, "text"), (sb, "scroll")):
+        for w, role in ((win, "panel"), (bar, "panel"), (box, "frame"), (text, "text"), (sb, "scroll"), (inbar, "panel"),
+                        (entry, "entry"), (pre, "entry")):
             self._reg(w, role)
+        for seq in ("<Return>", "<KP_Enter>"):
+            entry.bind(seq, lambda e, v=view: self._popout_send(v))
+        entry.bind("<Up>", lambda e, v=view: self._popout_hist(v, -1))
+        entry.bind("<Down>", lambda e, v=view: self._popout_hist(v, +1))
+        entry.bind("<Escape>", lambda e: entry.delete(0, "end"))
+        entry.bind("<FocusIn>", lambda e, v=view: self._popout_mask(v), add="+")
+        entry.bind("<KeyPress>", lambda e, v=view: self._popout_mask(v), add="+")
+        pre.bind("<FocusOut>", lambda e, v=view: self._popout_input_commit(v), add="+")
+        pre.bind("<Return>", lambda e, v=view: (self._popout_input_commit(v), v["entry"].focus_set(), "break")[2])
         self._theme_tree(win)
         self._bind_links(text)                               # (this also makes the link style, which tags are raised over)
         self._bind_edit_menu(text)
@@ -213,6 +359,10 @@ class PopOutMixin:
         view = pane.get("popout") if pane else None
         if not view:
             return False
+        try:
+            self._popout_input_commit(view)                   # the "Send:" text typed last is kept
+        except tk.TclError:
+            pass
         d = self._find_pane_def(key)
         if d is not None:
             try:

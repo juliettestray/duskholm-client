@@ -3504,7 +3504,7 @@ class App(capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, po
         ("/connect [host [port]]", "connect;  /disconnect  /reconnect  /quit"),
         ("/world [n|name]", "switch world (keys: /hotkeys);  /newworld [name]  /closeworld"),
         ("/button [add|key|run|del|list|dock]", "buttons that send commands from a bar or a hotkey (Alt+B opens the list)"),
-        ("/popout <pane>", "put a capture pane in a window of its own;  /dock <pane> brings it back;  /ontop <pane>"),
+        ("/popout <pane>", "put a capture pane in a window of its own;  /dock <pane> brings it back;  /ontop <pane>;  /popinput <pane>"),
         ("/import [file]", "import triggers and aliases from a MUSHclient file (or a Sanctuary world file)"),
         ("/stamps", "time stamps: /stamps main hh:mm|hh:mm:ss|off, /stamps <pane> on|off"),
         ("/panelock [on|off]", "lock or unlock dragging a pane area's border to resize it"),
