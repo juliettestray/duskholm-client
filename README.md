@@ -70,6 +70,14 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
     `~/.sanctuary_skins/`; drop in files from others (or hand-write one) and they appear in the
     Skin menu. Bad or oversized files are ignored.
   - Windows draws the menu bar and scrollbar itself, so those keep the system look.
+- **Menus.** Seven menus, grouped by what they are for: **File** (worlds, logging, import/export, quit), **Edit**
+  (Find, Copy without my commands, Clear screen), **View** (skin, colours, font, DOS look, stat bar, panes
+  and layout), **Automate** (triggers, aliases, buttons, timer, customize form), **Tools** (notepad, game time,
+  moon, gradient maker, hex to xterm, emoji picker), **Options** (in groups: connection, display, sending,
+  sound, logging and backscroll, screen reader) and **Help** (help, hotkeys, updates, about). The text in the
+  drop-down and right-click menus is the same size as the main text (never below 10, never above 22) and
+  follows Ctrl +/Ctrl -. The strip of menu names along the top is drawn by Windows and keeps Windows' size
+  (it follows Windows' own text-size setting).
 - **DOS terminal look** (`Alt+D`, or View > DOS terminal look; off by default), modelled on
   early-90s terminal software such as Telix and Terminate. The menu bar, toolbar and scrollbar
   go away; the game fills the window with a one-character coloured border on each side (the
@@ -165,7 +173,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   (`text ann` as well as `text`): the longest name that matches the start of what you typed wins, whole
   words only, so `text ann hello` can send to someone's long name while `text bob hi` still uses a plain
   `text` alias. In `/alias` a name of two or three words goes in quotes: `/alias "text ann" text annabelle %*`.
-- **Buttons** (`Alt+B`, File > Buttons..., or `/button`). A bar of clickable buttons, each sending its commands (the same
+- **Buttons** (`Alt+B`, Automate > Buttons..., or `/button`). A bar of clickable buttons, each sending its commands (the same
   `;` form an alias uses, run exactly as if you had typed them, so aliases and `/commands` work; they are not added to
   your command history). A button can have a **hotkey** (`Alt-F5`, `Ctrl-Alt-S`, `Shift-F9` ...; one that is already a
   built-in key or another button's is refused with the reason) and belongs to every world or to just one: the bar shows,
@@ -226,7 +234,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **No gap where a message was hidden.** When a trigger hides a message and the screen already ends in a blank line, the
   blank line the game puts after the message is dropped with it (one blank line only), so hiding something does not
   leave a hole.
-- **Capture panes** (`Ctrl+P`, File > Panes / layout). Lines can be copied into small in-client
+- **Capture panes** (`Ctrl+P`, View > Panes / layout). Lines can be copied into small in-client
   panes (OOC, Tells, Guide ...) docked to the top, bottom, left or right of the main text. In the
   DOS look they are plain regions of the screen with a tab row, not windows. A trigger's *Send to
   pane* field names the pane (it is created on first use); the line **stays in the main window**
@@ -272,7 +280,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   letting go over the header is just a click, and while locked the status line says how to unlock). **On top:** the
   "On top" box in the window, or `/ontop <pane> [on|off]`, keeps it above other windows; it is remembered with the
   pane.
-  **Resize with the mouse:** unlock with File > Lock pane sizes (or `/panelock off`), then drag the
+  **Resize with the mouse:** unlock with View > Lock pane sizes (or `/panelock off`), then drag the
   border between the main text and an area, or the divider between two areas stacked on one side (in
   the DOS look these are the frame lines, a whole cell thick, and the scrollbars step aside while it is
   unlocked). It is locked by default, so nothing moves by accident.
@@ -295,7 +303,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   emoji you type is sent as `:smile:`, since the game only takes plain ASCII. About 100 familiar
   shortcodes plus every emoji's official name (`:rolling_on_the_floor_laughing:`). Windows' own emoji
   panel (`Win+.`) cannot put its choice into a Tk entry box, so Sanctuary has its own picker: `Alt+E`
-  (or `/emoji heart`, or File > Emoji picker) searches by part of a name and adds the emoji to what you
+  (or `/emoji heart`, or Tools > Emoji picker) searches by part of a name and adds the emoji to what you
   are typing. Emoji you paste are kept in the box too.
   **Colour emoji** (on by default in the ordinary look; Options > Colour emoji): Tk draws text in single
   colours, so an emoji would come out flat. Each one is instead drawn as a small colour picture in
@@ -320,7 +328,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   panes, Copy / Select all, and Open link / Copy link on a link. In the DOS look the same choices come
   up as a DOS menu. Ctrl+X, Ctrl+C and Ctrl+V work as always; a multi-line paste is flattened to one
   line and never sent by itself.
-- **Game time, per world** (File > Game time, `/gametime`). Every world has its own game clock, set
+- **Game time, per world** (Tools > Game time, `/gametime`). Every world has its own game clock, set
   to Duskholm's by default: US Eastern (EST/EDT) running 1:1 with real time. A world can use a fixed
   offset (`/gametime zone -5`, `+5:30`, `utc`), take its offset from the game's `time` command
   (`/gametime zone learn`), or run at another speed: `/gametime ratio 3:1` is three in-character
@@ -415,7 +423,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   of `send("text" .. matches[2])` lines, which becomes the same commands with `%*`/`%1` (triggers: `%1`...);
   any other script is not run and the report says so. Not read: multi-line triggers, Lua-function, line-spacer,
   colour and prompt patterns, timers, keys, scripts and buttons. More clients (TinTin++) are planned.
-- **Hotkeys** (`/hotkeys`, File menu): the Ctrl/Alt command keys can be changed (including the world keys
+- **Hotkeys** (`/hotkeys`, Help menu): the Ctrl/Alt command keys can be changed (including the world keys
   and `Ctrl+A`, below); F-keys are fixed.
 - **An entry box that grows as you type** (Options > Entry box grows to (lines): off, 2, 3, 5 or 8; off by
   default). The line wraps at the window edge and the box gets taller with it, up to the limit you chose, and goes
@@ -444,7 +452,7 @@ Settings live in `~/.sanctuary.json`.
 
 ## Updating, and making a release
 
-**Updating.** `/update` (or File > Check for updates) asks GitHub whether a newer release exists.
+**Updating.** `/update` (or Help > Check for updates) asks GitHub whether a newer release exists.
 It never runs by itself unless you switch on *Options > Check for updates when Sanctuary starts*,
 and it sends nothing about you. If there is one you see what is new and choose *Install update*,
 *Skip this version* or *Later*. The download is checked against the SHA-256 published with the

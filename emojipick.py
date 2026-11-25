@@ -1,4 +1,4 @@
-"""An emoji picker inside Sanctuary (Alt+E, /emoji, File menu).
+"""An emoji picker inside Sanctuary (Alt+E, /emoji, Tools menu).
 
 Windows' own emoji panel (Win+.) cannot put its choice into a Tk entry box: the emoji shows while the panel is open
 and vanishes when it closes, because Tk does not accept what that panel hands over. This picker puts the emoji into

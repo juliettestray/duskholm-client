@@ -92,6 +92,7 @@ MAX_SCROLLBACK_LINES = 20000
 KEEPALIVE_SECONDS = 120
 APP_NAME = "Sanctuary"   # every user-visible mention of the client's name comes from here
 MIN_FONT, MAX_FONT = 7, 40
+MENU_FONT_MAX = 22                                       # menus follow the text size up to here
 RECONNECT_SECONDS = 30   # wait between automatic reconnect attempts
 QUIT_GRACE = 15          # a close this soon after the user sent "quit" is intentional
 # The game's AFK prompt is "[AFK] " with no line break after it, so it ends up glued to the end of whatever came before it
@@ -1692,6 +1693,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         root.configure(bg=self.theme["bg"])
         root.geometry(self.cfg.get("geometry", "1000x700"))
         self._build_fonts()
+        self._apply_menu_font()
         self._build_widgets()
         self._build_menu()
         self.apply_layout()
@@ -2104,46 +2106,107 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         if self.cfg.get("clock", "off") != "off":
             self._start_xtick()
 
+    MENU_FONT_FAMILY = "Segoe UI"
+
+    def _apply_menu_font(self):
+        """Menus (the drop-downs and right-click menus) use Windows' menu font, which is small. Give them the same
+        size as the main text (never below 10, and not absurdly large when the text is zoomed right up)."""
+        try:
+            f = tkfont.nametofont("TkMenuFont")
+            fam = self.MENU_FONT_FAMILY if self.MENU_FONT_FAMILY in tkfont.families(self.root) \
+                else tkfont.nametofont("TkDefaultFont").actual("family")
+            size = max(10, min(MENU_FONT_MAX, int(self.cfg.get("font_size", 11))))
+            f.configure(family=fam, size=size)
+        except (tk.TclError, AttributeError, ValueError):
+            pass
+
+    def _menu_option(self, menu, key):
+        """A True/False option as a check mark in `menu`: the built-in ones and the EXTRA_BOOLS."""
+        builtin = {"verify": ("Verify TLS certificate", "v_verify", None),
+                   "bell": ("Beep on server bell", "v_bell", None),
+                   "keepalive": ("Send keep-alive", "v_keep", None),
+                   "auto_reconnect": ("Auto-reconnect when disconnected", "v_auto", self._auto_toggled),
+                   "hide_prompt": ("Hide the prompt line (show it in the bar only)", "v_hideprompt", None)}
+        if key in builtin:
+            label, var, after = builtin[key]
+            setattr(self, var, tk.BooleanVar(value=self.cfg[key]))
+            menu.add_checkbutton(label=label, variable=getattr(self, var),
+                                 command=lambda: (self.cfg.update({key: getattr(self, var).get()}), after and after())[1])
+            return
+        for k, _d, label, _dl, _h in EXTRA_BOOLS:
+            if k == key:
+                self._xvars[k] = tk.BooleanVar(value=self.cfg[k])
+                menu.add_checkbutton(label=label, variable=self._xvars[k],
+                                     command=lambda k=k: self._set_extra(k, self._xvars[k].get()))
+                return
+
+    def _menu_choice(self, menu, key):
+        """A choice option (a few named values) as a sub-menu of `menu`."""
+        for k, _d, values, label, _h in EXTRA_CHOICES:
+            if k == key:
+                sub = tk.Menu(menu, tearoff=0)
+                self._xvars[k] = tk.StringVar(value=self.cfg[k])
+                for val in values:
+                    sub.add_radiobutton(label=CHOICE_WORDS.get(val, val), value=val, variable=self._xvars[k],
+                                        command=lambda k=k: self._set_extra(k, self._xvars[k].get()))
+                menu.add_cascade(label=label, menu=sub)
+                self._extra_menus = getattr(self, "_extra_menus", []) + [sub]
+                return
+
+    # What is in the Options menu, in groups (a separator between groups). Anything in EXTRA_BOOLS / EXTRA_CHOICES
+    # that is not named here is added at the end, so a new option can never go missing.
+    OPTION_GROUPS = [
+        ("verify", "keepalive", "auto_reconnect", "update_check"),
+        ("links", "link_images", "emoji", "emoji_pics", "emoji_pics_dos", "connect_boxes", "hide_prompt",
+         "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow"),
+        ("scroll_on_send", "show_echo", "custom_form"),
+        ("bell", "bell_new"),
+        ("log_echo", "scrollback_lines", "keep_backscroll", "keep_lines"),
+        ("screen_reader", "sr_alerts", "sr_voice", "@sr_interval", "@sr_combat"),
+    ]
+
     def _build_menu(self):
         m = tk.Menu(self.root)
+        self._xvars = {}
+        self._extra_menus = []
+
+        # File: worlds and the connection, logging, moving settings in and out
         f = tk.Menu(m, tearoff=0)
         f.add_command(label="Connect / Disconnect", command=self.toggle_connection)
         f.add_command(label="Worlds...   Ctrl+W", command=self.open_worlds)
         f.add_command(label="Close this world   Ctrl+Shift+W", command=self.close_world_ask)
-        f.add_command(label="Prompt bar format...", command=self.edit_prompt)
-        f.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
-        f.add_command(label="Aliases...   Alt+A", command=self.open_aliases)
-        f.add_command(label="Buttons...   Alt+B", command=self.open_buttons)
-        f.add_command(label="Panes / layout...   Ctrl+P", command=self.open_panes)
-        self.v_panelock = tk.BooleanVar(value=self.panes_locked())
-        f.add_checkbutton(label="Lock pane sizes (no dragging)", variable=self.v_panelock,
-                          command=lambda: self.set_panes_locked(self.v_panelock.get()))
-        f.add_command(label="Timer...   Alt+T", command=self.open_timers)
-        f.add_command(label="Game time (this world)...", command=self.open_game_time)
-        f.add_command(label="Notepad   Alt+N", command=self.toggle_notepad)
-        f.add_command(label="Moon   Alt+M", command=self.open_moon)
-        f.add_command(label="Gradient maker...   Alt+G", command=self.open_gradient)
-        f.add_command(label="Emoji picker...   Alt+E", command=self.open_emoji_picker)
-        f.add_command(label="Hex to xterm...   Alt+H", command=self.open_hex)
-        f.add_command(label="Customize form...   Alt+K", command=self.open_customize)
+        f.add_separator()
+        f.add_command(label="Start/stop logging...", command=self.toggle_log)
+        f.add_separator()
         f.add_command(label="Export world settings...", command=self.open_export)
         f.add_command(label="Import world settings...", command=self.open_import)
         f.add_command(label="Import from another client...", command=self.open_import_client)
-        f.add_command(label="Hotkeys...", command=self.open_hotkeys)
-        f.add_command(label="Help   F1", command=self.open_help)
-        f.add_command(label="Check for updates...", command=self.check_for_updates)
-        f.add_command(label="About...   F12", command=self.open_about)
-        f.add_command(label="Start/stop logging…", command=self.toggle_log)
-        f.add_command(label="Clear screen   Ctrl+L", command=self.clear)
         f.add_separator()
         f.add_command(label="Quit", command=self.on_quit)
         m.add_cascade(label="File", menu=f)
+
+        # Edit: finding and copying text, clearing the screen
+        e = tk.Menu(m, tearoff=0)
+        e.add_command(label="Find...   Ctrl+F", command=self.open_find)
+        e.add_command(label="Find next   Ctrl+Shift+F", command=self.find_next)
+        e.add_separator()
+        e.add_command(label="Copy without my commands", command=lambda: self._copyplain_command("copyplain", ""))
+        e.add_separator()
+        e.add_command(label="Clear screen   Ctrl+L", command=self.clear)
+        m.add_cascade(label="Edit", menu=e)
+
+        # View: how it looks
         v = tk.Menu(m, tearoff=0)
         self._view_menu = v
         self.v_skin = tk.StringVar(value=self._skin_name())
         self._skin_menu = tk.Menu(v, tearoff=0)
         v.add_cascade(label="Skin", menu=self._skin_menu)
         self._rebuild_skin_menu()
+        v.add_command(label="Colours...", command=self.edit_colors)
+        v.add_command(label="Font...", command=self.choose_font)
+        v.add_command(label="Bigger font   Ctrl +", command=lambda: self._zoom(+1))
+        v.add_command(label="Smaller font   Ctrl -", command=lambda: self._zoom(-1))
+        v.add_separator()
         self.v_dos = tk.BooleanVar(value=self.dos)
         self.v_full = tk.BooleanVar(value=bool(self.cfg["fullscreen"]))
         v.add_checkbutton(label="DOS terminal look   Alt+D", variable=self.v_dos,
@@ -2151,56 +2214,76 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         v.add_checkbutton(label="Full screen   F11", variable=self.v_full,
                           command=lambda: self.set_fullscreen(self.v_full.get()))
         v.add_separator()
-        v.add_command(label="Colours…", command=self.edit_colors)
-        v.add_command(label="Font…", command=self.choose_font)
         self.v_statbar = tk.BooleanVar(value=self.cfg["statbar"])
         v.add_checkbutton(label="Stat bar", variable=self.v_statbar, command=self._statbar_toggled)
-        v.add_separator()
-        v.add_command(label="Bigger font   Ctrl +", command=lambda: self._zoom(+1))
-        v.add_command(label="Smaller font   Ctrl -", command=lambda: self._zoom(-1))
+        v.add_command(label="Prompt bar format...", command=self.edit_prompt)
+        v.add_command(label="Panes / layout...   Ctrl+P", command=self.open_panes)
+        self.v_panelock = tk.BooleanVar(value=self.panes_locked())
+        v.add_checkbutton(label="Lock pane sizes (no dragging)", variable=self.v_panelock,
+                          command=lambda: self.set_panes_locked(self.v_panelock.get()))
         m.add_cascade(label="View", menu=v)
+
+        # Automate: the things that act for you
+        a = tk.Menu(m, tearoff=0)
+        a.add_command(label="Triggers...   Ctrl+T", command=self.open_triggers)
+        a.add_command(label="Aliases...   Alt+A", command=self.open_aliases)
+        a.add_command(label="Buttons...   Alt+B", command=self.open_buttons)
+        a.add_command(label="Timer...   Alt+T", command=self.open_timers)
+        a.add_separator()
+        a.add_command(label="Customize form...   Alt+K", command=self.open_customize)
+        m.add_cascade(label="Automate", menu=a)
+
+        # Tools: small helpers
+        t = tk.Menu(m, tearoff=0)
+        t.add_command(label="Notepad   Alt+N", command=self.toggle_notepad)
+        t.add_command(label="Game time (this world)...", command=self.open_game_time)
+        t.add_command(label="Moon   Alt+M", command=self.open_moon)
+        t.add_separator()
+        t.add_command(label="Gradient maker...   Alt+G", command=self.open_gradient)
+        t.add_command(label="Hex to xterm...   Alt+H", command=self.open_hex)
+        t.add_command(label="Emoji picker...   Alt+E", command=self.open_emoji_picker)
+        m.add_cascade(label="Tools", menu=t)
+
+        # Options: grouped by what they are about
         o = tk.Menu(m, tearoff=0)
-        self.v_verify = tk.BooleanVar(value=self.cfg["verify"])
-        self.v_bell = tk.BooleanVar(value=self.cfg["bell"])
-        self.v_keep = tk.BooleanVar(value=self.cfg["keepalive"])
-        o.add_checkbutton(label="Verify TLS certificate", variable=self.v_verify,
-                          command=lambda: self.cfg.update(verify=self.v_verify.get()))
-        o.add_checkbutton(label="Beep on server bell", variable=self.v_bell,
-                          command=lambda: self.cfg.update(bell=self.v_bell.get()))
-        o.add_checkbutton(label="Send keep-alive", variable=self.v_keep,
-                          command=lambda: self.cfg.update(keepalive=self.v_keep.get()))
-        self.v_auto = tk.BooleanVar(value=self.cfg["auto_reconnect"])
-        o.add_checkbutton(label="Auto-reconnect when disconnected", variable=self.v_auto,
-                          command=self._auto_toggled)
-        self.v_hideprompt = tk.BooleanVar(value=self.cfg["hide_prompt"])
-        o.add_checkbutton(label="Hide the prompt line (show it in the bar only)", variable=self.v_hideprompt,
-                          command=lambda: self.cfg.update(hide_prompt=self.v_hideprompt.get()))
-        o.add_separator()
-        self._xvars = {}
-        for key, _d, label, _dl, _h in EXTRA_BOOLS:
-            self._xvars[key] = tk.BooleanVar(value=self.cfg[key])
-            o.add_checkbutton(label=label, variable=self._xvars[key],
-                              command=lambda k=key: self._set_extra(k, self._xvars[k].get()))
-        for key, _d, values, label, _h in EXTRA_CHOICES:
-            sub = tk.Menu(o, tearoff=0)
-            self._xvars[key] = tk.StringVar(value=self.cfg[key])
-            for val in values:
-                sub.add_radiobutton(label=CHOICE_WORDS.get(val, val), value=val, variable=self._xvars[key],
-                                    command=lambda k=key: self._set_extra(k, self._xvars[k].get()))
-            o.add_cascade(label=label, menu=sub)
-            self._extra_menus = getattr(self, "_extra_menus", []) + [sub]
-        sri = tk.Menu(o, tearoff=0)
-        cur = self.cfg.get("sr_interval", 0)
-        self._sr_interval_var = tk.IntVar(value=cur if cur in (0, 10, 15, 30, 60, 120, 300) else -1)
-        for secs, label in ((0, "off"), (10, "every 10 seconds"), (15, "every 15 seconds"), (30, "every 30 seconds"),
-                            (60, "every minute"), (120, "every 2 minutes"), (300, "every 5 minutes")):
-            sri.add_radiobutton(label=label, value=secs, variable=self._sr_interval_var,
-                                command=lambda: self.set_sr_interval(self._sr_interval_var.get()))
-        o.add_cascade(label="Screen reader: read def and stun...", menu=sri)
-        o.add_command(label="Screen reader: combat lines...", command=self.open_combat_filter)
-        self._extra_menus = getattr(self, "_extra_menus", []) + [sri]
+        named = {k for g in self.OPTION_GROUPS for k in g}
+        bools = [k for k, *_ in EXTRA_BOOLS]
+        choices = [k for k, *_ in EXTRA_CHOICES]
+        groups = [list(g) for g in self.OPTION_GROUPS]
+        groups[-1:-1] = [[k for k in bools + choices if k not in named]]       # new options: before the screen reader group
+        for gi, group in enumerate(g for g in groups if g):
+            if gi:
+                o.add_separator()
+            for key in group:
+                if key == "@sr_interval":
+                    sri = tk.Menu(o, tearoff=0)
+                    cur = self.cfg.get("sr_interval", 0)
+                    self._sr_interval_var = tk.IntVar(value=cur if cur in (0, 10, 15, 30, 60, 120, 300) else -1)
+                    for secs, label in ((0, "off"), (10, "every 10 seconds"), (15, "every 15 seconds"),
+                                        (30, "every 30 seconds"), (60, "every minute"), (120, "every 2 minutes"),
+                                        (300, "every 5 minutes")):
+                        sri.add_radiobutton(label=label, value=secs, variable=self._sr_interval_var,
+                                            command=lambda: self.set_sr_interval(self._sr_interval_var.get()))
+                    o.add_cascade(label="Screen reader: read def and stun...", menu=sri)
+                    self._extra_menus.append(sri)
+                elif key == "@sr_combat":
+                    o.add_command(label="Screen reader: combat lines...", command=self.open_combat_filter)
+                elif key in choices:
+                    self._menu_choice(o, key)
+                else:
+                    self._menu_option(o, key)
         m.add_cascade(label="Options", menu=o)
-        self._menus = [m, f, v, o, self._skin_menu] + getattr(self, "_extra_menus", [])
+
+        # Help
+        h = tk.Menu(m, tearoff=0)
+        h.add_command(label="Help   F1", command=self.open_help)
+        h.add_command(label="Hotkeys...", command=self.open_hotkeys)
+        h.add_separator()
+        h.add_command(label="Check for updates...", command=self.check_for_updates)
+        h.add_command(label="About...   F12", command=self.open_about)
+        m.add_cascade(label="Help", menu=h)
+
+        self._menus = [m, f, e, v, a, t, o, h, self._skin_menu] + self._extra_menus
         self._menubar = m
         self.root.config(menu=m)
 
@@ -2639,7 +2722,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         lay = self.cfg["layout"]
         if not lay["regions"]:
             self.cfg["layout"] = layout.preset_layout("Right column", [p["name"] for p in self.cfg["panes"]])
-            self.system("Captured lines get their own area on the right. Change it under File > Panes / layout (Ctrl+P).")
+            self.system("Captured lines get their own area on the right. Change it under View > Panes / layout (Ctrl+P).")
         else:
             regions = [dict(r, panes=list(r["panes"])) for r in lay["regions"]]
             regions[0]["panes"].append(name)
@@ -6775,6 +6858,7 @@ class App(findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, cap
         for f in (self.f_norm, self.f_bold, self.f_ital, self.f_bi):
             f.configure(family=self.font_family, size=size_now)
         self._sync_variants()
+        self._apply_menu_font()
         self._fit_input()
         self._font_changed()
         self.statbar.refresh()

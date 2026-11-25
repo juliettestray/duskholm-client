@@ -3,7 +3,7 @@
 A button is a label, some commands (the same `;`-separated form an alias uses, run exactly as if you had typed them, so
 aliases and /local commands work), an optional hotkey, and whether it belongs to every world or to one. The bar docks at the
 top (under the world tabs) or the bottom (above the entry box), in both looks, and only shows buttons that apply to the world
-on screen. Manage them from File > Buttons (Alt+B), or with /button.
+on screen. Manage them from Automate > Buttons (Alt+B), or with /button.
 
 Buttons are plain dicts, validated here: {"name", "body", "key", "enabled"} plus {"global": False, "world": name} for one tied
 to a world (the same way triggers and aliases are)."""
