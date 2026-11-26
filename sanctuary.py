@@ -82,6 +82,7 @@ import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
 import findtext                    # Ctrl+F / Ctrl+Shift+F
 import crt                         # CRT scanlines over the DOS look (an option)
+import phonelook                   # a popped-out pane drawn as an iPhone or an Android
 import whatsnew                   # what changed since the version last shown
 import worldids                    # stable world ids: what is tied to a world follows it when it is renamed
 import emojiimg                    # emoji as colour pictures in the text (Windows' own look)
@@ -1629,7 +1630,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -5059,6 +5060,7 @@ class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.B
                 self._dos_job = None
         self.update_dosbar()
         self._apply_crt()                                   # (scanlines show in the DOS look only)
+        self._phone_apply_all()                             # (a phone look is for the normal look)
         self._emoji_refresh()
         self._save_settings()
 
@@ -5918,16 +5920,25 @@ class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.B
         self._guard.begin_line()
         gag, effects, routes, once_routes = False, [], [], []
         rules = [t for t in triggers.for_world(self.cfg["triggers"], *self._scope(self.session)) if t.get("when") != "sent"]
-        for trig, m in triggers.match_line(plain, rules):
+        # a game prompt stuck to the front of the line (the HP bar, then the text) is not part of the message: rules that match
+        # what the game says look at the line without it, and only if none does is the whole line tried, as before
+        cut = self._leading_prompt_len(plain) if plain.startswith("[") else 0
+        hits = triggers.match_line(plain[cut:], rules) if 0 < cut < len(plain.rstrip()) else []
+        if hits:
+            mplain = plain[cut:]
+        else:
+            cut, mplain, hits = 0, plain, triggers.match_line(plain, rules)
+        for trig, m in hits:
             for act in trig["actions"]:
                 kind = act["type"]
                 if kind == "highlight" and not flushed:
                     if act.get("scope") == "line":
-                        spans = [(0, len(plain))]
+                        spans = [(cut, len(plain))]
                     elif act.get("scope") == "all":                       # every place the pattern matches on the line
-                        spans = triggers.all_spans(trig, plain) or [(m["start"], m["end"])]
+                        spans = [(lo + cut, hi + cut) for lo, hi in
+                                 (triggers.all_spans(trig, mplain) or [(m["start"], m["end"])])]
                     else:
-                        spans = [(m["start"], m["end"])]
+                        spans = [(m["start"] + cut, m["end"] + cut)]
                     for lo, hi in spans:
                         pieces = apply_highlight(pieces, lo, hi, act.get("fg"), act.get("bg"), act.get("bold", False))
                 elif kind == "gag":
@@ -5953,14 +5964,18 @@ class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.B
         if routes or once_routes or self.__dict__.get("_once"):
             # a line that was drawn in parts (it trickled in) keeps its colours: what was drawn, then the rest
             snapshot = list(drawn) + list(pieces) if (drawn or pieces) else [(plain, (None, None, False, False, False, False))]
+            if cut:
+                snapshot = self._trim_pieces(snapshot, cut) or [(mplain, (None, None, False, False, False, False))]
             for pane in routes:
                 effects.insert(0, ("route", pane, snapshot))      # panes get the line before commands run
             if once_routes:
                 for pane in dict.fromkeys(once_routes):
-                    self._once_begin(pane, snapshot, plain)
+                    self._once_begin(pane, snapshot, mplain)
             else:
-                self._once_continue(snapshot, plain)
+                self._once_continue(snapshot, mplain)
         if gag and not flushed:
+            if cut:
+                return self._trim_end(pieces, len(plain) - cut)[0], effects      # the message goes; the prompt it was stuck to stays
             return None, effects
         return pieces, effects
 

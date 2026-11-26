@@ -64,6 +64,7 @@ class AccessMixin:
             self.root.title("Sanctuary")
             if announce:
                 self.system("Screen reader mode off.")
+        self._phone_apply_all()                              # (a picture of a phone cannot be read aloud: the text area is shown)
         self._save_settings()
 
     # ---- hearing the game --------------------------------------------------------------

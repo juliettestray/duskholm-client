@@ -73,6 +73,8 @@ def validate_pane(d):
             w['top'] = win['top']
         if isinstance(win.get('input'), bool):
             w['input'] = win['input']
+        if win.get('phone') in ('iphone', 'android'):     # drawn as a phone (see phonelook.py); off when absent
+            w['phone'] = win['phone']
         pre = win.get('prefix')                       # what the window's own input bar puts in front of what you type
         if isinstance(pre, str):
             pre = ' '.join(''.join(ch for ch in pre if ch.isprintable()).split())[:40]

@@ -17,6 +17,8 @@ pane pinned to a second monitor can be answered from there. Both are remembered 
 import re
 import tkinter as tk
 
+import phonelook
+
 DEFAULT_SIZE = "520x420"
 SAVE_AFTER_MS = 600
 TEAR_OUTSIDE = 14                  # how far outside its header a dragged tab must be let go to become a window
@@ -46,6 +48,8 @@ class PopOutMixin:
             return self._ontop_command(arg)
         if cmd == "popinput":
             return self._popinput_command(arg)
+        if cmd == "phonelook":
+            return self._phonelook_command(arg)
         if cmd not in ("popout", "dock"):
             return False
         name = (arg or "").strip()
@@ -61,6 +65,27 @@ class PopOutMixin:
             self.pop_out_pane(d["name"])
         elif not self.dock_pane(d["name"]):
             self.system("%s is not in its own window." % d["name"])
+        return True
+
+    def _phonelook_command(self, arg):
+        """/phonelook <pane> [normal|iphone|android]: draw a pane's window as a phone (no word: say which look it has)."""
+        words = (arg or "").split()
+        d = self._find_pane_def(words[0]) if words else None
+        if d is None:
+            self.system("Say which pane: /phonelook <pane> [normal|iphone|android]." if not words else "No pane called '%s'." % words[0])
+            return True
+        if self.dos or self.sr_on():
+            self.system("The phone look is for the normal look, not the DOS look or screen reader mode.")
+            return True
+        if len(words) < 2:
+            self.system("%s window look: %s.   /phonelook %s normal|iphone|android" % (
+                d["name"], phonelook.LABELS[self.phone_look_of(d["name"]) or "normal"], d["name"]))
+            return True
+        if not self.set_phone_look(d["name"], words[1]):
+            self.system("The looks are normal, iphone and android.")
+            return True
+        self.system("%s window look: %s%s." % (d["name"], phonelook.LABELS[self.phone_look_of(d["name"]) or "normal"],
+                                                 "" if self._popped(d["name"]) else " (when it is in its own window: /popout %s)" % d["name"]))
         return True
 
     def _ontop_command(self, arg):
@@ -245,6 +270,13 @@ class PopOutMixin:
         bar.pack(side="top", fill="x")
         tk.Button(bar, text="Dock", width=7, command=lambda: self.dock_pane(key)).pack(side="left", padx=(6, 3), pady=4)
         tk.Button(bar, text="Clear", width=7, command=lambda: self.pane_clear(key)).pack(side="left", padx=3, pady=4)
+        look_var = tk.StringVar(value=phonelook.LABELS[self.phone_look_of(key) or "normal"])
+        look_frame = tk.Frame(bar)                           # the Look box (not in the DOS look or screen reader mode)
+        tk.Label(look_frame, text="Look:").pack(side="left")
+        tk.OptionMenu(look_frame, look_var, *[phonelook.LABELS[k] for k in phonelook.LOOKS],
+                      command=lambda v: self.set_phone_look(key, v)).pack(side="left", padx=(3, 0))
+        if not (self.dos or self.sr_on()):
+            look_frame.pack(side="left", padx=(6, 3))
         top = bool((d.get("window") or {}).get("top"))
         top_var = tk.BooleanVar(value=top)
         tk.Checkbutton(bar, text="On top", variable=top_var,
@@ -280,7 +312,8 @@ class PopOutMixin:
         text.configure(yscrollcommand=sb.set)
         view = {"key": key, "session": self.session, "win": win, "text": text, "sb": sb, "follow": True,
                 "settling": False, "unread": 0, "save_job": None, "top_var": top_var, "inp_var": inp_var, "mine_var": mine_var, "inbar": inbar,
-                "entry": entry, "pre": pre, "box": box, "prefix_var": prefix_var, "hist": [], "hist_pos": 0}
+                "entry": entry, "pre": pre, "box": box, "prefix_var": prefix_var, "hist": [], "hist_pos": 0,
+                "look_var": look_var, "look_frame": look_frame}
         pane["popout"] = view                                # (from here the text counts among the text areas)
         for w, role in ((win, "panel"), (bar, "panel"), (box, "frame"), (text, "text"), (sb, "scroll"), (inbar, "panel"),
                         (entry, "entry"), (pre, "entry")):
@@ -327,6 +360,7 @@ class PopOutMixin:
         self._save_settings()
         self.schedule_layout(5)
         self._style_region_ui()
+        self._phone_apply(view)                              # (when the window was a phone last time, it is one again)
         return view
 
     def _popout_raise(self, view):
@@ -456,6 +490,8 @@ class PopOutMixin:
         if view["follow"]:
             text.see("end")
             self._pane_follow_soon(view)
+        if view.get("ph") is not None:
+            self._phone_dirty(view)
 
     def _popout_clear(self, pane):
         view = pane.get("popout")
@@ -467,6 +503,8 @@ class PopOutMixin:
             except tk.TclError:
                 pass
             view["follow"] = True
+            if view.get("ph") is not None:
+                self._phone_dirty(view)
 
     # ---- tear-off: drag a pane's tab out of its area ---------------------------------------------------------------------------
     def _tab_press(self, key, e):

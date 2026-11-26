@@ -281,6 +281,17 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   beside it is put in front of every line (`text Mara`, for a Phone window; `/popinput <pane> prefix <text>` sets it
   too). Up and Down recall what you typed there, a password prompt in its world shows as dots and is never kept, and the
   bar and its prefix are remembered with the pane.
+  **Phone look:** the *Look* box in the window (or `/phonelook <pane> normal|iphone|android`) draws the window as a
+  phone: a bezel, a status bar with the time, a header with who you are talking to, and the texts as chat bubbles
+  (theirs grey on the left, yours coloured on the right, with the time between texts that are far apart). The iPhone
+  has the titanium frame, the Dynamic Island and blue bubbles; the Android has a punch-hole camera, a back arrow and
+  pale blue bubbles. It reads each line of the pane as a text (`[Nov 24 18:31]Name: ...`, and your own
+  `You > Name: ...`; a line with no date in front is the end of the text before it). It is only a picture: the
+  window's ordinary text area keeps filling underneath, so capture, history and docking are unchanged, and *Normal*
+  puts the text area back. **Off by default**, a choice per window that is remembered with the pane, and it never shows
+  in the DOS look or in screen reader mode (a picture cannot be read aloud; the text area is shown instead). To
+  answer from the phone window, tick *Input* as above: the input bar sits under the phone. The newest 200 texts are
+  drawn; scroll with the wheel or PageUp / PageDown.
   **Tear-off:** while the pane sizes are unlocked (`/panelock off`), drag a pane's tab out of its area and let go
   anywhere outside the header: it becomes a window right there (the pointer changes while you are far enough out;
   letting go over the header is just a click, and while locked the status line says how to unlock). **On top:** the
@@ -472,6 +483,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   An unfinished line (a prompt) still appears after about a tenth of a second, and the stat bar
   sees it immediately. *Options > Hide the prompt line* keeps the prompt off the screen (the bar
   still shows it).
+  A game line that arrives stuck to the end of a prompt (the HP bar, then the text, which is how the game answers
+  something you just sent) is matched by triggers as if the prompt were not there, so a pattern that starts with
+  `[OOC]` catches it, and a pane gets the message without the bar. A rule that is about the prompt itself still
+  works: when nothing matches without the prompt, the whole line is tried as before.
 - Command history, aliases, session logging, font zoom (Ctrl +/- or
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
@@ -575,7 +590,9 @@ python tests/test_crt.py          # CRT scanlines: shows only in the DOS look, c
 python tests/test_whatsnew.py     # what's new after an update: skipped versions, once, /changes
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
+python tests/test_phonelook.py     # the phone look: reading texts, iPhone and Android, off in DOS / screen reader mode
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords
+python tests/test_prompt_glued.py # a prompt stuck to the front of a line: triggers and panes see the message without it
 python tests/test_capture_once.py # route-once capture: the phone preset, wrapped texts, identical texts, no doubles
 python tests/test_worldids.py     # world ids: rules, buttons, layouts and clock follow a renamed world; old settings migrate
 python tests/test_idle_line.py    # a line with no line break is captured after a short quiet, prompts are not
