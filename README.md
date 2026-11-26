@@ -496,6 +496,15 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 
 Settings live in `~/.sanctuary.json`.
 
+**GMCP layout (Duskholm default).** Options > "GMCP panes and layout" (or `/gmcp layout`) fills the stat bar and a set of panes
+from the game's own data, so nothing is read out of the text: the bar shows DF, stagger (ST), wounds, lag, the move and attack
+timers, your position and, in an operation, your side's progress; panes show Here (the room, who is in it, exits), Chat (says,
+emotes, OOC and faction/sect/cult chat, each society tagged), Phone (texts in and out, as the game shows them), and in a fight
+Map (with you in the middle), Damage (every hit you deal or take: attack, damage, stagger), Allies and Scan (the hostile
+people nearest first, with cover). The bar also says whether the fight is fast or slow combat. When a fight starts the layout changes to the fight
+layout by itself and goes back three seconds after it ends. The DOS look gets the same panes, a little narrower. Turning it off
+puts the layout you had back. Needs "GMCP game data" and a reconnect.
+
 ## Updating, and making a release
 
 **What's new.** The first time you start after an update, a window lists what changed. If you skipped
@@ -536,6 +545,7 @@ Local commands start with `/` (the game has none). `//text` sends `/text`.
 | `/moon`, `/notes`, `/hotkeys` | the moon window, notepad, hotkey editor |
 | `/hex ff8800`, `/gradient text`, `/customize` | colour tools and the customize form |
 | `/export [file]`, `/import file` | world settings files (`.snc`); `/import` also reads MUSHclient and Mudlet files |
+| `/gmcp [on\|off\|sr\|layout\|vitals\|status\|here\|who\|items\|skills\|afflictions\|channels [n]\|damage [n]\|scan\|map\|show Package.Name]` | GMCP game data (Options: "GMCP game data", off by default, applies at the next connect). Subscribes to Char, Room, Char.Items, Char.Skills, Char.Afflictions, Comm.Channel, Game.Who and Combat; the commands read the latest data in plain words. With screen reader mode and "Reader: GMCP speech", it speaks who arrives or leaves, health bands and fight start/end |
 | `/clear`, `/help` | |
 
 ## License

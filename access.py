@@ -180,7 +180,7 @@ class AccessMixin:
             return
         st, said = self._sr_alert, []
         hp = view.get("hp")
-        if hp and hp[1]:
+        if hp and hp[1] and not self._gmcp_speaks("Char.Vitals"):
             frac = 100.0 * hp[0] / hp[1]
             band = sum(1 for s in HEALTH_STEPS if frac < s)
             old = st.get("health")

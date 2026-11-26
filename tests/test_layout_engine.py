@@ -162,11 +162,11 @@ def layout_clamps():
 @check
 def layout_ids_sides_truncation():
     regs = [{'id': 'zzz', 'side': 'TOP '}, {'side': 'nope'}, {'id': 'r1', 'side': 'left'},
-            {'side': 'right'}, {'side': 'bottom'}, {'side': 'top'}, {'side': 'top'}]
+            {'side': 'right'}, {'side': 'bottom'}, {'side': 'top'}, {'side': 'top'}, {'side': 'left'}, {'side': 'right'}]
     v = L.validate_layout({'regions': regs})
-    assert [r['id'] for r in v['regions']] == ['r1', 'r2', 'r3', 'r4']
-    assert [r['side'] for r in v['regions']] == ['top', 'left', 'right', 'bottom']
-    assert len(L.validate_layout({'regions': [{'side': 'top'}] * 5000})['regions']) == 4
+    assert [r['id'] for r in v['regions']] == ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+    assert [r['side'] for r in v['regions']] == ['top', 'left', 'right', 'bottom', 'top', 'top']
+    assert len(L.validate_layout({'regions': [{'side': 'top'}] * 5000})['regions']) == L.MAX_REGIONS
     assert L.validate_layout({'regions': [{'side': 'top', 'panes': []}]})['regions'][0]['panes'] == []
     assert L.validate_layout({'regions': [{'side': 'top'}]})['regions'][0]['panes'] == []
 
@@ -232,7 +232,7 @@ def layout_idempotent_and_nomutation_random():
         assert L.validate_layout(v) == v
         names = L.region_pane_names(v)
         assert len({n.casefold() for n in names}) == len(names)
-        assert len(v['regions']) <= 4
+        assert len(v['regions']) <= L.MAX_REGIONS
         json.dumps(v)
 
 
@@ -641,7 +641,7 @@ def summary_and_helpers():
 @check
 def constants():
     assert L.MIN_MAIN_COLS == 80 and L.SIDES == ('top', 'bottom', 'left', 'right')
-    assert L.MAX_REGIONS == 4 and L.MAX_PANES == 12
+    assert L.MAX_REGIONS == 6 and L.MAX_PANES == 12
 
 
 # ------------------------------------------------------------------ main

@@ -679,6 +679,9 @@ class ExtrasMixin:
         if cmd == "crt":
             self._crt_command(arg)
             return True
+        if cmd == "gmcp":
+            self._gmcp_command(arg)
+            return True
         if cmd == "keep":
             self._keep_command(arg)
             return True

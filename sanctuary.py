@@ -81,6 +81,7 @@ import capture                     # capture a repeating log onto a pane without
 import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
 import findtext                    # Ctrl+F / Ctrl+Shift+F
+import gmcp                        # GMCP game data (an option) and what it speaks
 import crt                         # CRT scanlines over the DOS look (an option)
 import phonelook                   # a popped-out pane drawn as an iPhone or an Android
 import whatsnew                   # what changed since the version last shown
@@ -107,6 +108,9 @@ PARTIAL_FLUSH_MS = 120   # an unfinished line (a prompt) is shown after this lon
 # telnet
 IAC, DONT, DO, WONT, WILL, SB, SE, GA, NOP = 255, 254, 253, 252, 251, 250, 240, 249, 241
 OPT_ECHO, OPT_SGA, OPT_MXP = 1, 3, 91
+OPT_GMCP = 201
+GMCP_SUPPORTS = ('Core.Supports.Set ["Char 1", "Room 1", "Char.Items 1", "Char.Skills 1", '
+                 '"Char.Afflictions 1", "Comm.Channel 1", "Game.Who 1", "Combat 1"]')
 
 BG = "#101114"
 FG = "#c8c8c8"
@@ -498,6 +502,7 @@ CSI_PARAM = frozenset("0123456789;:?")
 CSI_MAX = 64       # longest CSI parameter list we parse; longer ones are discarded
 MAX_TAG = 512      # longest MXP tag body; a '<' with no '>' inside this window is literal
 MAX_SB = 4096      # longest telnet subnegotiation we buffer
+MAX_GMCP = 262144  # GMCP messages (a skill list, a scan) are far longer than any other subnegotiation
 
 
 def entity_text(name):
@@ -597,8 +602,11 @@ class Style:
 class Terminal:
     """Pure protocol logic: bytes in, events out. No GUI, so it can be tested."""
 
-    def __init__(self, want_mxp=True):
+    def __init__(self, want_mxp=True, want_gmcp=False):
         self.want_mxp = want_mxp
+        self.want_gmcp = want_gmcp
+        self.gmcp_on = False        # the server offered GMCP and we said yes
+        self.gmcp = {}              # package name -> the last data received for it
         self.mxp = False
         self.echo_off = False
         self.style = Style()
@@ -661,7 +669,7 @@ class Terminal:
         elif st == "sb":
             if b == IAC:
                 self._tstate = "sb_iac"
-            elif len(self._sb) < MAX_SB:
+            elif len(self._sb) < (MAX_GMCP if self._sb[:1] == bytes([OPT_GMCP]) else MAX_SB):
                 self._sb.append(b)
             else:
                 self._tstate = "data"   # runaway subnegotiation: give up, resume text
@@ -670,9 +678,11 @@ class Terminal:
                 if self._sb[:1] == bytes([OPT_MXP]) and self.want_mxp:
                     self.mxp = True
                     self._mxp_replies = 0
+                elif self._sb[:1] == bytes([OPT_GMCP]) and self.gmcp_on:
+                    self._gmcp_message(bytes(self._sb[1:]))
                 self._tstate = "data"
             elif b == IAC:
-                if len(self._sb) < MAX_SB:
+                if len(self._sb) < (MAX_GMCP if self._sb[:1] == bytes([OPT_GMCP]) else MAX_SB):
                     self._sb.append(255)
                     self._tstate = "sb"
                 else:
@@ -700,6 +710,13 @@ class Terminal:
                 if not self._us.get(opt):
                     self._us[opt] = True
                     self._reply(DO, opt)
+            elif opt == OPT_GMCP and self.want_gmcp:
+                if not self.gmcp_on:
+                    self.gmcp_on = True
+                    self._reply(DO, opt)
+                    self._events.append(("send", bytes([IAC, SB, OPT_GMCP]) + GMCP_SUPPORTS.encode("ascii")
+                                         + bytes([IAC, SE])))
+                    self._events.append(("gmcp_on",))
             elif opt not in self._refused:
                 self._refused.add(opt)
                 self._reply(DONT, opt)
@@ -714,6 +731,9 @@ class Terminal:
                 self._mxp_replies = 0
             elif opt == OPT_SGA:
                 self._us.pop(opt, None)
+            elif opt == OPT_GMCP and self.gmcp_on:
+                self.gmcp_on = False
+                self._events.append(("gmcp_off",))
             self._refused.discard(opt)
         elif verb == DO:
             if opt not in self._refused_do:
@@ -721,6 +741,21 @@ class Terminal:
                 self._reply(WONT, opt)
         elif verb == DONT:
             self._refused_do.discard(opt)
+
+    def _gmcp_message(self, raw):
+        """One GMCP message: 'Package.Name <json>'. A bad one is ignored. Keeps the last data per package."""
+        text = raw.decode("utf-8", "replace").strip()
+        name, _, body = text.partition(" ")
+        if not name:
+            return
+        try:
+            data = json.loads(body) if body.strip() else None
+        except ValueError:
+            return
+        if len(self.gmcp) >= 64 and name not in self.gmcp:
+            return                          # a server inventing package names must not grow this forever
+        self.gmcp[name] = data
+        self._events.append(("gmcp", name, data))
 
     def _drop_pending(self):
         """Release whatever text is being withheld waiting for more bytes. A held escape
@@ -964,6 +999,8 @@ EXTRA_BOOLS = [
     ("update_check", False, "Check for updates when Sanctuary starts", "Check for updates at start", "G"),
     ("walk_preview", True, "Preview my walk on the status line when I set it", "Walk preview", "P"),
     ("keep_box", False, "Show a 'Keep text' checkbox by the input box", "Keep-text checkbox", "5"),
+    ("gmcp", False, "Use GMCP game data when the game offers it (applies at the next connect)", "GMCP game data", "6"),
+    ("gmcp_sr", True, "Screen reader: speak GMCP changes (who comes and goes, health, fights)", "Reader: GMCP speech", "7"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
 EXTRA_CHOICES = [
@@ -972,6 +1009,7 @@ EXTRA_CHOICES = [
     ("timestamps", "off", ("off", "hh:mm", "hh:mm:ss"), "Time stamps (main text)", "X"),
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
     ("entry_grow", "off", ("off", "2", "3", "5", "8"), "Entry box grows to (lines)", "K"),
+    ("gmcp_layout", "off", ("off", "duskholm"), "GMCP panes and layout", "8"),
     ("crt_lines", "off", ("off", "light", "medium", "strong"), "CRT scanlines in the DOS look", "4"),
     ("world_tabs", "always", ("always", "two+", "off"), "World tabs", "W"),
     ("button_dock", "top", ("top", "bottom", "off"), "Button bar", "B"),
@@ -983,7 +1021,7 @@ CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always"
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
                 "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
                 "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice",
-                "light": "light", "medium": "medium", "strong": "strong", "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
+                "duskholm": "Duskholm default", "light": "light", "medium": "medium", "strong": "strong", "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
                 "two+": "only with two or more worlds",
                 "500": "500 lines", "1000": "1,000 lines", "2000": "2,000 lines", "5000": "5,000 lines",
                 "10000": "10,000 lines", "20000": "20,000 lines", "50000": "50,000 lines", "100000": "100,000 lines"}
@@ -1638,7 +1676,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -1897,7 +1935,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
             s.q = queue.Queue()
             s.gen = 0
             s.conn = Connection(s.q, s.gen)
-            s.term = Terminal(want_mxp=True)
+            s.term = Terminal(want_mxp=True, want_gmcp=bool(self.cfg.get("gmcp")))
             s.connected = s.connecting = False
             s.history, s.hist_pos, s.draft = [], 0, ""
             s.logfile = None
@@ -1977,6 +2015,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
             self.set_notice("", 0)
         self._restore_view(s)
         self._restore_popouts()
+        self._gmcp_world_shown()
         for ms in (30, 150, 400):                      # the layout settles over a few redraws; keep the spot
             self.root.after(ms, lambda s=s: self._restore_view(s) if s is self._shown else None)
 
@@ -2199,11 +2238,11 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
     OPTION_GROUPS = [
         ("verify", "keepalive", "auto_reconnect", "update_check"),
         ("links", "link_images", "emoji", "emoji_pics", "emoji_pics_dos", "connect_boxes", "hide_prompt",
-         "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow", "crt_lines"),
+         "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow", "crt_lines", "gmcp", "gmcp_layout"),
         ("scroll_on_send", "show_echo", "keep_box", "custom_form"),
         ("bell", "bell_new"),
         ("log_echo", "scrollback_lines", "keep_backscroll", "keep_lines"),
-        ("screen_reader", "sr_alerts", "sr_voice", "@sr_interval", "@sr_combat"),
+        ("screen_reader", "sr_alerts", "gmcp_sr", "sr_voice", "@sr_interval", "@sr_combat"),
     ]
 
     def _build_menu(self):
@@ -3423,7 +3462,10 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
                 g, role = prompts.gauge_color_role(cur, mx), None
                 cands.append((6, 6, "%s %d/%d" % (label, cur, mx) if mx is not None else "%s %d" % (label, cur),
                               g if g in ("good", "warn", "bad") else "normal"))
-            if pr["text"]:
+            if pr.get("live"):                    # from the game's own data: position, where you stand, operation progress
+                for i, t in enumerate(pr["text"]):
+                    cands.append((3 if t.endswith("%") else 4 if i == 0 else 7, 5 + 0.1 * i, t, "normal", i > 0))
+            elif pr["text"]:
                 cands.append((7, 5, " ".join(pr["text"]), "normal"))
         cands.append((6, 6, ("TLS " if self.v_tls.get() else "") + ("ANSI-MXP" if (self.connected and self.term.mxp) else "ANSI"),
                       "dim"))
@@ -3644,6 +3686,8 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
             self._apply_entry_mode()
         if key == "keep_box":
             self._apply_keep_box()
+        if key == "gmcp_layout":
+            self._gmcp_layout_option(old, value)
         if key == "crt_lines":
             if not self._crt_option_changed(old, value, ask):       # (the first time it is turned on: a warning to read)
                 self.cfg[key] = old
@@ -5071,6 +5115,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
         self.update_dosbar()
         self._apply_crt()                                   # (scanlines show in the DOS look only)
         self._phone_apply_all()                             # (a phone look is for the normal look)
+        self._gmcp_layout_apply(force=True)                 # (the GMCP panes are a little narrower in the DOS look)
         self._emoji_refresh()
         self._save_settings()
 
@@ -5384,7 +5429,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
             self._retrying = False
             self._quit_sent_at = 0.0      # a "quit" from an earlier session means nothing now
             self.connecting, self.connected = False, True
-            self.term = Terminal(want_mxp=True)
+            self.term = Terminal(want_mxp=True, want_gmcp=bool(self.cfg.get("gmcp")))
             self._input_show("")
             self.btn.configure(text="Disconnect")
             self.status.configure(text="Connected")
@@ -5470,6 +5515,9 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
     def _prompt_view(self):
         """The last prompt with its cooldown timers counted down for the time since it arrived
         (the game lowers M and K by one every second)."""
+        g = self._gmcp_view()
+        if g is not None:
+            return g                                   # the game sends these itself: no prompt to read
         p = self._last_prompt
         if not p or not p.get("cooldowns"):
             return p
@@ -5500,7 +5548,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
         self.sr_alerts(self._prompt_view())
 
     def _statbar_show(self):
-        if (self.cfg.get("statbar") and self._last_prompt and not self.dos
+        if (self.cfg.get("statbar") and (self._last_prompt or self._gmcp_view()) and not self.dos
                 and not self.statbar.winfo_ismapped()):
             self.statbar.pack(fill="x", before=self._inbox)
 
@@ -5531,6 +5579,8 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
                     self.hist_pos = len(self.history)
             elif k == "bell" and self.cfg.get("bell"):
                 self.root.bell()
+            elif k in ("gmcp", "gmcp_on", "gmcp_off"):
+                self._gmcp_on_event(ev)
         if self._pending and self._flush_job is None:
             self._flush_job = self._after_session(PARTIAL_FLUSH_MS, self._flush_partial)
         if had_text:

@@ -9,7 +9,7 @@ import re
 
 MIN_MAIN_COLS = 80
 SIDES = ('top', 'bottom', 'left', 'right')
-MAX_REGIONS = 4
+MAX_REGIONS = 6
 MAX_PANES = 12
 
 _BANDS = ('top', 'bottom')
