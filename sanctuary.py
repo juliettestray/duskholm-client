@@ -109,6 +109,10 @@ PARTIAL_FLUSH_MS = 120   # an unfinished line (a prompt) is shown after this lon
 IAC, DONT, DO, WONT, WILL, SB, SE, GA, NOP = 255, 254, 253, 252, 251, 250, 240, 249, 241
 OPT_ECHO, OPT_SGA, OPT_MXP = 1, 3, 91
 OPT_GMCP = 201
+OPT_TTYPE = 24
+# MTTS (Mud Terminal Type Standard) bits Sanctuary can honestly claim, and the one a screen reader adds
+MTTS_ANSI, MTTS_UTF8, MTTS_256, MTTS_SCREEN_READER, MTTS_TRUECOLOR = 1, 4, 8, 64, 256
+MTTS_BASE = MTTS_ANSI | MTTS_UTF8 | MTTS_256 | MTTS_TRUECOLOR
 GMCP_SUPPORTS = ('Core.Supports.Set ["Char 1", "Room 1", "Char.Items 1", "Char.Skills 1", '
                  '"Char.Afflictions 1", "Comm.Channel 1", "Game.Who 1", "Combat 1"]')
 
@@ -602,8 +606,10 @@ class Style:
 class Terminal:
     """Pure protocol logic: bytes in, events out. No GUI, so it can be tested."""
 
-    def __init__(self, want_mxp=True, want_gmcp=False):
+    def __init__(self, want_mxp=True, want_gmcp=False, mtts=None):
         self.want_mxp = want_mxp
+        self.mtts = mtts            # the MTTS bits to report when the server asks for the terminal type; None: do not answer
+        self._ttype_n = 0           # how many times the server has asked (name, then terminal type, then MTTS)
         self.want_gmcp = want_gmcp
         self.gmcp_on = False        # the server offered GMCP and we said yes
         self.gmcp = {}              # package name -> the last data received for it
@@ -680,6 +686,8 @@ class Terminal:
                     self._mxp_replies = 0
                 elif self._sb[:1] == bytes([OPT_GMCP]) and self.gmcp_on:
                     self._gmcp_message(bytes(self._sb[1:]))
+                elif self._sb[:2] == bytes([OPT_TTYPE, 1]) and self.mtts is not None:
+                    self._ttype_answer()
                 self._tstate = "data"
             elif b == IAC:
                 if len(self._sb) < (MAX_GMCP if self._sb[:1] == bytes([OPT_GMCP]) else MAX_SB):
@@ -736,11 +744,26 @@ class Terminal:
                 self._events.append(("gmcp_off",))
             self._refused.discard(opt)
         elif verb == DO:
-            if opt not in self._refused_do:
+            if opt == OPT_TTYPE and self.mtts is not None:
+                if not self._us.get(opt):
+                    self._us[opt] = True
+                    self._ttype_n = 0
+                    self._reply(WILL, opt)
+            elif opt not in self._refused_do:
                 self._refused_do.add(opt)
                 self._reply(WONT, opt)
         elif verb == DONT:
             self._refused_do.discard(opt)
+            if opt == OPT_TTYPE:
+                self._us.pop(opt, None)
+
+    def _ttype_answer(self):
+        """The server asked for the terminal type (IAC SB TTYPE SEND): the client's name, then the terminal type,
+        then 'MTTS <bits>', and that last one again if it asks more often. A screen reader adds bit 64."""
+        answers = ("SANCTUARY", "ANSI", "MTTS %d" % self.mtts)
+        text = answers[min(self._ttype_n, len(answers) - 1)]
+        self._ttype_n += 1
+        self._events.append(("send", bytes([IAC, SB, OPT_TTYPE, 0]) + text.encode("ascii") + bytes([IAC, SE])))
 
     def _gmcp_message(self, raw):
         """One GMCP message: 'Package.Name <json>'. A bad one is ignored. Keeps the last data per package."""
@@ -1935,7 +1958,7 @@ class App(gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.Whats
             s.q = queue.Queue()
             s.gen = 0
             s.conn = Connection(s.q, s.gen)
-            s.term = Terminal(want_mxp=True, want_gmcp=bool(self.cfg.get("gmcp")))
+            s.term = Terminal(want_mxp=True, want_gmcp=bool(self.cfg.get("gmcp")), mtts=self._mtts_bits())
             s.connected = s.connecting = False
             s.history, s.hist_pos, s.draft = [], 0, ""
             s.logfile = None
@@ -5429,7 +5452,7 @@ class App(gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.Whats
             self._retrying = False
             self._quit_sent_at = 0.0      # a "quit" from an earlier session means nothing now
             self.connecting, self.connected = False, True
-            self.term = Terminal(want_mxp=True, want_gmcp=bool(self.cfg.get("gmcp")))
+            self.term = Terminal(want_mxp=True, want_gmcp=bool(self.cfg.get("gmcp")), mtts=self._mtts_bits())
             self._input_show("")
             self.btn.configure(text="Disconnect")
             self.status.configure(text="Connected")

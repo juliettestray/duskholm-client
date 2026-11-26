@@ -512,6 +512,12 @@ class GmcpMixin:
             return "No data for %s." % (rest or "that package")
         return "Unknown topic. Topics: " + ", ".join(TOPICS[:-1]) + ", show <Package.Name>."
 
+    def _mtts_bits(self):
+        """What the terminal type answer says (MTTS), or None to leave the server's question unanswered: only in screen
+        reader mode, so a game that has a screen reader layout can switch it on without asking the player."""
+        import sanctuary as sc
+        return (sc.MTTS_BASE | sc.MTTS_SCREEN_READER) if self.sr_on() else None
+
     # ---- the status bars ------------------------------------------------------------------------------
     def _gmcp_view(self):
         """The stat bars' content from the live data (None when the game is not sending Char.Vitals)."""

@@ -496,6 +496,10 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 
 Settings live in `~/.sanctuary.json`.
 
+**Screen reader and the server.** In screen reader mode Sanctuary answers the server's terminal-type request (telnet TTYPE) with
+its name, `ANSI`, and `MTTS 333`, which includes the screen reader bit (64), so a game with a screen reader layout can switch it on at
+login without asking you. Outside screen reader mode the request is refused, as before. It applies when you connect.
+
 **GMCP layout (Duskholm default).** Options > "GMCP panes and layout" (or `/gmcp layout`) fills the stat bar and a set of panes
 from the game's own data, so nothing is read out of the text: the bar shows DF, stagger (ST), wounds, lag, the move and attack
 timers, your position and, in an operation, your side's progress; panes show Here (the room, who is in it, exits), Chat (says,

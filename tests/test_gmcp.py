@@ -50,6 +50,22 @@ assert len(t.gmcp) <= 64, len(t.gmcp)
 assert ("gmcp_off",) in t.feed(bytes([IAC, WONT, 201])) and not t.gmcp_on
 assert t.feed(msg("Char.Name {}")) == [], "ignored while off"
 
+# ---- MTTS: the terminal type, with the screen reader bit ----
+TT = 24
+t = Terminal()                                           # not in screen reader mode: refused, as before
+assert sends(t.feed(bytes([IAC, DO, TT]))) == [bytes([IAC, WONT, TT])]
+t = Terminal(mtts=333)
+assert sends(t.feed(bytes([IAC, DO, TT]))) == [bytes([IAC, WILL, TT])]
+assert t.feed(bytes([IAC, DO, TT])) == [], "a repeated DO is not answered twice"
+ask = bytes([IAC, SB, TT, 1, IAC, SE])
+got = [sends(t.feed(ask))[0] for _ in range(4)]
+assert got[0] == bytes([IAC, SB, TT, 0]) + b"SANCTUARY" + bytes([IAC, SE])
+assert got[1] == bytes([IAC, SB, TT, 0]) + b"ANSI" + bytes([IAC, SE])
+assert got[2] == got[3] == bytes([IAC, SB, TT, 0]) + b"MTTS 333" + bytes([IAC, SE]), "MTTS is repeated when asked again"
+assert 333 & 64 and 333 & 1 and 333 & 4
+assert Terminal().feed(ask) == [], "never answers when it is not in screen reader mode"
+t.feed(bytes([IAC, DONT, TT])); assert sends(t.feed(bytes([IAC, DO, TT]))) == [bytes([IAC, WILL, TT])], "asked again after a DONT"
+
 # ---- helpers ----
 assert gmcp.diff_names(["a", "b"], ["b", "c"]) == (["c"], ["a"])
 assert gmcp.offset_words(2, -3, 0) == "3 south, 2 east" and gmcp.offset_words(0, 0) == "here"
@@ -229,6 +245,9 @@ app.set_dos_mode(False); pump(0.4)
 assert app.cfg["layout"]["regions"][0]["size"] == 36
 app._local("/gmcp layout off"); pump(0.3)
 assert app.cfg["gmcp_layout"] == "off" and "Here" not in [n for r in app.cfg["layout"]["regions"] for n in r["panes"]]
+# the client asks for 64 only in screen reader mode
+app.set_screen_reader(False); assert app._mtts_bits() is None
+app.set_screen_reader(True); pump(0.2); assert app._mtts_bits() & 64 and app._mtts_bits() & 1
 # not connected with GMCP: a helpful line, not a crash
 app.term = Terminal(want_mxp=True)
 app._local("/gmcp vitals"); assert "not sending GMCP" in app.out.get("end-3l", "end")
