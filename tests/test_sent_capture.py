@@ -31,7 +31,7 @@ v = sc.values_from_trigger(mine_texts)
 assert v["sent"] is True and v["pane_mine"] is True and v["pane_format"] == "[{time}]You > %1: %2" and v["pane"] == "Phone"
 back, why = sc.trigger_from_values(dict(v, name="mine2"))
 assert back["when"] == "sent" and back["actions"][-1] == mine_texts["actions"][0], (back, why)
-v.update(sent=False, pane_mine=False, pane_format="")
+v.update(sent=False, pane_mine=False, pane_format="", pane_confirm="")
 back = sc.trigger_from_values(dict(v, name="mine3"))[0]
 assert "when" not in back and back["actions"][-1] == {"type": "route", "pane": "Phone", "gag": False}
 
@@ -58,6 +58,11 @@ def pane_lines(key):
     return [l for l in p["text"].get("1.0", "end").split(chr(10)) if l] if p else []
 
 
+def sent_ok():
+    """The game's answer to a text that went through."""
+    app._on_data(("Sent." + CR).encode()); pump(0.4)
+
+
 def type_main(text):
     app.input.focus_force()                            # (a key event only reaches the box that has the keyboard)
     app.input.delete(0, "end"); app.input.insert(0, text)
@@ -73,6 +78,8 @@ STAMP = r"\[[A-Z][a-z]{2} [ 0-9]\d \d\d:\d\d\]"
 # what I type in the main window is captured, with the game's kind of stamp, and still goes to the game
 type_main("text 7108390 preferably someone useless")
 assert sent[-1].decode().strip() == "text 7108390 preferably someone useless"
+assert pane_lines("phone") == [], "not yet: the game has not said it went through"
+sent_ok()
 lines = pane_lines("phone")
 assert len(lines) == 1 and re.fullmatch(STAMP + r"You > 7108390: preferably someone useless", lines[0]), lines
 # incoming, from the other side, lands in the same pane
@@ -83,16 +90,17 @@ n = len(pane_lines("phone"))
 type_main("text history 7108390"); type_main("text clear"); type_main("look"); type_main("say text 1 2")
 assert len(pane_lines("phone")) == n
 # a text from an alias, a button and a trigger's send is captured too: it is what goes out that counts
-app._local("/alias tm text Mara %*"); type_main("tm on my way")
+app._local("/alias tm text Mara %*"); type_main("tm on my way"); sent_ok()
 assert pane_lines("phone")[-1].endswith("You > Mara: on my way"), pane_lines("phone")[-1]
 app._local("/button add Ping = text Bob ping"); pump(0.2)
-app.run_button(app.cfg["buttons"][-1]); pump(0.3)
+app.run_button(app.cfg["buttons"][-1]); pump(0.3); sent_ok()
 assert pane_lines("phone")[-1].endswith("You > Bob: ping")
 # a game-text rule never fires on what I send, and a sent rule never fires on what the game shows
 app.cfg["triggers"].append({"name": "g", "mode": "plain", "pattern": "text 7108390*", "enabled": True, "priority": 0,
                             "actions": [{"type": "route", "pane": "Seen"}]})
 type_main("text 7108390 again"); pump(0.3)
 assert pane_lines("seen") == []
+app.session._sent_wait.clear()                            # (that text is still waiting for an answer; this test is about something else)
 n = len(pane_lines("phone")); app._on_data(("text 7108390 from the game" + CR).encode()); pump(0.4)
 assert len(pane_lines("phone")) == n
 app.cfg["triggers"].pop()
@@ -118,7 +126,7 @@ app._on_data(("You tell Bob 'quiet'" + CR).encode()); pump(0.4)
 assert pane_lines("tells") == ["You tell Bob 'hi there'", "You tell Bob 'quiet'"], "the tells pane has its own switch, still on"
 app._local("/panesent phone"); pump(0.2)
 assert "show_sent" not in app._find_pane_def("phone"), "no on/off: it flips"
-type_main("text Mara shown again")
+type_main("text Mara shown again"); sent_ok()
 assert pane_lines("phone")[-1].endswith("You > Mara: shown again")
 view = app.pop_out_pane("Phone"); pump(0.5)
 cb = [c for f in view["win"].winfo_children() if isinstance(f, tk.Frame) for c in f.winfo_children()
@@ -134,6 +142,7 @@ app.set_popout_input("phone", True); app.set_popout_prefix("phone", "text Mara")
 n = len(pane_lines("phone")); sent.clear()
 view["entry"].focus_force(); view["entry"].insert(0, "from the window"); view["entry"].event_generate("<Return>"); pump(0.4)
 assert sent[-1].decode().strip() == "text Mara from the window"
+sent_ok()
 assert pane_lines("phone")[-1].endswith("You > Mara: from the window") and len(pane_lines("phone")) == n + 1
 # the right-click menu on a pane's tab
 menus = []
@@ -149,6 +158,36 @@ m.invoke(0); pump(0.2)
 assert app._find_pane_def("phone")["show_sent"] is False, "the menu flips the switch"
 m.invoke(0) if False else None
 app.set_pane_sent("phone", True)
+
+# ---- only a text the game accepted is captured --------------------------------------------------------------------------------------------------
+n = len(pane_lines("phone"))
+type_main("text 7108390 is your phone on?")
+app._on_data(("You must be holding a phone first." + CR).encode()); pump(0.4)
+assert len(pane_lines("phone")) == n, "the game refused it: it is not in the pane"
+type_main("text 7108390 is your phone on?"); sent_ok()
+assert len(pane_lines("phone")) == n + 1 and pane_lines("phone")[-1].endswith("You > 7108390: is your phone on?"), pane_lines("phone")[-3:]
+sent_ok()
+assert len(pane_lines("phone")) == n + 1, "a 'Sent.' with nothing waiting does nothing"
+type_main("tm one"); type_main("tm two"); sent_ok(); sent_ok()
+assert [l[l.index("You >"):] for l in pane_lines("phone")[-2:]] == ["You > Mara: one", "You > Mara: two"], "two sent at once, answered in order"
+type_main("text Bob try one"); type_main("text Bob try two"); sent_ok(); sent_ok()
+assert [l[l.index("You >"):] for l in pane_lines("phone")[-2:]] == ["You > Bob: try one", "You > Bob: try two"], "two to the same person at once are both kept"
+type_main("text Bob refused once")
+app._on_data(("You must be holding a phone first." + CR).encode()); pump(0.3)
+type_main("text Bob retried"); sent_ok()
+assert pane_lines("phone")[-1].endswith("You > Bob: retried") and not any("refused once" in l for l in pane_lines("phone")), "a retry after a refusal"
+k = len(pane_lines("phone"))
+type_main("text Zoe nobody answered"); app.session._sent_wait[-1]["t"] -= 100; sent_ok()
+assert len(pane_lines("phone")) == k, "no answer in time: it is dropped, and a later 'Sent.' does not bring it back"
+type_main("text Zoe with a prompt on the end")
+app._on_data(("[510/510DF 0ST 0WN 0LG M:0 K:0 (Nw 31/50:45/50)] Sent." + CR).encode()); pump(0.4)
+assert pane_lines("phone")[-1].endswith("You > Zoe: with a prompt on the end"), "the answer stuck to the HP bar still counts"
+# the ready-made rule from before this existed is brought up to date when settings are loaded; a changed one is left alone
+old = {"name": "Capture my texts to a pane", "mode": "regex", "when": "sent", "ignore_case": True, "priority": 0, "enabled": True,
+       "pattern": mine_texts["pattern"], "actions": [{"type": "route", "pane": "Phone", "gag": False, "mine": True, "format": "[{time}]You > %1: %2"}]}
+mine_one = dict(old, name="Mine", actions=[dict(old["actions"][0], format="{name}: %2")])
+got = sc.clean_settings({"host": "x", "triggers": [old, mine_one]})["triggers"]
+assert got[0]["actions"][0]["confirm"] == "Sent." and "confirm" not in got[1]["actions"][0] and got[1]["name"] == "Mine"
 
 # ---- worlds are separate -------------------------------------------------------------------------------------------------------------------------
 got = []

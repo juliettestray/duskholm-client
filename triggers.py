@@ -519,6 +519,7 @@ def _clean_action(a):
         once = a.get("once", False)
         mine = a.get("mine", False)
         fmt = a.get("format")
+        confirm = a.get("confirm")
         if pane is None or not isinstance(gag, bool) or not isinstance(once, bool) or not isinstance(mine, bool):
             return None
         out = {"type": "route", "pane": pane, "gag": gag}
@@ -530,6 +531,10 @@ def _clean_action(a):
             fmt = _clean_text(fmt, MAX_TEXT)  # what the pane gets instead of the line itself: %0-%9 captures, {time}, {name}
             if fmt is not None:
                 out["format"] = fmt
+        if confirm is not None:
+            confirm = _clean_text(confirm, 80)  # for a rule on what I send: the pane gets the line only once the game says this ("Sent.")
+            if confirm is not None:
+                out["confirm"] = confirm
         return out
     return None
 

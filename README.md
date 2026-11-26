@@ -253,14 +253,18 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   arrives (while you hold the phone) or is listed when you look at the phone, and
   only the ones that pane does not already have, however often you look: a text the game wrapped onto a second line
   comes along with it (a line counts as wrapped only if it is about as long as the longest lines the game sends, so
-  the phone's description after the last text is not taken for part of it), two word-for-word identical texts in the same minute are both kept (and not doubled on the
+  the phone's description after the last text is not taken for part of it; before the game's wrap width has been learned from
+  its long lines, the window's width stands in for it, never asking for more than 80 characters), two word-for-word identical texts in the same minute are both kept (and not doubled on the
   next look), and clearing the pane makes the next look fill it again. It is a route action with the box *Skip lines it
   already has* (`once`), so any log the game repeats can be captured the same way.
   **Your own side:** the game answers a text you send with just "Sent.", so *Capture my texts to a pane* matches the
   command as you type it (a trigger with *Matches the commands I send, not what the game shows*: it sees what actually
   goes out, so an alias, a button or a pop-out window's input bar counts too, and never a password) and puts
   `[Nov 24 18:33]You > Mara: yes, after eight` in the Phone pane, stamped the way the game stamps. Such a rule's
-  *Pane line* box sets what the pane gets (`%1`-`%9`, `{time}`, `{name}`). Every pane has a **Show what I send**
+  *Pane line* box sets what the pane gets (`%1`-`%9`, `{time}`, `{name}`). The *Only once the game says* box (`confirm`; the
+  ready-made rule has `Sent.`) holds the line back until the game answers that, so a text the game refused ("You must be
+  holding a phone first.") never reaches the pane; texts are answered in the order they were sent, and one with no answer in
+  4 seconds is dropped. Every pane has a **Show what I send**
   switch (the pop-out window's *Show mine* box, the right-click menu on its tab, or `/panesent <pane> [on|off]`, remembered
   per pane and world): rules marked *My own side* only run while it is on, which includes *Capture your own tells to a
   pane*, so tells, texts and the rest all turn on and off the same way, and what others send you is never affected. `text history`

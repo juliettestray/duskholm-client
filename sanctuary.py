@@ -1042,6 +1042,12 @@ def clean_settings(cfg):
     cfg["sr_rate"] = max(-10, min(10, sr)) if isinstance(sr, int) and not isinstance(sr, bool) else 0
     cfg["gradients"] = colortools.validate_saved(cfg.get("gradients"))
     cfg["world_time"] = gametime.clean_all(cfg.get("world_time"))
+    for t in cfg.get("triggers") or []:                     # the ready-made "my texts" rule from before it waited for the game's "Sent."
+        if isinstance(t, dict) and t.get("when") == "sent" and t.get("name") == "Capture my texts to a pane":
+            for a in t.get("actions") or []:
+                if isinstance(a, dict) and a.get("type") == "route" and a.get("mine") and not a.get("confirm") \
+                        and a.get("format") == "[{time}]You > %1: %2":
+                    a["confirm"] = "Sent."
     cn = cfg.get("char_name")
     cfg["char_name"] = cn if isinstance(cn, str) and re.fullmatch(r"[A-Za-z][A-Za-z'-]{0,23}", cn) else ""
     cfg["designs"] = customize_data.validate_designs(cfg.get("designs"))
@@ -1143,6 +1149,8 @@ def trigger_from_values(v):
             route["mine"] = True
         if str(v.get("pane_format", "")).strip():
             route["format"] = str(v["pane_format"]).strip()
+        if str(v.get("pane_confirm", "")).strip():
+            route["confirm"] = str(v["pane_confirm"]).strip()
         actions.append(route)
     if v.get("beep"):
         actions.append({"type": "beep"})
@@ -1201,7 +1209,7 @@ _PRESET_DEFS = [
     # the game only answers "Sent." to a text, so my side is matched as I type it (and shown like the others, with the time)
     {"name": "Capture my texts to a pane", "mode": "regex", "when": "sent", "ignore_case": True, "priority": 0,
      "pattern": "^text (?!history |clear)(@?\\w+) (.+)$",
-     "actions": [{"type": "route", "pane": "Phone", "mine": True, "format": "[{time}]You > %1: %2"}]},
+     "actions": [{"type": "route", "pane": "Phone", "mine": True, "format": "[{time}]You > %1: %2", "confirm": "Sent."}]},
     {"name": "Capture phone texts (no repeats)", "mode": "regex", "ignore_case": False, "priority": 0,
      "pattern": "^\\[[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}\\]",
      "actions": [{"type": "route", "pane": "Phone", "once": True}]},
@@ -1219,7 +1227,7 @@ def values_from_trigger(t):
     """The editors' simple values for an existing trigger (None for a new one)."""
     v = {"name": "", "enabled": True, "regex": False, "pattern": "", "ignore_case": True, "priority": "0",
          "stop": False, "fg": "", "bg": "", "bold": False, "whole": False, "every": False, "hide": False, "send": "",
-         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "pane_once": False, "pane_mine": False, "pane_format": "", "sent": False, "status": "",
+         "echo": True, "beep": False, "note": "", "sample": "", "keep": [], "pane": "", "pane_gag": False, "pane_once": False, "pane_mine": False, "pane_format": "", "pane_confirm": "", "sent": False, "status": "",
          "speak": "", "speak_int": False, "silence": False, "glob": True, "world": ""}
     if not t:
         return v
@@ -1247,7 +1255,7 @@ def values_from_trigger(t):
             v["silence"] = True
         elif k == "route":
             v.update(pane=a["pane"], pane_gag=bool(a.get("gag")), pane_once=bool(a.get("once")),
-                     pane_mine=bool(a.get("mine")), pane_format=a.get("format", ""))
+                     pane_mine=bool(a.get("mine")), pane_format=a.get("format", ""), pane_confirm=a.get("confirm", ""))
         else:
             v["keep"].append(a)
     return v
@@ -4255,7 +4263,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
         win.title("Edit trigger" if existing else "Add trigger")
         win.transient(parent)
         v0 = values_from_trigger(existing)
-        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "pane_format", "status", "speak")}
+        sv = {k: tk.StringVar(value=str(v0[k])) for k in ("name", "pattern", "priority", "fg", "bg", "send", "note", "sample", "pane", "pane_format", "pane_confirm", "status", "speak")}
         bv = {k: tk.BooleanVar(value=bool(v0[k])) for k in ("enabled", "regex", "ignore_case", "stop", "bold", "whole", "every",
                                                            "hide", "echo", "beep", "pane_gag", "pane_once", "pane_mine", "sent", "speak_int", "silence",
                                                            "glob")}
@@ -4307,6 +4315,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
         tk.Entry(fmt, textvariable=sv["pane_format"], width=40).pack(side="left")
         tk.Checkbutton(fmt, text="My own side (the pane's \"show what I send\" switch)", variable=bv["pane_mine"]).pack(side="left", padx=8)
         row("Pane line", fmt)
+        row("Only once the game says", tk.Entry(win, textvariable=sv["pane_confirm"], width=24))
         row("Client note", tk.Entry(win, textvariable=sv["note"], width=64))
         row("Status line", tk.Entry(win, textvariable=sv["status"], width=64))
         spk = tk.Frame(win)
@@ -4518,6 +4527,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
                       t("pane", "Send to pane", 24), c("pane_gag", "...and hide from main window"),
                       c("pane_once", "...skip lines it already has"),
                       t("pane_format", "Pane line", 40), c("pane_mine", "...it is my own side"),
+                      t("pane_confirm", "...only once the game says", 24),
                       t("note", "Client note", 40), t("status", "Status line text", 40)]
             buttons = [("Save", "save"), ("< Back", "back"), ("Cancel", "cancel")]
             title = "Trigger: actions"
@@ -5915,6 +5925,7 @@ class App(phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findte
         """Returns (pieces_to_show_or_None, side_effects). Highlight and hide only apply to text
         that has not been drawn yet; commands, beeps and notes always run."""
         self._once_line(plain)
+        self._sent_confirm(plain)                                     # (a text of mine waiting to hear "Sent.")
         if triggers is None or not plain or not any(t.get("enabled", True) for t in self.cfg["triggers"]):
             return pieces, []
         self._guard.begin_line()

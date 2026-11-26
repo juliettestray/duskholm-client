@@ -14,12 +14,17 @@ listing. Clearing the pane forgets what it was given, so the next look fills it 
 starts with an empty pane and an empty memory, which agree."""
 import collections
 import heapq
+import re
 import time
 
 GAP = 3.0                  # seconds: lines further apart than this are not one listing
 WRAP_MIN = 50              # a line shorter than this was not cut short by the game's wrapping, so nothing continues it
 WRAP_SLACK = 30            # a wrapped line is within this many characters of the longest lines the game sends (its wrap width)
 WRAP_SAMPLE = 400          # how many recent long lines the wrap width is judged from
+WRAP_TRUST = 70            # what has been learned about the wrap width counts only when the long lines really are long (a few short ones say nothing)
+WRAP_PRIOR_MAX = 80        # before the game's wrap width has been learned: never ask for a longer line than this
+SENT_WAIT = 4.0            # seconds a text of mine waits for the game to say it went through
+SENT_REFUSED = re.compile(r"^you (must|need|can't|cannot|don't|do not) .*phone")        # the game said no (the oldest waiting text is dropped)
 SETTLE_MS = 500            # the last message of a listing is shown this long after its last line
 MAX_REMEMBERED = 4000
 
@@ -65,12 +70,19 @@ class CaptureMixin:
             d.append(n)
 
     def _wrap_floor(self):
-        """The shortest a line can be and still have been wrapped: the old fixed minimum on a narrow game, and near the
-        game's real wrap width on a wide one (the third longest line, so one or two over-long lines do not skew it)."""
+        """The shortest a line can be and still have been wrapped: near the game's real wrap width once that is known (the
+        third longest line, so one or two over-long lines do not skew it, and only if the long lines really are long), and
+        before that a guess from the window's width, never more than WRAP_PRIOR_MAX and never less than the old minimum."""
         d = getattr(self.session, "_wrap_lens", None)
-        if not d:
-            return WRAP_MIN
-        return max(WRAP_MIN, heapq.nlargest(3, d)[-1] - WRAP_SLACK)
+        if d and len(d) >= 3:
+            w = heapq.nlargest(3, d)[-1]
+            if w >= WRAP_TRUST:
+                return max(WRAP_MIN, w - WRAP_SLACK)
+        try:                                               # nothing trustworthy learned yet: go by the window (a wide one means a wide game), up to a limit
+            cols = self.session.out.winfo_width() // max(1, self.f_norm.measure("0"))
+        except Exception:
+            cols = 0
+        return max(WRAP_MIN, min(WRAP_PRIOR_MAX, cols - WRAP_SLACK))
 
     def _once_begin(self, pane, snapshot, plain):
         """`plain` matched a route-once rule for `pane`: it starts a new message."""
@@ -209,7 +221,40 @@ class SentMixin:
                     continue
                 text = triggers.expand(act.get("format") or "%0", m["captures"])
                 text = text.replace("{time}", self._game_stamp()).replace("{name}", self._char_name() or "You")
-                self.pane_append(act["pane"], [(text, MINE_STYLE)])
+                if act.get("confirm"):
+                    self._sent_hold(act["pane"], [(text, MINE_STYLE)], act["confirm"], str(m["captures"].get("1", "")))
+                else:
+                    self.pane_append(act["pane"], [(text, MINE_STYLE)])
+
+    def _sent_hold(self, pane, pieces, confirm, who):
+        """A text of mine that the game has not accepted yet: it goes to the pane only when the game says `confirm`
+        ("Sent."), so one the game refused ("You must be holding a phone first.") never shows. Texts are answered in the order
+        they were sent; one that is never answered is dropped after a few seconds."""
+        wait = self.session.__dict__.setdefault("_sent_wait", [])
+        now = time.time()
+        wait[:] = [w for w in wait if now - w["t"] < SENT_WAIT]
+        wait.append({"t": now, "pane": pane, "pieces": pieces, "confirm": str(confirm).strip().lower()})
+
+    def _sent_confirm(self, plain):
+        """Every line of the game passes here: the game's answer to a text of mine lets it into the pane, or drops it."""
+        wait = self.session.__dict__.get("_sent_wait")
+        if not wait:
+            return
+        now = time.time()
+        wait[:] = [w for w in wait if now - w["t"] < SENT_WAIT]
+        if not wait:
+            return
+        cut = self._leading_prompt_len(plain) if plain.startswith("[") else 0
+        bare = plain[cut:].strip().lower()
+        if not bare:
+            return
+        for i, w in enumerate(wait):
+            if bare == w["confirm"]:
+                del wait[i]
+                self.pane_append(w["pane"], w["pieces"])
+                return
+        if SENT_REFUSED.match(bare):
+            del wait[0]
 
     def _panesent_command(self, cmd, arg):
         """/panesent <pane> [on|off]: whether a pane shows what I send (no on/off: flip it)."""

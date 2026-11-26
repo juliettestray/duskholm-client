@@ -159,13 +159,22 @@ assert pane_lines() == [W1, W2, WL, WTAIL], pane_lines()
 # the width is judged per world, from the longest lines it has sent
 narrow = app.open_new_world("Narrow"); pump(0.3)
 app.session = narrow
-assert app._wrap_floor() == 50, "nothing seen yet: the old fixed minimum"
+cols = app.session.out.winfo_width() // max(1, app.f_norm.measure("0"))
+assert app._wrap_floor() == max(50, min(80, cols - 30)), "nothing seen yet: by the window, never asking for more than 80"
 for n in (80, 79, 78):
     app._wrap_note(n)
 assert app._wrap_floor() == 50, "a game that wraps at about 80 keeps the old minimum"
 for n in (172, 171, 172):
     app._wrap_note(n)
 assert app._wrap_floor() == 141
+short = app.open_new_world("Short"); pump(0.3)
+app.session = short
+for n in (55, 66, 55, 60):                                  # a few short lines say nothing about where the game wraps
+    app._wrap_note(n)
+assert app._wrap_floor() == max(50, min(80, app.session.out.winfo_width() // max(1, app.f_norm.measure("0")) - 30))
+app.session = app._shown
+app.close_world(short); pump(0.3)
+app.session = narrow
 app._wrap_note(900)
 assert app._wrap_floor() == 142, "one over-long line does not skew it"
 app._wrap_note(900)
@@ -175,5 +184,18 @@ assert app._wrap_floor() == 142, "short lines are not counted"
 app.session = app._shown
 app.close_world(narrow); pump(0.3)
 
+# a session that has only seen short lines so far (nothing learned about the game's wrap width yet): the window's width stands in
+# for it, so a 66-character text is not taken for a wrapped one and the phone's description after it is left alone
+app.pane_clear("phone"); app.session._wrap_lens.clear(); pump(0.2)
+real_width = app.session.out.winfo_width
+app.session.out.winfo_width = lambda: 1750                  # (a window about as wide as the screenshot's: the docked pane has squeezed this one)
+assert app._wrap_floor() == 80, app._wrap_floor()
+feed(W1, W2, DESC1, DESC2, ""); pump(0.9)
+assert pane_lines() == [W1, W2], pane_lines()
+feed(W1, W2, DESC1, DESC2, ""); pump(0.9)
+assert pane_lines() == [W1, W2], "and again"
+app.session.out.winfo_width = lambda: 600                   # a narrow window: a 66-character line could well have been wrapped, as before
+assert app._wrap_floor() == 50
+del app.session.out.winfo_width
 root.update(); root.destroy()
 print("capture-once tests OK")
