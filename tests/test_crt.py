@@ -5,6 +5,8 @@ import crt
 import sanctuary as sc
 import tkinter as tk
 
+asked, answer = [], [True]
+crt.messagebox.askokcancel = lambda title, text, **k: (asked.append(text), answer[0])[1]     # (the warning dialog)
 sc.SETTINGS_PATH = os.path.join(tempfile.mkdtemp(), "s.json")
 sc.user_skin_dir = lambda: os.path.join(tempfile.mkdtemp(), "none")
 root = tk.Tk()
@@ -29,8 +31,28 @@ assert sc.clean_settings({"host": "x", "crt_lines": "bogus"})["crt_lines"] == "o
 assert all(v in sc.CHOICE_WORDS for v in ("light", "medium", "strong"))
 assert not shown() and getattr(app, "_crt", None) is None, "off: nothing is even created"
 
+# the first time the lines go on there is a warning to read, and it can be answered No
+answer[0] = False
+app._set_extra("crt_lines", "light"); pump(0.2)
+assert len(asked) == 1 and "headache" in asked[0] and "eyes" in asked[0] and "/crt off" in asked[0], asked
+assert app.cfg["crt_lines"] == "off" and app._xvars["crt_lines"].get() == "off", "No: they stay off"
+answer[0] = True
+app._set_extra("crt_lines", "light"); pump(0.2)
+assert app.cfg["crt_lines"] == "light" and len(asked) == 2
+for v in ("medium", "strong", "off"):                       # stronger, weaker or off: nothing more to warn about
+    app._set_extra("crt_lines", v)
+assert len(asked) == 2 and app.cfg["crt_lines"] == "off"
+app._set_extra("crt_lines", "light"); assert len(asked) == 3, "from off to on asks again"
+app._set_extra("crt_lines", "off")
+app._local("/crt medium"); pump(0.2)                         # typed on purpose: the warning is a line of text, no dialog
+assert len(asked) == 3 and app.cfg["crt_lines"] == "medium"
+said = app.out.get("1.0", "end")
+assert said.count("Warning: Scanlines can tire the eyes") == 1 and "headache" in said
+app._local("/crt strong"); pump(0.1)
+assert app.out.get("1.0", "end").count("Warning: Scanlines") == 1, "once, when they were turned on"
+app._set_extra("crt_lines", "medium")
+
 # in the normal look it never shows, whatever the setting
-app._set_extra("crt_lines", "medium"); pump(0.3)
 assert not shown() and app.crt_wanted() is False
 
 # the DOS look: it covers the client area, see-through and click-through
@@ -120,6 +142,28 @@ app.set_dos_mode(False); pump(0.4)
 assert not shown()
 app.set_dos_mode(True); pump(0.6)
 assert shown()
+
+# the DOS look: a DOS dialog warns, and Escape (or "Turn them off") turns them off again
+app._set_extra("crt_lines", "off"); pump(0.3)
+n = len(asked)
+app._set_extra("crt_lines", "light"); pump(0.7)
+d = app._overlay
+assert d is not None and "headache" in d._message and [b["label"] for b in d._buttons] == ["Keep them on", "Turn them off"], d
+assert len(asked) == n, "no window dialog in the DOS look"
+assert d._esc == "off", "Escape turns them off"
+assert app.cfg["crt_lines"] == "light"
+d.close(); app._overlay = None
+d._on_result("off", {}); pump(0.5)
+assert app.cfg["crt_lines"] == "off" and not shown()
+app.dos_close_overlay(); pump(0.2)                          # (the Options menu comes back after the answer; choosing an item closes it first)
+app._set_extra("crt_lines", "light"); pump(0.7)
+d = app._overlay
+d.close(); app._overlay = None
+d._on_result("keep", {}); pump(0.5)
+assert app.cfg["crt_lines"] == "light" and shown()
+app._set_extra("crt_lines", "medium"); pump(0.3)             # (already on: no second warning)
+assert app._overlay is None or "headache" not in getattr(app._overlay, "_message", "")
+app.dos_close_overlay(); pump(0.2)
 
 # text still goes in and the screen still works under it
 app._append([("line %d\n" % i, None) for i in range(300)]); pump(0.3)

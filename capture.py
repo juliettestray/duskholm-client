@@ -12,10 +12,14 @@ messages can be word for word the same inside one minute (their timestamp is onl
 just remembered: in one listing the kth copy of a message is shown only when fewer than k copies were seen in an earlier
 listing. Clearing the pane forgets what it was given, so the next look fills it again. Nothing here is saved: a new session
 starts with an empty pane and an empty memory, which agree."""
+import collections
+import heapq
 import time
 
 GAP = 3.0                  # seconds: lines further apart than this are not one listing
 WRAP_MIN = 50              # a line shorter than this was not cut short by the game's wrapping, so nothing continues it
+WRAP_SLACK = 30            # a wrapped line is within this many characters of the longest lines the game sends (its wrap width)
+WRAP_SAMPLE = 400          # how many recent long lines the wrap width is judged from
 SETTLE_MS = 500            # the last message of a listing is shown this long after its last line
 MAX_REMEMBERED = 4000
 
@@ -45,10 +49,28 @@ class CaptureMixin:
                     self._once_finish(st)
             return
         self._line_serial = self.__dict__.get("_line_serial", 0) + 1
+        self._wrap_note(len(plain))
         if table and self._leading_prompt_len(plain) > 0:
             for st in list(table.values()):
                 if st["session"] is self.session:
                     self._once_finish(st)
+
+    def _wrap_note(self, n):
+        """Remember how long this line of the game's text was (long ones only): the game wraps at one width, so the
+        longest lines it sends show where, and a line far short of that was not cut short by wrapping."""
+        if n >= 40:
+            d = getattr(self.session, "_wrap_lens", None)
+            if d is None:
+                d = self.session._wrap_lens = collections.deque(maxlen=WRAP_SAMPLE)
+            d.append(n)
+
+    def _wrap_floor(self):
+        """The shortest a line can be and still have been wrapped: the old fixed minimum on a narrow game, and near the
+        game's real wrap width on a wide one (the third longest line, so one or two over-long lines do not skew it)."""
+        d = getattr(self.session, "_wrap_lens", None)
+        if not d:
+            return WRAP_MIN
+        return max(WRAP_MIN, heapq.nlargest(3, d)[-1] - WRAP_SLACK)
 
     def _once_begin(self, pane, snapshot, plain):
         """`plain` matched a route-once rule for `pane`: it starts a new message."""
@@ -70,7 +92,7 @@ class CaptureMixin:
         now = time.time()
         for st in list(table.values()):
             if st["session"] is self.session and st["pending"] is not None and st["last"] == self._line_serial - 1 \
-                    and now - st["t"] < GAP and len(st["pending"]["plains"][-1]) >= WRAP_MIN:
+                    and now - st["t"] < GAP and len(st["pending"]["plains"][-1]) >= self._wrap_floor():
                 st["pending"]["snaps"].append(snapshot)
                 st["pending"]["plains"].append(plain)
                 self._once_touch(st, now)

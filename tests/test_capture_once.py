@@ -135,5 +135,45 @@ assert pane_lines() == [M1], "the world on screen has its own pane and its own m
 app.goto_world(1); pump(0.4)
 assert pane_lines() == [M1, M2, LIVE]
 
+# a wide game: the game wraps at about 175 columns, so a 56-character text was NOT cut short, and the phone's description
+# that follows the listing is not part of it (it was being captured as if it were)
+app.pane_clear("phone"); pump(0.2)
+WIDE = ("The corridor is long and the stone walls are wet with the damp of a thousand years, and torches gutter in iron rings. " * 2)[:172]
+assert len(WIDE) == 172
+feed(WIDE, WIDE.replace("stone", "brick"), WIDE.replace("torches", "lamps"), ""); pump(0.2)
+W1 = "[Nov 24 18:53]7108390: its a euphemism for cunnilignus"
+W2 = "[Nov 25 02:46]7108390: catherine says u are going australia???????"
+DESC1 = "It has a symbol of a pair of red eyes in sinister mask."
+DESC2 = "Out of date but still perfectly serviceable, this is a white titanium-coloured iPhone 15 Pro."
+assert len(W2) >= 50 and len(DESC1) >= 50 and len(DESC2) >= 50, "long enough for the old rule to take them for a wrapped end"
+feed(W1, W2, DESC1, DESC2, "[1/1DF M:0 K:0 ()] "); pump(0.9)
+assert pane_lines() == [W1, W2], pane_lines()
+feed(W1, W2, DESC1, DESC2); pump(0.9)
+assert pane_lines() == [W1, W2], "and again: still just the texts"
+# a text that really was wrapped at that width still comes in one piece
+WL = ("[Nov 25 03:01]7108390: " + "this one really does run on and on until the game has to wrap it " * 3)[:172]
+assert len(WL) == 172
+WTAIL = "so the end of it is on a second line"
+feed(WL, WTAIL, ""); pump(0.9)
+assert pane_lines() == [W1, W2, WL, WTAIL], pane_lines()
+# the width is judged per world, from the longest lines it has sent
+narrow = app.open_new_world("Narrow"); pump(0.3)
+app.session = narrow
+assert app._wrap_floor() == 50, "nothing seen yet: the old fixed minimum"
+for n in (80, 79, 78):
+    app._wrap_note(n)
+assert app._wrap_floor() == 50, "a game that wraps at about 80 keeps the old minimum"
+for n in (172, 171, 172):
+    app._wrap_note(n)
+assert app._wrap_floor() == 141
+app._wrap_note(900)
+assert app._wrap_floor() == 142, "one over-long line does not skew it"
+app._wrap_note(900)
+assert app._wrap_floor() == 142, "nor do two"
+app._wrap_note(30)
+assert app._wrap_floor() == 142, "short lines are not counted"
+app.session = app._shown
+app.close_world(narrow); pump(0.3)
+
 root.update(); root.destroy()
 print("capture-once tests OK")

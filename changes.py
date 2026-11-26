@@ -3,6 +3,9 @@ release notes on GitHub (publish: the footer about downloading is added there). 
 BEFORE releasing it. Each entry is (version, text); text is Markdown-ish: "- " bullets, **bold**, `code`."""
 
 CHANGES = [
+    ("1.3.2", """- **Backlog loads when you connect.** With *Reload earlier backscroll* on, Sanctuary used to put the last world's saved text into the window as soon as it started, even if you then connected to a different world. It now waits until you connect and the world is known, then loads that world's own text. Quitting without connecting no longer risks overwriting a world's saved text.
+- **The phone capture no longer takes the phone's description.** On a game that wraps wide, the description that follows the list of texts was being captured as the end of the last text. A line now counts as wrapped only if it is about as long as the longest lines the game sends.
+- **Scanlines warn first.** Turning the lines on from off shows a warning that they can tire the eyes or cause headaches (a dialog in the normal look, a DOS dialog in the DOS look, a line of text for `/crt`), and you can say no."""),
     ("1.3.1", """- **Plain (lifted).** A new skin beside Plain: the same black screen and true colours, but dark colours such as black and dark blue are lightened until they can be read, as Plain did before 1.3.0. Plain stays exactly as the game sends it.
 - **Scanlines note.** The README now says that fine stripes can tire the eyes or bring on a headache in some people, and that `/crt off` switches them off."""),
     ("1.3.0", """- **CRT scanlines.** In the DOS look, Options > *CRT scanlines in the DOS look* (off, light, medium, strong; off by default) lays thin dark lines over the screen like an old monitor. Printing text is no slower, the mouse goes straight through, and `/crt` says whether they are showing.

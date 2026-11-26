@@ -9,11 +9,16 @@ Windows only."""
 import sys
 import time
 import tkinter as tk
+from tkinter import messagebox
 
 LEVELS = {"light": 0.12, "medium": 0.22, "strong": 0.38}      # how dark the lines are (window opacity)
 KEY = "#fe00fe"                                               # the colour that is see-through (never drawn)
 GAP = 2                                                       # a line every GAP screen rows
 LONG = 16384                                                  # lines are this long (the window shows only what fits)
+
+WARNING = ("Scanlines can tire the eyes or bring on a headache in some people, especially over long sessions, with "
+           "migraines, or on high-resolution screens. If you feel any discomfort, turn them off: Options > CRT scanlines "
+           "in the DOS look, or type /crt off.")
 
 _GWL_EXSTYLE = -20
 _WS_EX_TRANSPARENT, _WS_EX_LAYERED, _WS_EX_TOOLWINDOW, _WS_EX_NOACTIVATE = 0x20, 0x80000, 0x80, 0x08000000
@@ -60,6 +65,26 @@ CHECK_MS = 1000
 class CrtMixin:
     def crt_wanted(self):
         return bool(self.dos and self.cfg.get("crt_lines", "off") in LEVELS and sys.platform.startswith("win"))
+
+    def _crt_option_changed(self, old, new, ask=True):
+        """Turning the lines on (from off) warns first: a dialog in the normal look that can be answered No (False: taken
+        back), a DOS dialog in the DOS look, and a line of text when it came from /crt. Going from one strength to another,
+        or off, says nothing. True when the change stands (in the DOS look it stands until the dialog says otherwise)."""
+        if old != "off" or new == "off":
+            return True
+        if not ask:
+            self.system("Warning: " + WARNING)
+            return True
+        if self.dos:
+            def answered(res, _vals):
+                if res == "off":
+                    self._set_extra("crt_lines", "off")
+                self._reopen(self.dos_options_menu)
+            self.root.after_idle(lambda: self._dos_dialog(
+                "CRT scanlines", [], [("Keep them on", "keep"), ("Turn them off", "off")], answered, width=66,
+                message=WARNING, esc_result="off") if self.dos and not self._overlay_open() else None)
+            return True
+        return messagebox.askokcancel("CRT scanlines: a warning", WARNING + chr(10) * 2 + "Turn them on?", parent=self.root)
 
     def _apply_crt(self):
         """Show, move or hide the lines to match the settings and the main window. True if they had to be moved."""
@@ -230,7 +255,7 @@ class CrtMixin:
         """/crt  /crt off|light|medium|strong"""
         a = arg.strip().lower()
         if a in ("off", "light", "medium", "strong"):
-            self._set_extra("crt_lines", a)
+            self._set_extra("crt_lines", a, ask=False)       # (typed on purpose: the warning is a line of text, not a dialog)
             if not self.dos:
                 self.system("CRT scanlines %s (they show in the DOS look, Alt+D)." % a)
             return

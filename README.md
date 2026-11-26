@@ -229,8 +229,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 - **Scrollback length and reloading it** (Options). *Scrollback length* is how many lines of text each world keeps in the
   window before the oldest go: 5,000, 10,000, 20,000 (the default), 50,000 or 100,000. *Reload earlier backscroll at
   start* (off by default) saves the end of each world's text when you quit (and every five minutes, and when you close a
-  world) and puts it back above the new text the next time you connect to that world (at start-up for the world on
-  screen). Each world has its own file (a saved world by its id), so two worlds on the same address, such as two
+  world) and puts it back above the new text when you connect to that world (not at start-up, since the world last used may
+  not be the one you connect to). Each world has its own file (a saved world by its id), so two worlds on the same address, such as two
   characters, never mix, with a line saying where the old text ends. *Backscroll to reload* is how many lines are saved and put back:
   500 to 20,000, and never more than the scrollback length (lowering the length lowers it too). **The more lines you
   reload, the longer start-up takes**, which is why this is a choice and why turning it on asks first. It is plain text,
@@ -252,7 +252,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   every date-stamped message line (`[Jun  9 12:34]Name: ...`) to a Phone pane, whether it pops up the moment it
   arrives (while you hold the phone) or is listed when you look at the phone, and
   only the ones that pane does not already have, however often you look: a text the game wrapped onto a second line
-  comes along with it, two word-for-word identical texts in the same minute are both kept (and not doubled on the
+  comes along with it (a line counts as wrapped only if it is about as long as the longest lines the game sends, so
+  the phone's description after the last text is not taken for part of it), two word-for-word identical texts in the same minute are both kept (and not doubled on the
   next look), and clearing the pane makes the next look fill it again. It is a route action with the box *Skip lines it
   already has* (`once`), so any log the game repeats can be captured the same way.
   **Your own side:** the game answers a text you send with just "Sent.", so *Capture my texts to a pane* matches the
@@ -444,7 +445,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   and scroll as usual), the keyboard stays where it was, and it follows the window when you move, resize or minimise
   it. It shows only in the DOS look (screen reader mode has none) and only on Windows. It makes text a little harder
   to read, which is why it starts off, and fine stripes can tire the eyes or bring on a headache in some people (more
-  so over long sessions or with migraines): if they bother you, switch them off (`/crt off`). Speed: printing text is not slowed (measured: 393 against 386 lines a second
+  so over long sessions or with migraines): if they bother you, switch them off (`/crt off`). So the first time you
+  turn them on from off, a warning says this: a dialog in the normal look (answer No and they stay off), a DOS dialog
+  in the DOS look (Escape turns them off again), and a line of text if you typed `/crt`. Speed: printing text is not slowed (measured: 393 against 386 lines a second
   with strong lines); resizing the window costs about 6 ms a step.
   The lines check themselves every second (and when the window comes back to the front) and put right anything that has
   gone wrong, such as being hidden or left behind the window. `/crt` says whether they are showing and what had to be put

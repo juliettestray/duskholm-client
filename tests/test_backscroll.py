@@ -1,5 +1,5 @@
 """Scrollback length, and reloading the end of it between sessions (no network)."""
-import json, os, sys, tempfile, time
+import json, os, socket, sys, tempfile, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import sanctuary as sc
 import backscroll as bs
@@ -86,6 +86,9 @@ assert app.backscroll_save(app.session) is False and not os.path.exists(app._bac
 answer[0] = True
 app._set_extra("keep_backscroll", True); pump(0.1)
 assert app.cfg["keep_backscroll"] is True and len(asked) == 2
+# a window that is not tied to a world yet (nothing connected) saves nothing: it would replace that world's real text with a banner
+assert app.backscroll_save(app.session) is False and not os.path.exists(app._backscroll_dir())
+assert app.backscroll_load(app.session) == 0                      # (connecting does this once the world is known)
 assert "slower start" in [l for k, d, l, dl, h in sc.EXTRA_BOOLS if k == "keep_backscroll"][0]
 
 # saving: plain text, the last `keep` lines only
@@ -184,27 +187,68 @@ assert "Backscroll to reload" in txt, txt
 shown.close(); pump(0.2)
 app.set_dos_mode(False); pump(0.5)
 
-# start-up: the next run puts the saved text back on its own, above its first message
-app.cfg["keep_lines"] = "1000"
+# start-up: nothing is loaded until you connect, because the world last used may not be the one you connect to
+srv, srv2 = socket.socket(), socket.socket()
+for x in (srv, srv2):
+    x.bind(("127.0.0.1", 0)); x.listen(5)
+port, port2 = srv.getsockname()[1], srv2.getsockname()[1]
+app.cfg.update(host="127.0.0.1", port=port, tls=False, keep_lines="1000")
+app.session.host, app.session.port, app.session.tls = "127.0.0.1", port, False
+app.session.name, app.session.wid = "", ""
+app.v_host.set("127.0.0.1"); app.v_port.set(str(port)); app.v_tls.set(False)
+app.backscroll_load(app.session)                 # (as connecting to it does)
 app.clear(); feed(400, "Z")
+kpath = app._bs_path(app.session)
 app.on_quit()                                   # saves on the way out (and closes the window)
-assert os.path.exists(os.path.join(tmp, "backscroll", os.path.basename(path)))
-root2 = tk.Tk()
-app2 = sc.App(root2)
-root2.geometry("1250x720+20+20")
-end = time.time() + 0.8
-while time.time() < end:
-    root2.update(); time.sleep(0.01)
+assert os.path.exists(kpath)
+
+
+def start():
+    r = tk.Tk()
+    a = sc.App(r)
+    r.geometry("1250x720+20+20")
+    e = time.time() + 0.8
+    while time.time() < e:
+        r.update(); time.sleep(0.01)
+    return r, a
+
+
+def spin(r, t):
+    e = time.time() + t
+    while time.time() < e:
+        r.update(); time.sleep(0.01)
+
+
+root2, app2 = start()
+t = app2.out.get("1.0", "end-1c")
+assert "Z1" not in t and "Earlier text" not in t, "nothing is loaded at start-up"
+assert app2.backscroll_save(app2.session) is False, "and quitting without connecting must not overwrite what was saved"
+app2.on_quit()
+assert open(kpath, encoding="utf-8").read().splitlines()[0] == "Z1", "the saved text is untouched"
+root2, app2 = start()
+app2.toggle_connection(); spin(root2, 0.8)             # now the world is known: its own text comes back
 t = app2.out.get("1.0", "end-1c").splitlines()
 assert t[0] == "Z1" and t[399] == "Z400" and "Earlier text" in t[400], (t[:2], t[398:402])
 assert app2.out.yview()[1] >= 0.999, "a new session starts at the bottom, with the newest text, not at the top of the old"
-app2._append([("brand new line\n", None)])
-end = time.time() + 0.3
-while time.time() < end:
-    root2.update(); time.sleep(0.01)
+app2._append([("brand new line" + chr(10), None)])
+spin(root2, 0.3)
 assert app2.out.yview()[1] >= 0.999 and app2.out.bbox("end-2l") is not None, "and new text keeps following"
 assert app2.cfg["keep_backscroll"] is True and app2.cfg["keep_lines"] == "1000"
 saved = json.load(open(sc.SETTINGS_PATH, encoding="utf-8"))
 assert saved["scrollback_lines"] == "20000" and saved["keep_backscroll"] is True
+app2.toggle_connection(); spin(root2, 0.3)
 root2.destroy()
+
+# the same window opened, but a DIFFERENT world is connected to: the last world's text is not put into it
+root3, app3 = start()
+assert "Z1" not in app3.out.get("1.0", "end-1c")
+app3.v_port.set(str(port2))
+app3.toggle_connection(); spin(root3, 0.8)
+t3 = app3.out.get("1.0", "end-1c")
+assert "Z1" not in t3 and "Earlier text" not in t3, "another world: none of the last world's backlog"
+assert app3.backscroll_save(app3.session) is True and "Z400" not in open(app3._bs_path(app3.session), encoding="utf-8").read()
+assert open(kpath, encoding="utf-8").read().splitlines()[0] == "Z1", "the first world's saved text is still its own"
+app3.toggle_connection(); spin(root3, 0.3)
+root3.destroy()
+srv.close(); srv2.close()
 print("backscroll tests OK")

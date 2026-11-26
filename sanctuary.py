@@ -1726,7 +1726,6 @@ class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.B
         root.protocol("WM_DELETE_WINDOW", self.on_quit)
         self._apply_entry_mode()
         self._auto_name_world(self.session)                     # (the first world is named after the saved world it points at)
-        self.backscroll_load(self.session)                      # (only when "reload earlier backscroll" is on)
         self._bs_job = self.root.after(backscroll.SAVE_EVERY_MS, self._backscroll_tick)
         self.input.focus_set()
         self._pump_job = root.after(25, self._pump)
@@ -3612,8 +3611,9 @@ class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.B
         self._set_extra(key, values[(values.index(cur) + 1) % len(values)] if cur in values else values[0])
         self.root.after_idle(lambda: self.dos_options_menu(initial=index))
 
-    def _set_extra(self, key, value):
-        """One of the EXTRA options changed (from either menu)."""
+    def _set_extra(self, key, value, ask=True):
+        """One of the EXTRA options changed (from either menu). ask=False: no dialog (a typed command)."""
+        old = self.cfg.get(key)
         self.cfg[key] = value
         var = getattr(self, "_xvars", {}).get(key)
         if var is not None and var.get() != value:
@@ -3636,6 +3636,11 @@ class App(crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.B
         if key == "keep_box":
             self._apply_keep_box()
         if key == "crt_lines":
+            if not self._crt_option_changed(old, value, ask):       # (the first time it is turned on: a warning to read)
+                self.cfg[key] = old
+                if var is not None:
+                    var.set(old)
+                return
             self._apply_crt()
         if key == "world_tabs":
             self._refresh_tabbar(True)

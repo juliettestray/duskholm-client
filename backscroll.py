@@ -3,8 +3,8 @@
 The length is an Option (5,000 to 100,000 lines, default 20,000; the oldest lines go first). Reloading is a separate,
 off-by-default option: when it is on, the last N lines of each world's text are saved as PLAIN TEXT (no colours) in a
 `backscroll` folder next to the settings, one file per WORLD (a saved world by its id, so two worlds on the same address
-keep separate text), and put back above that world's new text the next time it is connected (or at start-up for the world on
-screen). N (kept) can never be more than the scrollback length. Loading
+keep separate text), and put back above that world's new text when you connect to it, once the world is known (never at
+start-up: the world last used may not be the one you are about to connect to). N (kept) can never be more than the scrollback length. Loading
 a long history makes starting up slower, which is why it is a choice. Nothing is saved while the option is off, and
 switching it off deletes what was saved."""
 import os
@@ -79,7 +79,9 @@ class BackscrollMixin:
         """Write the last `keep` lines of world s's text. False when the option is off, there is nothing to write, or it failed."""
         if not self.cfg.get("keep_backscroll"):
             return False
-        try:
+        if self._bs_name(s) not in (getattr(s, "_bs_keys", None) or ()):
+            return False                                # not connected to this world yet: the window holds nothing of it, and
+        try:                                            # saving would replace its real saved text with a banner line
             out = s.out
             total = int(out.index("end-1c").split(".")[0])
             if out.get("end-2c", "end-1c") == "\n":
@@ -101,10 +103,17 @@ class BackscrollMixin:
             return False
 
     def backscroll_load(self, s):
-        """Put the saved text above everything world s shows now, once per world. Returns the number of lines put back."""
-        if getattr(s, "_bs_done", False) or not self.cfg.get("keep_backscroll"):
+        """Put the saved text of the world s is connecting to above everything its window shows now, once for each world
+        (a window that is used for another world later gets that world's own text). Returns the number of lines put back."""
+        if not self.cfg.get("keep_backscroll"):
             return 0
-        s._bs_done = True
+        done = getattr(s, "_bs_keys", None)
+        if done is None:
+            done = s._bs_keys = set()
+        key = self._bs_name(s)
+        if key in done:
+            return 0
+        done.add(key)
         try:
             path = self._bs_path(s)
             legacy = False
@@ -217,6 +226,6 @@ class BackscrollMixin:
             else:
                 self.backscroll_clear_files()
                 for s in self.sessions:
-                    s._bs_done = False
+                    s._bs_keys = set()
                 self.system("Saved backscroll deleted; nothing more will be saved.")
         return True
