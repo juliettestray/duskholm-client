@@ -45,7 +45,7 @@ assert spellui.clean_words(["Foo", "foo", "a", "x" * 50, "b4d", 5, None, " bar "
 c = sc.clean_settings({"host": "x", "spell_words": ["Zork", "zork", 7]})
 assert c["spell_words"] == ["zork"] and sc.clean_settings({"host": "x", "spell_words": "no"})["spell_words"] == []
 assert all(k in [e[0] for e in sc.EXTRA_BOOLS] for k in ("spell_input", "spell_notepad", "spell_custom"))
-keys = [e[4] for e in sc.EXTRA_BOOLS] + [e[4] for e in sc.EXTRA_CHOICES]
+keys = [e[4] for e in sc.EXTRA_BOOLS + sc.EXTRA_CHOICES if e[4]]
 assert len(keys) == len(set(keys)), "every DOS option hotkey is different"
 
 # ---- the client ----

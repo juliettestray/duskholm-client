@@ -14,7 +14,7 @@ PAGES = [
     ("Spell checking", ("spell_input", "spell_notepad", "spell_custom")),
     ("Sound", ("bell", "bell_new")),
     ("Logging and scrollback", ("log_echo", "scrollback_lines", "keep_backscroll", "keep_lines")),
-    ("Game data (GMCP)", ("gmcp", "gmcp_layout")),
+    ("Game data (GMCP)", ("gmcp", "gmcp_layout", "sky_art", "temp_unit")),
     ("Screen reader", ("screen_reader", "sr_alerts", "gmcp_sr", "sr_voice", "@sr_interval", "@sr_combat")),
 ]
 OTHER = "Other"

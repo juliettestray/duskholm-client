@@ -8,6 +8,10 @@ import json
 import re
 import time
 
+import gametime
+import moon
+import skybox
+
 # MTTS (Mud Terminal Type Standard) bits Sanctuary can honestly claim, and the one a screen reader adds
 MTTS_ANSI, MTTS_UTF8, MTTS_256, MTTS_SCREEN_READER, MTTS_TRUECOLOR = 1, 4, 8, 64, 256
 MTTS_BASE = MTTS_ANSI | MTTS_UTF8 | MTTS_256 | MTTS_TRUECOLOR
@@ -123,7 +127,7 @@ FACING = {"north": "N", "northeast": "NE", "east": "E", "southeast": "SE", "sout
           "west": "W", "northwest": "NW"}
 BAR_LABEL = "DF"
 # A line is a list of (text, role); the roles are mapped to colours by the client.
-ROLES = ("normal", "dim", "good", "warn", "bad", "cyan", "magenta", "blue", "head")
+ROLES = ("normal", "dim", "good", "warn", "bad", "cyan", "magenta", "blue", "brown", "grey", "head")
 
 
 def short_offset(x, y, z=0):
@@ -178,21 +182,38 @@ DAMAGE_KEEP = 200
 
 
 def damage_line(d):
-    """One hit as a pane line: 'You > A man  Striking 22  stagger +10' or 'A man > you  Striking 22  stagger +10'.
-    Only what the game showed: a field it left out is left out here."""
+    """One hit as a pane line, in words: 'Tooth and Claw hits you for 5, 1 stagger' or 'Your Tooth and Claw hits for
+    75, 15 stagger'. Only what the game showed: a number it left out is left out here."""
     if not isinstance(d, dict) or d.get("dir") not in ("out", "in"):
         return None
-    out = d["dir"] == "out"
-    other = str(d.get("target" if out else "source") or "")
-    head = ("You > " + other) if out else ((other + " > you") if other else "Hit you")
-    bits = [(head.strip(" >"), "good" if out else "bad")]
-    if d.get("attack"):
-        bits.append(("  " + str(d["attack"]), "normal"))
-    if isinstance(d.get("damage"), (int, float)):
-        bits.append(("  %d" % d["damage"], "warn"))
-    if isinstance(d.get("stagger"), (int, float)):
-        bits.append(("  stagger +%d" % d["stagger"], "magenta"))
+    out, attack = d["dir"] == "out", str(d.get("attack") or "").strip()
+    if out:
+        lead = ("Your %s hits" % attack) if attack else "You hit"
+    else:
+        lead = ("%s hits you" % attack) if attack else "Hit you"
+    bits = [(lead, "good" if out else "bad")]
+    dmg = d.get("damage") if isinstance(d.get("damage"), (int, float)) and not isinstance(d.get("damage"), bool) else None
+    stg = d.get("stagger") if isinstance(d.get("stagger"), (int, float)) and not isinstance(d.get("stagger"), bool) else None
+    if dmg is not None:
+        bits += [(" for ", "normal"), ("%d" % dmg, "warn")]
+    if stg is not None:
+        bits += [(", " if dmg is not None else " ", "normal"), ("%d stagger" % stg, "magenta")]
     return bits
+
+
+def damage_header(name):
+    return [("--- %s ---" % name, "head")]
+
+
+def foe_name(g):
+    """Who a hit with no name in it came from or went to: the enemy scan shows fighting you, else the nearest one."""
+    me = g.get("Char.Name")
+    mine = me.get("name") if isinstance(me, dict) else None
+    foes = [p for p in _people(g.get("Combat.Scan")) if p.get("hostile") and not p.get("me") and p.get("name")]
+    for p in foes:
+        if mine and p.get("target") == mine:
+            return str(p["name"])
+    return str(foes[0]["name"]) if foes else None
 
 
 def here_lines(g):
@@ -307,10 +328,12 @@ def map_lines(g, cols=None, height=None):
 
 # ---- the Duskholm default layouts --------------------------------------------------------------------
 LAYOUT_NAME = "duskholm"
+COLUMN_WIDTH = 44              # characters across the right-hand column (it is narrowed on its own when the window is small)
+SKY_TICK_MS = 20000           # how often the sky box looks at the clock
 FIGHT_HOLD_MS = 3000          # the fight layout stays this long after the fight ends, so a lull does not flip it
-PANE_LINES = {"Here": 200, "Chat": 500, "Phone": 500, "Map": 200, "Damage": 300, "Allies": 200, "Scan": 200}
+PANE_LINES = {"Sky": 40, "Here": 200, "Chat": 500, "Phone": 500, "Map": 200, "Damage": 300, "Allies": 200, "Scan": 200}
 BAR_PACKAGES = ("char.vitals", "char.status", "combat.status", "combat.scan")
-LIVE = {"room.info": ("Here",), "room.players": ("Here",), "room.mobs": ("Here",),
+LIVE = {"room.info": ("Here", "Sky"), "room.environment": ("Sky",), "room.players": ("Here",), "room.mobs": ("Here",),
         "combat.scan": ("Scan", "Allies", "Map"), "combat.map": ("Map",), "combat.status": ("Scan",)}
 CHAT_COLOUR = {"ooc": "cyan", "faction": "warn", "sect": "warn", "cult": "warn"}
 SOCIETY_TAG = {"faction": "[faction] ", "sect": "[sect] ", "cult": "[cult] "}
@@ -319,7 +342,7 @@ _TEXT_OUT = re.compile(r"^You text (.+?): (.*)$", re.S)
 
 def duskholm_layout(mode, dos=False):
     """(pane names, layout) for 'calm' or 'fight'. Windows and DOS share the shape; DOS columns are a little narrower."""
-    w = 30 if dos else 36
+    w = COLUMN_WIDTH
     if mode == "fight":
         regions = [{"side": "right", "size": w, "weight": 9, "panes": ["Map"]},
                    {"side": "right", "size": w, "weight": 2, "panes": ["Chat", "Phone"]},
@@ -327,8 +350,8 @@ def duskholm_layout(mode, dos=False):
                    {"side": "right", "size": w, "weight": 1, "panes": ["Allies"]},
                    {"side": "bottom", "size": 5, "weight": 1, "panes": ["Scan"]}]
     else:
-        regions = [{"side": "right", "size": w, "weight": 2, "panes": ["Here"]},
-                   {"side": "right", "size": w, "weight": 3, "panes": ["Chat", "Phone"]}]
+        regions = [{"side": "right", "size": w, "weight": 2, "panes": ["Sky"]},
+                   {"side": "right", "size": w, "weight": 5, "panes": ["Chat", "Phone", "Damage"]}]
     names = [n for r in regions for n in r["panes"]]
     return names, {"regions": regions}
 
@@ -564,10 +587,11 @@ class GmcpMixin:
             except Exception:
                 pass
         if fighting:
-            if st.get("mode") != "fight":
-                st["new_fight"] = True            # the damage pane starts the next fight under a dividing line
+            starting = st.get("mode") != "fight"
+            if starting:
+                st["new_fight"] = True            # the damage pane names its opponent again
             st["mode"] = "fight"
-            self._gmcp_layout_apply()
+            self._gmcp_layout_apply(force=starting)      # (a fight starting puts the layout back even if something else changed it)
             return
         if st.get("mode") == "fight":
             sess = self.session
@@ -594,7 +618,7 @@ class GmcpMixin:
         th = self.theme
         ansi = th["ansi"]
         fg = {"dim": th["dim"], "good": ansi[10], "warn": ansi[11], "bad": ansi[9], "cyan": ansi[14],
-              "magenta": ansi[13], "blue": ansi[12], "head": th["alert"]}.get(role)
+              "magenta": ansi[13], "blue": ansi[12], "brown": ansi[3], "grey": ansi[8], "head": th["alert"]}.get(role)
         return (fg, None, role == "head", False, False, False)
 
     def _gmcp_pane_size(self, name):
@@ -643,26 +667,83 @@ class GmcpMixin:
             lines = map_lines(g, size[0], size[1])
             self._gmcp_pane_set("Map", lines, None if me is None else me[0] + len(lines) - len(g["Combat.Map"]["rows"]))
             return
+        if name == "Sky":
+            self._gmcp_pane_set("Sky", skybox.sky_lines(self._gmcp_sky_info()))
+            return
         fn = {"Here": here_lines, "Scan": scan_lines, "Allies": allies_lines}.get(name)
         if fn is not None:
             self._gmcp_pane_set(name, fn(g))
 
-    def _gmcp_map_soon(self):
+    def _gmcp_sky_info(self):
+        """Everything the sky box shows: what the game sent (Room.Info, Room.Environment) and what the client works out
+        itself when the game did not say (the clock from the world's clock, the moon, Fahrenheit or Celsius)."""
+        g = self.term.gmcp
+        room = g.get("Room.Info") if isinstance(g.get("Room.Info"), dict) else {}
+        env = g.get("Room.Environment") if isinstance(g.get("Room.Environment"), dict) else {}
+        info = dict(env)
+        if "terrain" not in info and "environment" not in info and room.get("environment"):
+            info["environment"] = room["environment"]              # the room's sector type: inside, city, forest, field, water...
+        info["coords"] = room.get("coords")
+        info["area"] = env.get("neighborhood") or ""               # (Room.Info "area" is the area file, not the neighbourhood)
+        gt, now = self.world_time(), time.time()
+        h, m = env.get("hour"), env.get("minute")
+        if isinstance(h, int) and isinstance(m, int) and not isinstance(h, bool) and not isinstance(m, bool):
+            info["clock"] = "%02d:%02d" % (h, m)                    # the room's own clock, as the game's time command shows it
+        else:
+            dt = gametime.local_dt(gt, now)
+            h = dt.hour
+            info["hour"], info["clock"] = h, gametime.clock_text(gt, now)
+        if not info.get("daytime") and not info.get("period"):
+            info["period"] = skybox.period_word(h if isinstance(h, int) else 12)
+        if not info.get("moon"):
+            d = moon.describe(now)                                  # (only until the game sends the phase)
+            info["moon"] = {"name": d["name"], "lit": d["lit"], "full": bool(d["full_night"])}
+        info["unit"] = skybox.choose_unit(self.cfg.get("temp_unit"))
+        info["art_on"] = bool(self.cfg.get("sky_art", True))
+        info["dos"] = bool(self.dos)
+        size = self._gmcp_pane_size("Sky")
+        info["width"] = size[0] if size else 44
+        return info
+
+    def _gmcp_sky_refresh(self):
+        if self._gmcp_layout_on() and self._here():
+            self._gmcp_live("Sky")
+
+    def _gmcp_sky_start(self):
+        """The box shows the time, so it redraws now and then (only when something on it has changed does it repaint)."""
+        if getattr(self, "_sky_job", None) is not None:
+            return
+
+        def tick():
+            self._sky_job = None
+            self._gmcp_sky_refresh()
+            try:
+                self._sky_job = self.root.after(SKY_TICK_MS, tick)
+            except Exception:
+                self._sky_job = None
+        try:
+            self._sky_job = self.root.after(SKY_TICK_MS, tick)
+        except Exception:
+            self._sky_job = None
+
+    def _gmcp_resize_soon(self, name):
+        """A live pane that lays itself out to its width is redrawn shortly after it is resized."""
         sess = self.session
-        if getattr(sess, "_gmcp_map_job", None) is not None:
+        jobs = sess.__dict__.setdefault("_gmcp_resize_jobs", {})
+        if jobs.get(name) is not None:
             return
 
         def redo():
-            sess._gmcp_map_job = None
+            jobs[name] = None
             if sess is self.session and sess is getattr(self, "_shown", sess) and self._gmcp_layout_on():
-                self._gmcp_live("Map")
+                self._gmcp_live(name)
         try:
-            sess._gmcp_map_job = self.root.after(120, redo)
+            jobs[name] = self.root.after(120, redo)
         except Exception:
-            sess._gmcp_map_job = None
+            jobs[name] = None
 
     def _gmcp_live_all(self):
-        for name in ("Here", "Scan", "Allies", "Map"):
+        for name in ("Sky", "Here", "Scan", "Allies", "Map"):
             self._gmcp_live(name)
 
     def _gmcp_append_once(self, pane, role_pieces):
@@ -680,13 +761,17 @@ class GmcpMixin:
         if line is None:
             return
         st = self._gmcp_state()
+        out = data["dir"] == "out"
+        name = data.get("target" if out else "source") or foe_name(self.term.gmcp)
+        if st.pop("new_fight", False):
+            st["damage_head"] = None                 # a new fight names its opponent again
+        if name and name != st.get("damage_head"):
+            st["damage_head"] = name
+            head = damage_header(name)
+            st.setdefault("damage", []).append(plain_of(head))
+            self.pane_append("Damage", [(t, self._gmcp_key(r)) for t, r in head])
         st.setdefault("damage", []).append(plain_of(line))
         del st["damage"][:-DAMAGE_KEEP]
-        pane = self._panes.get("damage")
-        if pane is not None and st.get("new_fight") and pane["history"]:
-            st["new_fight"] = False
-            self.pane_append("Damage", [("---- new fight ----", self._gmcp_key("dim"))])
-        st["new_fight"] = False
         self.pane_append("Damage", [(t, self._gmcp_key(r)) for t, r in line])
 
     def _gmcp_chat(self, data):
@@ -725,14 +810,16 @@ class GmcpMixin:
                 self.cfg["panes"] = self.cfg["panes"] + [d]
         self.cfg["layout"] = lay.validate_layout(wanted, known_panes=[d["name"] for d in self.cfg["panes"]])
         st["applied"] = key
+        self.cfg["panes_hidden"] = []                         # folds are kept by area number, which this layout renumbers
         for n in names:
             pane = self.pane_ensure(n)
-            if n == "Map" and pane is not None and not pane.get("gmcp_bound"):
-                pane["gmcp_bound"] = True                      # (the map is centred on you, so it follows the pane's size)
-                pane["text"].bind("<Configure>", lambda _e: self._gmcp_map_soon(), add="+")
+            if n in ("Map", "Sky") and pane is not None and not pane.get("gmcp_bound"):
+                pane["gmcp_bound"] = True                      # (the map is centred on you and the sky box is laid out to the pane's width)
+                pane["text"].bind("<Configure>", lambda _e, n=n: self._gmcp_resize_soon(n), add="+")
         self._save_settings()
         self.schedule_layout(5)
         self._gmcp_live_all()
+        self._gmcp_sky_start()
 
     def _gmcp_world_shown(self):
         """This world has just come to the front: its bars and panes are brought up to date."""

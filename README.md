@@ -236,9 +236,9 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   reload, the longer start-up takes**, which is why this is a choice and why turning it on asks first. It is plain text,
   without colours or highlights, kept in a `backscroll` folder next to the settings (so anyone who can open that folder
   can read it); switching the option off deletes it. Capture panes are not saved.
-- **No gap where a message was hidden.** When a trigger hides a message and the screen already ends in a blank line, the
-  blank line the game puts after the message is dropped with it (one blank line only), so hiding something does not
-  leave a hole.
+- **No gap where a message was hidden.** When a trigger hides a message, the blank lines the game puts after it go with it, so
+  hiding something does not leave a hole. If the message had a blank line of its own before it, one blank line goes (the one
+  after it); if it did not, every blank line that follows it goes. The hidden text still reaches the log.
 - **Capture panes** (`Ctrl+P`, View > Panes / layout). Lines can be copied into small in-client
   panes (OOC, Tells, Guide ...) docked to the top, bottom, left or right of the main text. In the
   DOS look they are plain regions of the screen with a tab row, not windows. A trigger's *Send to
@@ -523,14 +523,21 @@ each, which works in the DOS look and with a screen reader).
 its name, `ANSI`, and `MTTS 333`, which includes the screen reader bit (64), so a game with a screen reader layout can switch it on at
 login without asking you. Outside screen reader mode the request is refused, as before. It applies when you connect.
 
-**GMCP layout (Duskholm default).** Options > "GMCP panes and layout" (or `/gmcp layout`) fills the stat bar and a set of panes
-from the game's own data, so nothing is read out of the text: the bar shows DF, stagger (ST), wounds, lag, the move and attack
-timers, your position and, in an operation, your side's progress; panes show Here (the room, who is in it, exits), Chat (says,
-emotes, OOC and faction/sect/cult chat, each society tagged), Phone (texts in and out, as the game shows them), and in a fight
-Map (with you in the middle), Damage (every hit you deal or take: attack, damage, stagger), Allies and Scan (the hostile
-people nearest first, with cover). The bar also says whether the fight is fast or slow combat. When a fight starts the layout changes to the fight
-layout by itself and goes back three seconds after it ends. The DOS look gets the same panes, a little narrower. Turning it off
-puts the layout you had back. Needs "GMCP game data" and a reconnect.
+**GMCP layout (Duskholm default).** Options > *GMCP panes and layout* (or `/gmcp layout`) fills the stat bar and a set of panes
+from the game's own data, so nothing is read out of the text. The bar shows DF, stagger (ST), wounds, lag, the move and attack timers,
+your position, whether a fight is fast or slow, and your side's progress in an operation. Out of a fight the right-hand column is a
+**sky box** over tabs for Chat (says, emotes, OOC and faction, sect and cult chat), Phone (texts in and out, as the game shows them) and
+Damage. The sky box draws the weather over the terrain (a little picture: sun or moon, clouds, rain, snow, hail, mist wisps; pines, hills,
+water, fields, streets, or a room indoors; block characters in the DOS look), with the temperature in the corner, your neighbourhood and
+coordinates, the mist (only when the game says you can see it), the time and the moon. The game sends all of that (Room.Environment); 
+nothing is drawn for what it did not send. Options > *Weather picture* turns the picture off (the words stay) and *Temperature units*
+chooses Fahrenheit or Celsius, by default from your Windows region. When a fight starts the column becomes the fight layout:
+Map (with you in the middle), Chat/Phone, Damage (every hit you deal or take, in words and under the opponent's name:
+`Tooth and Claw hits you for 5, 1 stagger`), Allies, and Scan (the hostile people nearest first, with cover) along the bottom. The layout
+changes by itself and goes back three seconds after a fight ends. It works in the normal and the DOS look. A fight starting puts the
+layout back even if something else changed it, and clears any folded areas (folds are kept by area number, which the two layouts share).
+In the DOS look the bar says GMCP beside ANSI when the game is sending it. Switching it off puts your own layout back. Needs
+"GMCP game data" and a reconnect.
 
 ## Updating, and making a release
 
@@ -628,6 +635,7 @@ python tests/test_findpanes.py    # Find with 'Search panes': order, which pane,
 python tests/test_keeptext.py     # the Keep text checkbox and /keep
 python tests/test_spell.py        # spell checking: the Windows engine, what is filtered, the three boxes, /spell
 python tests/test_settings.py     # the Settings window, the short Options menu and its 'Recently changed' section
+python tests/test_skybox.py       # the sky box: what is drawn from what the game sent, units, mist, the art's size
 python tests/test_worldswap.py    # Ctrl+Tab: swap between the last two worlds
 python tests/test_crt.py          # CRT scanlines: shows only in the DOS look, click-through, follows the window
 python tests/test_whatsnew.py     # what's new after an update: skipped versions, once, /changes

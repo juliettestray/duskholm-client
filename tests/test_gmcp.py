@@ -1,5 +1,5 @@
 """GMCP: negotiation, parsing, the /gmcp command and the screen-reader speech."""
-import json, os, sys, tempfile, time
+import json, os, re, sys, tempfile, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import sanctuary as sc
 import gmcp
@@ -171,13 +171,35 @@ assert app.statbar.winfo_ismapped() or app.statbar.winfo_manager() == "pack"
 
 app._local("/gmcp layout")
 assert app.cfg["gmcp_layout"] == "duskholm"
-app._on_data(msg('Room.Info {"num":1,"name":"a master bedroom","area":"Haven Township","exits":{"n":2,"e":3}}'))
+app._on_data(msg('Room.Info {"num":1,"name":"a master bedroom","area":"Haven Township","environment":"forest","coords":"10,18,0","exits":{"n":2,"e":3}}'))
 app._on_data(msg('Room.Players [{"name":"Sam"}]')); app._on_data(msg('Room.Mobs []')); pump(0.4)
 sides = [(r["side"], r["panes"]) for r in app.cfg["layout"]["regions"]]
-assert sides == [("right", ["Here"]), ("right", ["Chat", "Phone"])], sides
-assert "a master bedroom" in pane_text("Here") and "People: Sam" in pane_text("Here") and "Exits: e n" in pane_text("Here")
-app._on_data(msg('Room.Players [{"name":"Sam"},{"name":"Kai"}]')); pump(0.2)
-assert "Sam, Kai" in pane_text("Here")
+assert sides == [("right", ["Sky"]), ("right", ["Chat", "Phone", "Damage"])], sides
+app._local("/gmcp here"); assert "People: Sam" in app.out.get("end-6l", "end") and "Exits: e, n" in app.out.get("end-6l", "end")
+# the sky box: terrain from Room.Info, the rest from Room.Environment (and the client's own clock and moon)
+app.cfg["temp_unit"] = "f"; app._gmcp_sky_refresh(); pump(0.3)
+sky = pane_text("Sky")
+assert "10,18,0" in sky and "/|\\" in sky and "Haven Township" not in sky, "terrain art from Room.Info environment; the area file is not the neighbourhood"
+assert re.search(r"\d\d:\d\d", sky) and ("moon" in sky.lower() or "gibbous" in sky.lower() or "crescent" in sky.lower() or "quarter" in sky.lower() or "new" in sky.lower() or "full" in sky.lower()), sky
+assert "Mist" not in sky and "°" not in sky, "no temperature and no mist until the game sends them"
+app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"temp":"freezing","daytime":"afternoon","clouds":"storm","cover":"few","falling":["rain"],"hour":13,"minute":10,"moon":"waning gibbous"}')); pump(0.3)
+sky = pane_text("Sky")
+assert "Whitney" in sky and "29\u00b0F" in sky and "' / '" in sky and "13:10  afternoon" in sky and "Waning gibbous" in sky, sky
+assert "Mist" not in sky, "mist is shown only when the game sends it"
+app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"clouds":"grey","cover":"full","mist":"waist","hour":13,"minute":11,"moon":"full"}')); pump(0.3)
+sky = pane_text("Sky")
+assert "Mist: waist-deep" in sky and "Full moon" in sky and "full-moon night" in sky
+app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"clouds":"grey","cover":"full","hour":13,"minute":12,"moon":"full"}')); pump(0.3)
+assert "Mist" not in pane_text("Sky"), "and goes again when the game stops sending it"
+app._on_data(msg('Room.Environment {"temp_f":68,"temp_c":20,"temp":"mild","hour":13,"minute":12,"moon":"new"}')); pump(0.3)
+sky = pane_text("Sky")
+assert "Whitney" not in sky and "68\u00b0F" in sky and "full-moon night" not in sky, "indoors-style data: no neighbourhood, no sky"
+app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"clouds":"storm","cover":"few","falling":["rain"],"hour":13,"minute":12,"moon":"new"}')); pump(0.3)
+app._set_extra("temp_unit", "c"); pump(0.2); assert "-1\u00b0C" in pane_text("Sky")
+app._set_extra("temp_unit", "guess")
+app._set_extra("sky_art", False); pump(0.2)
+assert "/|\\" not in pane_text("Sky") and "storm clouds, rain" in pane_text("Sky"), "the picture can be switched off; the words stay"
+app._set_extra("sky_art", True); pump(0.2)
 app._on_data(msg('Comm.Channel.Text {"channel":"faction","text":"Your faction comms say push left"}'))
 app._on_data(msg('Comm.Channel.Text {"channel":"ooc","text":"[OOC] Sam: hi"}')); pump(0.2)
 assert "[faction] Your faction comms say push left" in pane_text("Chat") and "[OOC] Sam: hi" in pane_text("Chat")
@@ -209,14 +231,22 @@ for d in ('{"dir":"out","target":"A man","attack":"Striking","damage":22,"stagge
     app._on_data(msg("Combat.Damage " + d))
 pump(0.3)
 dl = pane_text("Damage").splitlines()
-assert dl[0] == "---- new fight ----" or dl[0] == "You > A man  Striking  22  stagger +10", dl
-dl = [x for x in dl if not x.startswith("----")]
-assert dl == ["You > A man  Striking  22  stagger +10", "A man > you  Striking  19  stagger +15", "Hit you  Carbines  7  stagger +3", "You  4"], dl
-app._local("/gmcp damage 2"); assert "Hit you  Carbines" in app.out.get("end-4l", "end") and "You  4" in app.out.get("end-4l", "end")
+assert dl == ["--- A man ---", "Your Striking hits for 22, 10 stagger", "Striking hits you for 19, 15 stagger",
+              "Carbines hits you for 7, 3 stagger", "You hit for 4"], dl
+app._local("/gmcp damage 2"); assert "Carbines hits you for 7, 3 stagger" in app.out.get("end-4l", "end") and "You hit for 4" in app.out.get("end-4l", "end")
 app._on_data(msg("Comm.Channel.Text " + json.dumps({"channel": "say", "text": 'A man says "Hi back."'})))
 app._on_data(msg('Comm.Channel.Text {"channel":"emote","text":"A man nods slowly."}')); pump(0.2)
 assert 'A man says "Hi back."' in pane_text("Chat") and "A man nods slowly." in pane_text("Chat")
 assert gmcp.damage_line({"dir": "in"}) == [("Hit you", "bad")] and gmcp.damage_line([]) is None
+app._on_data(msg('Combat.Damage {"dir":"in","source":"A wolf","attack":"Bite","damage":5,"stagger":1}')); pump(0.2)
+assert pane_text("Damage").splitlines()[-2:] == ["--- A wolf ---", "Bite hits you for 5, 1 stagger"]
+app._on_data(msg('Combat.Damage {"dir":"in","source":"A wolf","attack":"Bite","damage":6}')); pump(0.2)
+assert pane_text("Damage").splitlines()[-1] == "Bite hits you for 6" and pane_text("Damage").count("--- A wolf ---") == 1, "same opponent: no new header"
+app._on_data(msg('Char.Status {"fighting":false,"combat":"none","position":"standing"}')); app._gmcp_state()["mode"] = "calm"
+app._on_data(msg('Char.Status {"fighting":true,"combat":"slow","position":"standing"}'))
+app._on_data(msg('Combat.Damage {"dir":"in","source":"A wolf","attack":"Bite","damage":7}')); pump(0.2)
+assert pane_text("Damage").count("--- A wolf ---") == 2, "a new fight names its opponent again"
+assert gmcp.foe_name({}) is None and gmcp.foe_name({"Combat.Scan": {"people": [{"name": "X", "hostile": True}]}}) == "X"
 # the main window keeps everything: emotes and combat text are copied to the panes, never taken from the text
 for line in ("Gmcpa swings wildly. ", "(You attempt to knock A man out.)", "It is A man's turn to attack.",
              "A man swings wildly. ", "[Your best Striking attack hits. Reducing defenses by 22, increasing stagger by 10]"):
@@ -240,9 +270,20 @@ sc_hold = gmcp.FIGHT_HOLD_MS; pump(sc_hold / 1000.0 + 0.5)
 assert len(app.cfg["layout"]["regions"]) == 2, "and goes back when the fight is over"
 # DOS: the same panes, narrower
 app.set_dos_mode(True); pump(0.6)
-assert app.cfg["layout"]["regions"][0]["size"] == 30
+assert app.cfg["layout"]["regions"][0]["size"] == gmcp.COLUMN_WIDTH
 app.set_dos_mode(False); pump(0.4)
-assert app.cfg["layout"]["regions"][0]["size"] == 36
+assert app.cfg["layout"]["regions"][0]["size"] == gmcp.COLUMN_WIDTH
+# a fight starting takes the layout back, whatever changed it, and un-folds the areas
+app.cfg["layout"] = {"regions": [{"side": "left", "size": 30, "weight": 1, "panes": ["Here"]}], "min_main_cols": 80}
+app.cfg["panes_hidden"] = ["r1", "r2"]
+app._on_data(msg('Char.Status {"fighting":true,"combat":"slow","position":"standing"}')); pump(0.4)
+assert [r["panes"] for r in app.cfg["layout"]["regions"]][0] == ["Map"] and app.cfg["panes_hidden"] == [], app.cfg["layout"]
+app._on_data(msg('Char.Status {"fighting":false,"combat":"none","position":"standing"}')); pump(gmcp.FIGHT_HOLD_MS / 1000.0 + 0.5)
+# the DOS bar says GMCP is in use
+app.set_dos_mode(True); pump(0.5)
+segs, _tail = app._dos_segments(200)
+assert any("GMCP" in x[0] for x in segs), segs
+app.set_dos_mode(False); pump(0.4)
 app._local("/gmcp layout off"); pump(0.3)
 assert app.cfg["gmcp_layout"] == "off" and "Here" not in [n for r in app.cfg["layout"]["regions"] for n in r["panes"]]
 # the client asks for 64 only in screen reader mode

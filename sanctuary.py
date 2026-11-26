@@ -1025,6 +1025,7 @@ EXTRA_BOOLS = [
     ("spell_notepad", False, "Spell-check the notepad", "Spell check: notepad", "0"),
     ("spell_custom", False, "Spell-check the customize form", "Spell check: customize form", "H"),
     ("gmcp", False, "Use GMCP game data when the game offers it (applies at the next connect)", "GMCP game data", "6"),
+    ("sky_art", True, "Draw the weather picture in the sky box (GMCP layout)", "Weather picture", None),
     ("gmcp_sr", True, "Screen reader: speak GMCP changes (who comes and goes, health, fights)", "Reader: GMCP speech", "7"),
 ]
 # Options with a few named values: (key, default, values, menu label, DOS hotkey)
@@ -1035,6 +1036,7 @@ EXTRA_CHOICES = [
     ("sr_voice", "auto", ("auto", "nvda", "jaws", "windows", "off"), "Screen reader voice", "U"),
     ("entry_grow", "off", ("off", "2", "3", "5", "8"), "Entry box grows to (lines)", "K"),
     ("gmcp_layout", "off", ("off", "duskholm"), "GMCP panes and layout", "8"),
+    ("temp_unit", "guess", ("guess", "f", "c"), "Temperature units (GMCP layout)", None),
     ("crt_lines", "off", ("off", "light", "medium", "strong"), "CRT scanlines in the DOS look", "4"),
     ("world_tabs", "always", ("always", "two+", "off"), "World tabs", "W"),
     ("button_dock", "top", ("top", "bottom", "off"), "Button bar", "B"),
@@ -1046,7 +1048,7 @@ CHOICE_WORDS = {"off": "off", "hh:mm": "HH:MM", "hh:mm:ss": "HH:MM:SS", "always"
                 "scrolled": "when I am scrolled up or away", "real": "my local time",
                 "game": "game time (US Eastern)", "auto": "automatic (NVDA, else Windows voice)",
                 "nvda": "NVDA", "jaws": "JAWS", "windows": "Windows voice",
-                "duskholm": "Duskholm default", "light": "light", "medium": "medium", "strong": "strong", "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
+                "duskholm": "Duskholm default", "guess": "from my Windows region", "f": "Fahrenheit", "c": "Celsius", "light": "light", "medium": "medium", "strong": "strong", "2": "2 lines", "3": "3 lines", "5": "5 lines", "8": "8 lines",
                 "two+": "only with two or more worlds",
                 "500": "500 lines", "1000": "1,000 lines", "2000": "2,000 lines", "5000": "5,000 lines",
                 "10000": "10,000 lines", "20000": "20,000 lines", "50000": "50,000 lines", "100000": "100,000 lines"}
@@ -3446,8 +3448,8 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
                     cands.append((3 if t.endswith("%") else 4 if i == 0 else 7, 5 + 0.1 * i, t, "normal", i > 0))
             elif pr["text"]:
                 cands.append((7, 5, " ".join(pr["text"]), "normal"))
-        cands.append((6, 6, ("TLS " if self.v_tls.get() else "") + ("ANSI-MXP" if (self.connected and self.term.mxp) else "ANSI"),
-                      "dim"))
+        cands.append((6, 6, ("TLS " if self.v_tls.get() else "") + ("ANSI-MXP" if (self.connected and self.term.mxp) else "ANSI")
+                      + (" GMCP" if self.gmcp_active() else ""), "dim"))
         chosen, used = [], 0
         for c in sorted(cands, key=lambda c: (c[0], c[1])):
             prio, order, text, role = c[:4]
@@ -3667,6 +3669,8 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
             self._apply_entry_mode()
         if key == "keep_box":
             self._apply_keep_box()
+        if key in ("sky_art", "temp_unit"):
+            self._gmcp_sky_refresh()
         if key in ("spell_input", "spell_notepad", "spell_custom"):
             self._spell_option_changed(key)
         if key == "gmcp_layout":
@@ -5931,16 +5935,18 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         if self._iface is not None and self.iface_capture(pieces, plain):
             return                                        # the game's item editor talking: gathered, not scrolled
         if not plain.strip() and not m and not flushed and getattr(self.out, "_gag_gap", False):
-            self.out._gag_gap = False                     # the blank line that framed a hidden message: it would now double up
+            if self.out._gag_gap != "all":
+                self.out._gag_gap = False                 # the blank line that framed a hidden message: it would now double up
             self._log_raw("\n")
             return
         shown, effects = self._run_triggers(pieces, plain, flushed, drawn)
         if shown is None:                                 # hidden by a trigger
             self._log_raw(whole + "\n")
-            # when what is on screen already ends in a blank line, the blank line the game put after the hidden
-            # message would leave a gap where it was: that one blank line is dropped too
-            self.out._gag_gap = (getattr(self.out, "_gag_gap", False) or
-                                 self.out.get("end-3c", "end-1c") in ("\n\n", "\n") or self.out.get("1.0", "end-1c") == "")
+            # the blank lines the game puts after a hidden message would leave a gap where it was. A message set apart by a
+            # blank line of its own loses one (the one after it); one that was not goes with every blank line that follows it
+            prev = getattr(self.out, "_gag_gap", False)
+            framed = self.out.get("end-3c", "end-1c") in ("\n\n", "\n") or self.out.get("1.0", "end-1c") == ""
+            self.out._gag_gap = prev if prev else ("one" if framed else "all")
         else:
             self.out._gag_gap = False
             segs = [(t, self._tag_for(k)) for t, k in list(shown) + tail_pieces]
