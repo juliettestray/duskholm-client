@@ -9,7 +9,7 @@ class EditMenuMixin:
     def _bind_edit_menu(self, w, entry=False):
         """Right-click (and the Menu key / Shift+F10 in the entry box) on a text area or the entry box."""
         if entry or w is getattr(self, "input", None):
-            w.bind("<Button-3>", lambda e: self._edit_menu(w, e.x_root, e.y_root), add="+")
+            w.bind("<Button-3>", lambda e: self._edit_menu(w, e.x_root, e.y_root, e.x, e.y), add="+")
             for seq in ("<Shift-F10>", "<Key-Menu>"):
                 try:
                     w.bind(seq, lambda e: (self._edit_menu(w, w.winfo_rootx() + 10, w.winfo_rooty() - 4), "break")[1], add="+")
@@ -73,6 +73,8 @@ class EditMenuMixin:
         """[(label, hotkey, enabled, action)] for the widget that was clicked."""
         out = []
         if w is self.input:
+            if local_x is not None:
+                out += self._spell_items(w, local_x, local_y)      # (a misspelled word: suggestions first)
             try:
                 has_sel = bool(w.selection_present())
             except tk.TclError:
@@ -158,15 +160,21 @@ class EditMenuMixin:
             pass
 
     # ---- showing it ---------------------------------------------------------------------------------
-    def _edit_menu(self, w, x_root, y_root, local_x=None, local_y=None):
-        items = self._edit_items(w, local_x, local_y)
+    def _edit_menu(self, w, x_root, y_root, local_x=None, local_y=None, items=None, back_to=None):
+        if items is None:
+            items = self._edit_items(w, local_x, local_y)
         if w is self.input:
             w.focus_set()
 
         in_main = w.winfo_toplevel() is self.root          # a pane's own window gets an ordinary pop-up menu
 
         def back():
-            if in_main:
+            if back_to is not None:
+                try:
+                    self.root.after_idle(back_to.focus_set)
+                except tk.TclError:
+                    pass
+            elif in_main:
                 try:
                     self.root.after_idle(self.input.focus_set)
                 except tk.TclError:

@@ -453,7 +453,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   box* (off by default) puts a small **Keep text** checkbox at the right end of the input box; tick it with the
   mouse (or Tab to it and press Space) and Enter sends what is in the box and leaves it there. Untick it, or turn
   the option off, and Enter clears the box again. `/keep [on|off]` does the same from the keyboard (and in the
-  DOS look, which has no checkbox). A password is never kept.
+  DOS look, which has no checkbox). The kept text comes back selected: press Enter to send it again, or type
+  anything at all to replace it. A password is never kept.
 - **CRT scanlines** (Options > *CRT scanlines in the DOS look*: off, light, medium or strong; off by default). Thin dark
   horizontal lines, one every other screen row, over the whole DOS window, like an old monitor. They are a see-through
   window laid over the program, so the text underneath is not touched: the mouse goes straight through (select, click
@@ -495,6 +496,20 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   Ctrl+wheel), 20,000-line scrollback, keep-alive, optional bell.
 
 Settings live in `~/.sanctuary.json`.
+
+**Spell checking** (Options: *Spell check: input box*, *notepad* and *customize form*, each off by default; `/spell`). It
+uses Windows' own spell checker (Windows 8 or later, in your Windows language, nothing to install), so your Windows
+dictionary applies. A misspelled word gets a red underline a moment after you stop typing; right-click it for
+suggestions, *Add to my dictionary* (saved with your settings) or *Ignore all* (until you quit), and a repeated word
+("the the") offers *Delete the repeated word*. The game's own words (Duskholm and the rest of its vocabulary, listed in
+`spellterms.py`, only the ones Windows does not already know; `make_spellterms.py` rebuilds that list) are never
+underlined, nor are links, acronyms, words with digits, or words after `/`, `@`, `%` or `#`. In the input box a line is only checked
+when it reads like talking: it starts with say, emote, pose, tell, ooc, text and the like, or has three or more words; and
+words you have already sent to the game are accepted, so `east` and `get sword` are left alone. The input box needs the
+growing box (Options > Entry box grows to), because a plain one-line box cannot underline a word; a password prompt
+always uses the plain box and is never checked. `/spell` shows what is on; `/spell on|off`, `/spell input|notepad|custom [on|off]`,
+`/spell add|remove <word>`, `/spell words`, and `/spell check` (reads the misspellings in the input box, with a suggestion for
+each, which works in the DOS look and with a screen reader).
 
 **Screen reader and the server.** In screen reader mode Sanctuary answers the server's terminal-type request (telnet TTYPE) with
 its name, `ANSI`, and `MTTS 333`, which includes the screen reader bit (64), so a game with a screen reader layout can switch it on at
@@ -603,6 +618,7 @@ python tests/test_worldfile.py    # .snc export/import, including hostile files
 python tests/test_worldbuttons.py # buttons in .snc files: which go out, arriving switched off, the cap
 python tests/test_findpanes.py    # Find with 'Search panes': order, which pane, pop-outs
 python tests/test_keeptext.py     # the Keep text checkbox and /keep
+python tests/test_spell.py        # spell checking: the Windows engine, what is filtered, the three boxes, /spell
 python tests/test_worldswap.py    # Ctrl+Tab: swap between the last two worlds
 python tests/test_crt.py          # CRT scanlines: shows only in the DOS look, click-through, follows the window
 python tests/test_whatsnew.py     # what's new after an update: skipped versions, once, /changes

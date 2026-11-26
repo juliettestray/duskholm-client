@@ -152,6 +152,7 @@ class EntryBoxMixin:
         g.bind("<Tab>", self._grow_tab)
         g.on_resize = self._grow_resized
         self._bind_edit_menu(g, entry=True)
+        self.spell_attach(g, "input")                                            # (underlines, when Options turns it on)
 
     def _grow_tab(self, e):
         try:

@@ -53,6 +53,18 @@ assert app.history.count("east") == 1, "repeats are not stacked in the history"
 saved = json.load(open(sc.SETTINGS_PATH, encoding="utf-8"))
 assert saved["keep_text"] is True and saved["keep_box"] is True
 
+# the kept text comes back selected, so typing replaces it and Enter sends it again
+def selected(w):
+    return bool(w.selection_present())
+assert selected(app.input), "kept text starts selected"
+app.input.focus_force(); pump(0.1)
+app.input.event_generate("<KeyPress>", keysym="w"); pump(0.1)
+assert app.input.get() == "w", "typing over the selected text replaces it: %r" % app.input.get()
+type_enter("west"); assert app.input.get() == "west" and selected(app.input)
+app._on_enter(None); pump(0.1)
+assert sent[-1] == "west" and app.input.get() == "west" and selected(app.input), "Enter again sends it again"
+type_enter("east")
+
 # a password is never kept
 app.term.echo_off = True
 type_enter("hunter2"); assert sent[-1] == "hunter2" and app.input.get() == ""
@@ -75,6 +87,10 @@ app._local("/keep"); assert "not switched on" in app.out.get("end-3l", "end")
 app._set_extra("keep_box", True); app._set_extra("entry_grow", "3"); pump(0.4)
 assert app.input is app._grow and app._keep_chk.winfo_manager() == "place"
 type_enter("north"); assert sent[-1] == "north" and app.input.get() == "north"
+assert app.input.selection_present(), "the growing box starts the kept text selected too"
+app.input.focus_force(); pump(0.1); app.input.event_generate("<KeyPress>", keysym="z"); pump(0.1)
+assert app.input.get() == "z", "and typing replaces it: %r" % app.input.get()
+type_enter("north")
 app._local("/keep off"); type_enter("south"); assert app.input.get() == ""
 app._set_extra("entry_grow", "off"); pump(0.3)
 

@@ -350,6 +350,8 @@ class ToolsMixin:
             if isinstance(w, tk.Text):
                 w.bind("<KeyRelease>", lambda e, w=w: tint(w), add="+")
                 tint(w)
+                self.spell_attach(w, "custom")
+                self._spell_custom_boxes = getattr(self, "_spell_custom_boxes", []) + [w]
         msg = tk.Label(top, text="Ctrl+S sends. Up/Down move between boxes. Leave a box empty to leave it alone.",
                        anchor="w", justify="left", wraplength=520)
         msg.grid(row=r, column=0, columnspan=2, sticky="we", padx=10, pady=4)

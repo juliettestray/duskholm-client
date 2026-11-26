@@ -81,6 +81,7 @@ import capture                     # capture a repeating log onto a pane without
 import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
 import findtext                    # Ctrl+F / Ctrl+Shift+F
+import spellui                     # spell checking (Windows' own checker) in the notepad, the customize form and the growing input box
 import gmcp                        # GMCP game data (an option) and what it speaks
 import crt                         # CRT scanlines over the DOS look (an option)
 import phonelook                   # a popped-out pane drawn as an iPhone or an Android
@@ -1022,6 +1023,9 @@ EXTRA_BOOLS = [
     ("update_check", False, "Check for updates when Sanctuary starts", "Check for updates at start", "G"),
     ("walk_preview", True, "Preview my walk on the status line when I set it", "Walk preview", "P"),
     ("keep_box", False, "Show a 'Keep text' checkbox by the input box", "Keep-text checkbox", "5"),
+    ("spell_input", False, "Spell-check the growing input box (Windows spell checker)", "Spell check: input box", "9"),
+    ("spell_notepad", False, "Spell-check the notepad", "Spell check: notepad", "0"),
+    ("spell_custom", False, "Spell-check the customize form", "Spell check: customize form", "H"),
     ("gmcp", False, "Use GMCP game data when the game offers it (applies at the next connect)", "GMCP game data", "6"),
     ("gmcp_sr", True, "Screen reader: speak GMCP changes (who comes and goes, health, fights)", "Reader: GMCP speech", "7"),
 ]
@@ -1088,6 +1092,7 @@ def clean_settings(cfg):
             break
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
+    cfg["spell_words"] = spellui.clean_words(cfg.get("spell_words"))
     cfg["find_from"] = "top" if cfg.get("find_from") == "top" else "bottom"
     cfg["find_case"] = cfg.get("find_case") is True
     cfg["find_panes"] = cfg.get("find_panes") is True
@@ -1699,7 +1704,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(spellui.SpellMixin, gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -2262,6 +2267,7 @@ class App(gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.Whats
         ("verify", "keepalive", "auto_reconnect", "update_check"),
         ("links", "link_images", "emoji", "emoji_pics", "emoji_pics_dos", "connect_boxes", "hide_prompt",
          "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow", "crt_lines", "gmcp", "gmcp_layout"),
+        ("spell_input", "spell_notepad", "spell_custom"),
         ("scroll_on_send", "show_echo", "keep_box", "custom_form"),
         ("bell", "bell_new"),
         ("log_echo", "scrollback_lines", "keep_backscroll", "keep_lines"),
@@ -3709,6 +3715,8 @@ class App(gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.Whats
             self._apply_entry_mode()
         if key == "keep_box":
             self._apply_keep_box()
+        if key in ("spell_input", "spell_notepad", "spell_custom"):
+            self._spell_option_changed(key)
         if key == "gmcp_layout":
             self._gmcp_layout_option(old, value)
         if key == "crt_lines":
@@ -6170,11 +6178,22 @@ class App(gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.Whats
         secret = self.term.echo_off
         if secret or "\n" not in text:
             self._submit_line(text, secret)
-            return "break"
-        for line in text.split("\n"):                 # line breaks (Shift+Enter): each line is a command of its own
-            if line.strip():
-                self._submit_line(line, secret)
+        else:
+            for line in text.split("\n"):             # line breaks (Shift+Enter): each line is a command of its own
+                if line.strip():
+                    self._submit_line(line, secret)
+        if keep:
+            self._keep_select(text)
         return "break"
+
+    def _keep_select(self, text):
+        """Text kept after Enter comes back selected: Enter sends it again, and typing anything replaces it."""
+        try:
+            if text and self.input.get() == text:
+                self.input.select_range(0, "end")
+                self.input.icursor("end")
+        except tk.TclError:
+            pass
 
     def _submit_line(self, line, secret, remember=True):
         if remember and not secret and line.strip() and (not self.history or self.history[-1] != line):

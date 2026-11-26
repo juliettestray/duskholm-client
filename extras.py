@@ -400,6 +400,7 @@ class ExtrasMixin:
             pass
         text.bind("<Escape>", lambda e: (self.close_notepad(), "break")[1])
         text.bind("<Control-s>", lambda e: (self.save_notes(), "break")[1])
+        self.spell_attach(text, "notepad")
         text.bind("<<Modified>>", self._notes_modified)
         text.edit_modified(False)
         frame.place(x=0, y=0, relwidth=1.0, relheight=1.0)
@@ -678,6 +679,9 @@ class ExtrasMixin:
             return True
         if cmd == "crt":
             self._crt_command(arg)
+            return True
+        if cmd == "spell":
+            self._spell_command(arg)
             return True
         if cmd == "gmcp":
             self._gmcp_command(arg)
