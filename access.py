@@ -232,6 +232,8 @@ class AccessMixin:
     def set_sr_interval(self, secs):
         secs = int(secs)
         secs = 0 if secs <= 0 else max(5, min(3600, secs))
+        if self.cfg.get("sr_interval") != secs:
+            self._opt_touch("@sr_interval")
         self.cfg["sr_interval"] = secs
         var = getattr(self, "_sr_interval_var", None)
         if var is not None:

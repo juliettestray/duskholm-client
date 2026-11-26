@@ -8,6 +8,10 @@ import json
 import re
 import time
 
+# MTTS (Mud Terminal Type Standard) bits Sanctuary can honestly claim, and the one a screen reader adds
+MTTS_ANSI, MTTS_UTF8, MTTS_256, MTTS_SCREEN_READER, MTTS_TRUECOLOR = 1, 4, 8, 64, 256
+MTTS_BASE = MTTS_ANSI | MTTS_UTF8 | MTTS_256 | MTTS_TRUECOLOR
+
 OPTION_ON = "gmcp"            # cfg: use GMCP when the game offers it (takes effect on the next connect)
 OPTION_SR = "gmcp_sr"         # cfg: screen reader mode speaks GMCP changes
 CHANNEL_KEEP = 200            # channel lines remembered for /gmcp channels
@@ -515,8 +519,7 @@ class GmcpMixin:
     def _mtts_bits(self):
         """What the terminal type answer says (MTTS), or None to leave the server's question unanswered: only in screen
         reader mode, so a game that has a screen reader layout can switch it on without asking the player."""
-        import sanctuary as sc
-        return (sc.MTTS_BASE | sc.MTTS_SCREEN_READER) if self.sr_on() else None
+        return (MTTS_BASE | MTTS_SCREEN_READER) if self.sr_on() else None
 
     # ---- the status bars ------------------------------------------------------------------------------
     def _gmcp_view(self):

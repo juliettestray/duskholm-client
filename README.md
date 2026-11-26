@@ -497,6 +497,14 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 
 Settings live in `~/.sanctuary.json`.
 
+**Options and Settings.** The Options menu is short: the options you changed most recently (up to five, so the ones you flip
+often stay one click away; a check mark or a sub-menu, exactly as before) and **Settings...** (`Ctrl+Shift+O`, changeable
+under Hotkeys). Settings is a window with a topic list on the left (Connection, Display and text, Input and sending, Spell
+checking, Sound, Logging and scrollback, Game data, Screen reader) and the options for that topic on the right: check boxes,
+a row of buttons for a choice with a few values, a drop-down list for a longer one. The *Find a setting* box shows every
+option whose label or topic has all the words you type. Changes apply at once, and the window, the menu and the DOS look's
+Options menu always agree. The DOS look keeps its own Options menu (`Ctrl+Shift+O` opens it there).
+
 **Spell checking** (Options: *Spell check: input box*, *notepad* and *customize form*, each off by default; `/spell`). It
 uses Windows' own spell checker (Windows 8 or later, in your Windows language, nothing to install), so your Windows
 dictionary applies. A misspelled word gets a red underline a moment after you stop typing; right-click it for
@@ -619,6 +627,7 @@ python tests/test_worldbuttons.py # buttons in .snc files: which go out, arrivin
 python tests/test_findpanes.py    # Find with 'Search panes': order, which pane, pop-outs
 python tests/test_keeptext.py     # the Keep text checkbox and /keep
 python tests/test_spell.py        # spell checking: the Windows engine, what is filtered, the three boxes, /spell
+python tests/test_settings.py     # the Settings window, the short Options menu and its 'Recently changed' section
 python tests/test_worldswap.py    # Ctrl+Tab: swap between the last two worlds
 python tests/test_crt.py          # CRT scanlines: shows only in the DOS look, click-through, follows the window
 python tests/test_whatsnew.py     # what's new after an update: skipped versions, once, /changes

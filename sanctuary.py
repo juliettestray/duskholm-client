@@ -81,6 +81,7 @@ import capture                     # capture a repeating log onto a pane without
 import editmenu                    # right-click Cut / Copy / Paste
 import backscroll                  # scrollback length, and keeping it between sessions
 import findtext                    # Ctrl+F / Ctrl+Shift+F
+import settingsui                  # the Options menu (recently changed + Settings...) and the Settings window
 import spellui                     # spell checking (Windows' own checker) in the notepad, the customize form and the growing input box
 import gmcp                        # GMCP game data (an option) and what it speaks
 import crt                         # CRT scanlines over the DOS look (an option)
@@ -111,9 +112,6 @@ IAC, DONT, DO, WONT, WILL, SB, SE, GA, NOP = 255, 254, 253, 252, 251, 250, 240, 
 OPT_ECHO, OPT_SGA, OPT_MXP = 1, 3, 91
 OPT_GMCP = 201
 OPT_TTYPE = 24
-# MTTS (Mud Terminal Type Standard) bits Sanctuary can honestly claim, and the one a screen reader adds
-MTTS_ANSI, MTTS_UTF8, MTTS_256, MTTS_SCREEN_READER, MTTS_TRUECOLOR = 1, 4, 8, 64, 256
-MTTS_BASE = MTTS_ANSI | MTTS_UTF8 | MTTS_256 | MTTS_TRUECOLOR
 GMCP_SUPPORTS = ('Core.Supports.Set ["Char 1", "Room 1", "Char.Items 1", "Char.Skills 1", '
                  '"Char.Afflictions 1", "Comm.Channel 1", "Game.Who 1", "Combat 1"]')
 
@@ -1093,6 +1091,7 @@ def clean_settings(cfg):
     cfg["prompt_custom"] = custom
     cfg["hide_prompt"] = cfg.get("hide_prompt") is True
     cfg["spell_words"] = spellui.clean_words(cfg.get("spell_words"))
+    cfg["opt_recent"] = settingsui.clean_recent(cfg.get("opt_recent"))
     cfg["find_from"] = "top" if cfg.get("find_from") == "top" else "bottom"
     cfg["find_case"] = cfg.get("find_case") is True
     cfg["find_panes"] = cfg.get("find_panes") is True
@@ -1704,7 +1703,7 @@ def _session_property(name):
     return property(get, set_)
 
 
-class App(spellui.SpellMixin, gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
+class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtMixin, whatsnew.WhatsNewMixin, findtext.FindMixin, backscroll.BackscrollMixin, capture.SentMixin, capture.CaptureMixin, buttons.ButtonsMixin, entrybox.EntryBoxMixin, popout.PopOutMixin, importui.ImportMixin, stamps.StampMixin, editmenu.EditMenuMixin, emojiimg.EmojiImageMixin, gametime.GameTimeMixin, emojipick.EmojiPickMixin, panesize.PaneSizeMixin, worldtabs.WorldTabsMixin, dosforms.DosFormsMixin, updateui.UpdateMixin, extras.ExtrasMixin,
           toolsui.ToolsMixin, access.AccessMixin):
     def __init__(self, root, host=None, port=None):
         self.root = root
@@ -2228,56 +2227,33 @@ class App(spellui.SpellMixin, gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtM
         except (tk.TclError, AttributeError, ValueError):
             pass
 
-    def _menu_option(self, menu, key):
-        """A True/False option as a check mark in `menu`: the built-in ones and the EXTRA_BOOLS."""
-        builtin = {"verify": ("Verify TLS certificate", "v_verify", None),
-                   "bell": ("Beep on server bell", "v_bell", None),
-                   "keepalive": ("Send keep-alive", "v_keep", None),
-                   "auto_reconnect": ("Auto-reconnect when disconnected", "v_auto", self._auto_toggled),
-                   "hide_prompt": ("Hide the prompt line (show it in the bar only)", "v_hideprompt", None)}
-        if key in builtin:
-            label, var, after = builtin[key]
-            setattr(self, var, tk.BooleanVar(value=self.cfg[key]))
-            menu.add_checkbutton(label=label, variable=getattr(self, var),
-                                 command=lambda: (self.cfg.update({key: getattr(self, var).get()}), after and after())[1])
-            return
-        for k, _d, label, _dl, _h in EXTRA_BOOLS:
-            if k == key:
-                self._xvars[k] = tk.BooleanVar(value=self.cfg[k])
-                menu.add_checkbutton(label=label, variable=self._xvars[k],
-                                     command=lambda k=k: self._set_extra(k, self._xvars[k].get()))
-                return
-
-    def _menu_choice(self, menu, key):
-        """A choice option (a few named values) as a sub-menu of `menu`."""
-        for k, _d, values, label, _h in EXTRA_CHOICES:
-            if k == key:
-                sub = tk.Menu(menu, tearoff=0)
-                self._xvars[k] = tk.StringVar(value=self.cfg[k])
-                for val in values:
-                    sub.add_radiobutton(label=CHOICE_WORDS.get(val, val), value=val, variable=self._xvars[k],
-                                        command=lambda k=k: self._set_extra(k, self._xvars[k].get()))
-                menu.add_cascade(label=label, menu=sub)
-                self._extra_menus = getattr(self, "_extra_menus", []) + [sub]
-                return
-
-    # What is in the Options menu, in groups (a separator between groups). Anything in EXTRA_BOOLS / EXTRA_CHOICES
-    # that is not named here is added at the end, so a new option can never go missing.
-    OPTION_GROUPS = [
-        ("verify", "keepalive", "auto_reconnect", "update_check"),
-        ("links", "link_images", "emoji", "emoji_pics", "emoji_pics_dos", "connect_boxes", "hide_prompt",
-         "walk_preview", "clock", "timestamps", "world_tabs", "button_dock", "entry_grow", "crt_lines", "gmcp", "gmcp_layout"),
-        ("spell_input", "spell_notepad", "spell_custom"),
-        ("scroll_on_send", "show_echo", "keep_box", "custom_form"),
-        ("bell", "bell_new"),
-        ("log_echo", "scrollback_lines", "keep_backscroll", "keep_lines"),
-        ("screen_reader", "sr_alerts", "gmcp_sr", "sr_voice", "@sr_interval", "@sr_combat"),
-    ]
+    def _option_defs(self):
+        """Every option once, in menu order: key -> what kind it is, its label, and (for a choice) its values.
+        kinds: bool, choice, interval (the screen reader's timed reading) and button (opens a dialog)."""
+        d = getattr(self, "_opt_defs", None)
+        if d is not None:
+            return d
+        d = {}
+        for key, label in (("verify", "Verify TLS certificate"), ("keepalive", "Send keep-alive"),
+                           ("auto_reconnect", "Auto-reconnect when disconnected"), ("bell", "Beep on server bell"),
+                           ("hide_prompt", "Hide the prompt line (show it in the bar only)")):
+            d[key] = {"kind": "bool", "label": label, "short": label}
+        for key, _dflt, label, short, _hk in EXTRA_BOOLS:
+            d[key] = {"kind": "bool", "label": label, "short": short}
+        for key, _dflt, values, label, _hk in EXTRA_CHOICES:
+            d[key] = {"kind": "choice", "label": label, "short": label, "values": values,
+                      "words": {v: CHOICE_WORDS.get(v, v) for v in values}}
+        d["@sr_interval"] = {"kind": "interval", "label": "Screen reader: read def and stun", "short": "Screen reader: read def and stun"}
+        d["@sr_combat"] = {"kind": "button", "label": "Screen reader: combat lines...", "short": "Combat lines",
+                           "action": self.open_combat_filter}
+        self._opt_defs = d
+        return d
 
     def _build_menu(self):
         m = tk.Menu(self.root)
         self._xvars = {}
         self._extra_menus = []
+        self._option_vars_init()
 
         # File: worlds and the connection, logging, moving settings in and out
         f = tk.Menu(m, tearoff=0)
@@ -2353,34 +2329,8 @@ class App(spellui.SpellMixin, gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtM
         t.add_command(label="Emoji picker...   Alt+E", command=self.open_emoji_picker)
         m.add_cascade(label="Tools", menu=t)
 
-        # Options: grouped by what they are about
-        o = tk.Menu(m, tearoff=0)
-        named = {k for g in self.OPTION_GROUPS for k in g}
-        bools = [k for k, *_ in EXTRA_BOOLS]
-        choices = [k for k, *_ in EXTRA_CHOICES]
-        groups = [list(g) for g in self.OPTION_GROUPS]
-        groups[-1:-1] = [[k for k in bools + choices if k not in named]]       # new options: before the screen reader group
-        for gi, group in enumerate(g for g in groups if g):
-            if gi:
-                o.add_separator()
-            for key in group:
-                if key == "@sr_interval":
-                    sri = tk.Menu(o, tearoff=0)
-                    cur = self.cfg.get("sr_interval", 0)
-                    self._sr_interval_var = tk.IntVar(value=cur if cur in (0, 10, 15, 30, 60, 120, 300) else -1)
-                    for secs, label in ((0, "off"), (10, "every 10 seconds"), (15, "every 15 seconds"),
-                                        (30, "every 30 seconds"), (60, "every minute"), (120, "every 2 minutes"),
-                                        (300, "every 5 minutes")):
-                        sri.add_radiobutton(label=label, value=secs, variable=self._sr_interval_var,
-                                            command=lambda: self.set_sr_interval(self._sr_interval_var.get()))
-                    o.add_cascade(label="Screen reader: read def and stun...", menu=sri)
-                    self._extra_menus.append(sri)
-                elif key == "@sr_combat":
-                    o.add_command(label="Screen reader: combat lines...", command=self.open_combat_filter)
-                elif key in choices:
-                    self._menu_choice(o, key)
-                else:
-                    self._menu_option(o, key)
+        # Options: what you changed lately, then the Settings window
+        o = self._build_options_menu(m)
         m.add_cascade(label="Options", menu=o)
 
         # Help
@@ -3695,6 +3645,8 @@ class App(spellui.SpellMixin, gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtM
         """One of the EXTRA options changed (from either menu). ask=False: no dialog (a typed command)."""
         old = self.cfg.get(key)
         self.cfg[key] = value
+        if old != value:
+            self._opt_touch(key)
         var = getattr(self, "_xvars", {}).get(key)
         if var is not None and var.get() != value:
             var.set(value)
@@ -7106,7 +7058,7 @@ class App(spellui.SpellMixin, gmcp.GmcpMixin, phonelook.PhoneLookMixin, crt.CrtM
         if not getattr(w, "_noskin", False):
             role = {"Frame": "panel", "Toplevel": "panel", "Labelframe": "panel", "Label": "label",
                     "Button": "button", "Entry": "entry", "Spinbox": "entry", "Listbox": "list",
-                    "Text": "text", "Checkbutton": "check", "Menubutton": "button",
+                    "Text": "text", "Checkbutton": "check", "Radiobutton": "check", "Menubutton": "button",
                     "Scrollbar": "scroll"}.get(cls)
             try:
                 if role:

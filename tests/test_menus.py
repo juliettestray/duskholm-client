@@ -1,4 +1,4 @@
-"""The menu bar: grouped sensibly, nothing lost, every option reachable, and menu text as large as the main text (no network)."""
+"""The menu bar: grouped sensibly, nothing lost, every option reachable (in Options or Settings), and menu text as large as the main text (no network)."""
 import os, sys, tempfile, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import sanctuary as sc
@@ -65,30 +65,25 @@ for name in ("Edit", "View", "Automate", "Tools", "Help"):
     assert len(labels(name)) <= 12, "short menus: " + name
 assert len(labels("File")) <= 12
 
-# every option is still in Options (a check mark or a sub-menu), none twice
-opts = [l for t, l, _i in entries(top["Options"]) if l]
-assert len(opts) == len(set(opts)), opts
-for key, _d, label, _dl, _h in sc.EXTRA_BOOLS:
-    assert label in opts, ("missing option", label)
-for key, _d, _v, label, _h in sc.EXTRA_CHOICES:
-    assert label in opts, ("missing option", label)
-for label in ("Verify TLS certificate", "Beep on server bell", "Send keep-alive", "Auto-reconnect when disconnected",
-              "Hide the prompt line (show it in the bar only)", "Screen reader: read def and stun...",
-              "Screen reader: combat lines..."):
-    assert label in opts, ("missing option", label)
-assert set(app._xvars) == {k for k, *_ in sc.EXTRA_BOOLS} | {k for k, *_ in sc.EXTRA_CHOICES}
-assert sum(1 for t, _l, _i in entries(top["Options"]) if t == "separator") >= 4, "grouped"
-
-# the options still work from the new place
+# Options is short now: what you changed lately (when anything), then Settings...
+app.cfg["opt_recent"] = []; app._fill_options_menu()
 o = top["Options"]
-idx = next(i for t, l, i in entries(o) if l == "Beep on server bell")
-before = app.cfg["bell"]; o.invoke(idx); assert app.cfg["bell"] is (not before); o.invoke(idx)
-idx = next(i for t, l, i in entries(o) if l == "Auto-reconnect when disconnected")
-before = app.cfg["auto_reconnect"]; o.invoke(idx); assert app.cfg["auto_reconnect"] is (not before); o.invoke(idx)
-idx = next(i for t, l, i in entries(o) if l == "Clickable links")
-before = app.cfg["links"]; o.invoke(idx); assert app.cfg["links"] is (not before); o.invoke(idx)
-sub = o.nametowidget(o.entrycget(next(i for t, l, i in entries(o) if l == "Clock"), "menu"))
-sub.invoke(1); assert app.cfg["clock"] == "real"; sub.invoke(0)
+assert [l for t, l, _i in entries(o) if l] == ["Settings...   Ctrl+Shift+O"], "nothing changed yet: just Settings..."
+app._set_extra("links", False); app._set_extra("clock", "real"); app.option_set("bell", False); app._fill_options_menu()
+es = entries(o)
+assert es[0][1] == "Recently changed" and o.entrycget(0, "state") == "disabled"
+assert [l for t, l, _i in es if l][1:4] == ["Beep on server bell", "Clock", "Clickable links"], [l for t, l, _i in es if l]
+assert es[-1][1].startswith("Settings...") and es[-2][0] == "separator"
+idx = next(i for t, l, i in es if l == "Beep on server bell")
+o.invoke(idx); assert app.cfg["bell"] is True; o.invoke(idx)
+idx = next(i for t, l, i in es if l == "Clickable links")
+o.invoke(idx); assert app.cfg["links"] is True; app._set_extra("links", True)
+sub = o.nametowidget(o.entrycget(next(i for t, l, i in es if l == "Clock"), "menu"))
+sub.invoke(2); assert app.cfg["clock"] == "game"; sub.invoke(0); assert app.cfg["clock"] == "off"
+for i in range(10):
+    app.option_set("bell", bool(i % 2))
+assert len(app.cfg["opt_recent"]) <= 12 and app.cfg["opt_recent"][0] == "bell"
+app._fill_options_menu(); assert len([1 for t, l, _i in entries(o) if t in ("checkbutton", "cascade")]) <= 5, "only the last few"
 
 # Edit > Find next and Clear screen run
 app.out.configure(state="normal"); app.out.insert("end", "needle one\n"); app.out.configure(state="disabled")
