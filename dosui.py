@@ -1600,9 +1600,11 @@ class DosTable(_DosBox):
     _close_on_outside = False
 
     def __init__(self, parent, title, columns, rows, colors, font, on_action, keys=None,
-                 hints=None, min_width=0, height=None, selected=0):
+                 hints=None, min_width=0, height=None, selected=0, number_pick=False):
         _DosBox.__init__(self, parent, colors, font)
         self._dead = False
+        self._number_pick = bool(number_pick)     # typing a row's number picks it (and selects it, as Enter does)
+        self._num, self._num_job = '', None
         self._title = '' if title is None else str(title).replace('\n', ' ')
         self._on_action = on_action
         self._colspec = self._norm_columns(columns)
@@ -2031,6 +2033,9 @@ class DosTable(_DosBox):
             return 'break'
         names = [ks.lower()]
         ch = e.char
+        if self._number_pick and ch and len(ch) == 1 and ch in '0123456789':
+            self._number_key(ch)
+            return 'break'
         if ch and len(ch) == 1 and ch.isprintable():
             names.append(ch.lower())
         for nm in names:
@@ -2039,6 +2044,39 @@ class DosTable(_DosBox):
                 self._do_action(act)
                 break
         return 'break'
+
+    NUMBER_WAIT_MS = 800       # after a digit that more digits could follow (1 of 12), how long to wait before picking it
+
+    def _number_key(self, ch):
+        """A digit: build up a row number (1-based, as the # column shows it), move to that row and select it. With
+        10 or more rows, 1 could be the start of 12, so a number that more digits could extend waits a moment."""
+        n_rows = len(self._data)
+        if self._num_job is not None:
+            try:
+                self._cv.after_cancel(self._num_job)
+            except tk.TclError:
+                pass
+            self._num_job = None
+        buf = self._num + ch
+        if not 1 <= int(buf) <= n_rows:
+            buf = ch                                  # too big to be a row: start a fresh number with this digit
+        n = int(buf)
+        self._num = buf
+        if not 1 <= n <= n_rows:
+            self._num = ''
+            return
+        self._sel = n - 1
+        self._fit_offset()
+        self._render()
+        if n * 10 > n_rows:
+            self._num = ''
+            self._do_action('select')
+        else:
+            def later():
+                self._num_job, self._num = None, ''
+                if not self._dead and self._is_open:
+                    self._do_action('select')
+            self._num_job = self._cv.after(self.NUMBER_WAIT_MS, later)
 
     def _on_wheel(self, e):
         try:

@@ -1779,6 +1779,43 @@ def _():
     assert 'DosTable' in dosui.__all__
 
 
+@check('table: typing a number picks and selects that row (number_pick)')
+def _():
+    t, log = mk_table(8, number_pick=True); t.open(); upd(2)
+    fkey(t, '3', '3'); upd(1)
+    assert log and log[-1][0] == 'select' and log[-1][1] == 2, log          # row 3 is index 2, picked at once
+    t.close()
+    t, log = mk_table(8); t.open(); upd(2)                                  # off by default: digits do nothing
+    fkey(t, '3', '3'); upd(1)
+    assert not log, log
+    t.close()
+    t, log = mk_table(8, number_pick=True); t.open(); upd(2)
+    fkey(t, '9', '9'); fkey(t, '0', '0'); upd(1)                            # no row 9 or 0 here: ignored
+    assert not log and t.selected == 0, (log, t.selected)
+    t.close()
+    t, log = mk_table(12, number_pick=True); t.open(); upd(2)
+    fkey(t, '1', '1'); upd(1)
+    assert not log and t.selected == 0, "1 could be the start of 10, 11 or 12: it waits"
+    fkey(t, '2', '2'); upd(1)
+    assert log and log[-1][1] == 11 and len(log) == 1, log                  # 12 is picked at once
+    t.close()
+    t, log = mk_table(12, number_pick=True); t.open(); upd(2)
+    fkey(t, '5', '5'); upd(1)
+    assert log and log[-1][1] == 4, log                                     # 5 cannot be extended (50 > 12)
+    t.close()
+    t, log = mk_table(12, number_pick=True); t.open(); upd(2)
+    dosui.DosTable.NUMBER_WAIT_MS = 50
+    try:
+        fkey(t, '1', '1'); upd(1)
+        end = time.time() + 0.6
+        while time.time() < end and not log:
+            upd(1); time.sleep(0.02)
+        assert log and log[-1][1] == 0, log                                 # a lone 1 is picked after the wait
+    finally:
+        dosui.DosTable.NUMBER_WAIT_MS = 800
+    t.close()
+
+
 @check('runtime < 45s')
 def _():
     assert time.time() - T0 < 45, time.time() - T0

@@ -83,6 +83,7 @@ import backscroll                  # scrollback length, and keeping it between s
 import findtext                    # Ctrl+F / Ctrl+Shift+F
 import settingsui                  # the Options menu (recently changed + Settings...) and the Settings window
 import spellui                     # spell checking (Windows' own checker) in the notepad, the customize form and the growing input box
+import appicon                     # the window and taskbar icon
 import gmcp                        # GMCP game data (an option) and what it speaks
 import crt                         # CRT scanlines over the DOS look (an option)
 import phonelook                   # a popped-out pane drawn as an iPhone or an Android
@@ -2259,7 +2260,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
 
         # File: worlds and the connection, logging, moving settings in and out
         f = tk.Menu(m, tearoff=0)
-        f.add_command(label="Connect / Disconnect", command=self.toggle_connection)
+        f.add_command(label="Connect / Disconnect   F9", command=self.toggle_connection)
         f.add_command(label="Worlds...   Ctrl+W", command=self.open_worlds)
         f.add_command(label="Close this world   Ctrl+Shift+W", command=self.close_world_ask)
         f.add_separator()
@@ -3471,7 +3472,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         try:
             up = self.connected or self.connecting
             bar.set_hints(self.world_hints() +
-                          [("F1", "Help", 8), ("F2", "Hangup" if up else "Dial", 7), ("F3", "Log", 3),
+                          [("F1", "Help", 8), (self._hotkey_current("connect"), "Hangup" if up else "Dial", 7), ("F3", "Log", 3),
                            ("F5", "Skin", 4), ("F6", "Colours", 5), ("F7", "Font", 5), ("F10", "Menu", 9),
                            ("F11", "Full", 6), ("F12", "About", 2), ("^W", "Worlds", 1)],
                            right="Alt-D Normal  Alt-X Exit", on_click=self._dos_hint_click)
@@ -3530,7 +3531,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
     def dos_main_menu(self):
         up = self.connected or self.connecting or self._retrying
         items = [
-            {"label": "Disconnect" if up else "Connect", "hotkey": "C", "shortcut": "F2",
+            {"label": "Disconnect" if up else "Connect", "hotkey": "C", "shortcut": self._hotkey_current("connect"),
              "action": self.toggle_connection},
             {"label": "Connection settings...", "hotkey": "S", "action": self.dos_connect_dialog},
             {"label": "Worlds...", "hotkey": "W", "shortcut": "Ctrl-W", "action": self.open_worlds},
@@ -3726,7 +3727,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
 
     def help_key_lines(self):
         """[(keys, what it does)] built from the real key table, so it can never go stale."""
-        fixed = [("F1", "This help"), ("F2", "Connect / disconnect"), ("F3", "Log to file"), ("F5", "Skin"),
+        fixed = [("F1", "This help"), ("F3", "Log to file"), ("F5", "Skin"),
                  ("F6", "Colours"), ("F7", "Font"), ("F10", "Main menu"), ("F11", "Full screen"),
                  ("F12", "About"), ("Alt-X", "Exit"), ("PgUp / PgDn", "Scroll back"),
                  ("Up / Down", "Command history"), ("Ctrl-L", "Clear the screen"), ("Ctrl +/-", "Font size"),
@@ -3737,7 +3738,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         titles = {"worlds": "Worlds", "triggers": "Triggers", "aliases": "Aliases", "panes": "Panes",
                   "moon": "The moon", "notepad": "Notepad", "timers": "Timer", "dos_toggle": "DOS look",
                   "gradient": "Gradient maker", "hex": "Hex to xterm", "customize": "Customize form",
-                  "emoji": "Emoji picker", "select_input": "Select the entry line",
+                  "emoji": "Emoji picker", "connect": "Connect / disconnect", "select_input": "Select the entry line",
                   "world_next": "Next world", "world_prev": "Previous world", "close_world": "Close this world"}
         changeable = [(shown, titles[a]) for a, _t, shown in self.hotkey_table() if a in titles]
         pre = self.world_key_prefix()
@@ -5036,7 +5037,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         return handler
 
     def _bind_dos_keys(self):
-        table = {"<F1>": self.dos_help, "<F2>": self.toggle_connection, "<F3>": self.toggle_log,
+        table = {"<F1>": self.dos_help, "<F3>": self.toggle_log,
                  "<F5>": self.dos_skin_menu, "<F6>": self.edit_colors, "<F7>": self.choose_font,
                  "<F10>": self.dos_main_menu, "<Alt-m>": self.dos_main_menu, "<Alt-M>": self.dos_main_menu,
                  "<Alt-x>": self.dos_confirm_quit, "<Alt-X>": self.dos_confirm_quit}
@@ -6598,7 +6599,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         cols = [{"title": "#", "width": 3, "align": "r"}, {"title": "Name", "width": 18},
                 {"title": "Host", "width": 0}, {"title": "Port", "width": 5, "align": "r"},
                 {"title": "TLS", "width": 3}, {"title": "Last call", "width": 10}]
-        hints = [("Enter", "Dial"), ("A", "Add"), ("E", "Edit"), ("C", "Clone"), ("Del", "Remove"), ("Esc", "Close")]
+        hints = [("Enter", "Dial"), ("1-9", "Dial #"), ("A", "Add"), ("E", "Edit"), ("C", "Clone"), ("Del", "Remove"), ("Esc", "Close")]
 
         def act(name, idx, table):
             worlds = self.cfg["worlds"]
@@ -6625,7 +6626,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
 
         table = dosui.DosTable(self.root, "Dialing directory", cols, self._worlds_rows(), self._dc(),
                                self.f_norm, act, keys=dict(dosui._TABLE_KEYS, c="clone"), hints=hints, min_width=64,
-                               selected=selected)
+                               selected=selected, number_pick=True)
         self._overlay = table
         table.open()
         return table
@@ -7402,6 +7403,7 @@ def main():
     host = args[0] if args else None
     port = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
     root = tk.Tk()
+    appicon.apply(root)
     app = App(root, host, port)
     if want_sr and not app.sr_on():
         root.after(400, lambda: app._set_extra("screen_reader", True))

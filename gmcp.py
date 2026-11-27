@@ -692,6 +692,7 @@ class GmcpMixin:
         else:
             dt = gametime.local_dt(gt, now)
             h = dt.hour
+            info.pop("frozen", None)                                # (no frozen hour was given, so it is not "eternally" anything)
             info["hour"], info["clock"] = h, gametime.clock_text(gt, now)
         if not info.get("daytime") and not info.get("period"):
             info["period"] = skybox.period_word(h if isinstance(h, int) else 12)

@@ -91,6 +91,7 @@ def weather_words(env):
 
 MIST_LEVELS = {"ankle": 1, "waist": 2, "wreathed": 3}
 MIST_WORDS = {1: "ankle-deep", 2: "waist-deep", 3: "wreathed"}
+MIST_SHORT = {1: "ankle", 2: "waist", 3: "wreathed"}      # when the column is too narrow for the full word
 
 
 def mist_level(env):
@@ -334,13 +335,22 @@ def sky_lines(info):
     coords = _word(env.get("coords"))
     if name or coords:
         gap = max(1, right_w - len(name) - len(coords))
-        right.append([(name, "head"), (" " * gap, "normal"), (coords, "dim")] if coords and len(name) + 1 + len(coords) <= right_w
-                     else [(name, "head")])
-    right.append([])
-    right.append([("Mist: ", "dim"), (_fit(MIST_WORDS[mist], right_w - 6), "cyan")] if mist else [])
+        beside = bool(coords) and len(name) + 1 + len(coords) <= right_w
+        right.append([(name, "head"), (" " * gap, "normal"), (coords, "dim")] if beside else [(name, "head")])
+        below = [(_fit(coords, right_w), "dim")] if coords and not beside else []      # (on the next line when it cannot fit beside)
+    else:
+        below = []
+    right.append(below)
+    if mist:
+        word = MIST_WORDS[mist] if len(MIST_WORDS[mist]) <= right_w - 6 else MIST_SHORT[mist]
+        right.append([("Mist: ", "dim"), (_fit(word, right_w - 6), "cyan")])
+    else:
+        right.append([])
     right.append([])
     clock = _word(env.get("clock"))
     if clock:
+        if env.get("frozen") is True:                                 # a property whose time never moves
+            clock = "eternally " + clock
         period = _word(env.get("daytime") or env.get("period"))
         both = clock + "  " + period
         right.append([(_fit(both if period and len(both) <= right_w else clock, right_w), "normal")])    # (the word only when it fits)
@@ -351,7 +361,8 @@ def sky_lines(info):
     if moon and _word(moon.get("name")):
         lit = moon.get("lit")
         pct = " %d%%" % round(lit * 100) if isinstance(lit, (int, float)) and not isinstance(lit, bool) and 0 <= lit <= 1 else ""
-        text = ("Full moon" if _word(moon["name"]).lower() == "full" else _word(moon["name"]).capitalize()) + pct
+        text = "Full moon" if _word(moon["name"]).lower() == "full" else _word(moon["name"]).capitalize()
+        text = text + pct if len(text + pct) <= right_w else text                  # (the percentage goes first when it is tight)
         right.append([(_fit(text, right_w), "magenta" if moon.get("full") else "normal")])
         if moon.get("full"):
             right.append([(_fit("A full-moon night", right_w), "magenta")])

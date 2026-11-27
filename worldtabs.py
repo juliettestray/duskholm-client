@@ -339,6 +339,8 @@ class WorldTabsMixin:
             self.goto_world(int(m.group(1)))
         elif key == "^W":
             self.open_worlds()
+        elif key == self._hotkey_current("connect"):
+            self.toggle_connection()
         elif re.fullmatch(r"F\d+", key):
             self.root.event_generate("<%s>" % key)
 

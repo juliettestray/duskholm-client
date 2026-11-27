@@ -66,6 +66,17 @@ assert any("Mist: waist-deep" in l for l in full(box(mist="waist"))) and any("Mi
 assert not any("Mist" in l for l in full(box(mist=""))) and "Waning gibbous" in "".join(full(box(moon="waning gibbous")))
 assert not any("Mist" in l for l in full(box(mist=None)))
 assert "-1\u00b0C" in full(box(unit="c"))[0]
+# a narrow column: shorter mist words, and the coordinates on a line of their own when they do not fit beside the name
+narrow = full(box(width=34, mist="waist"))
+assert any("Mist: waist" in l and "deep" not in l for l in narrow), narrow
+assert any(l.strip().endswith("10,18,0") for l in narrow) and "10,18,0" not in narrow[0], narrow
+assert not any("Mist" in l and "\u2026" in l for l in narrow), "the mist word is not cut short"
+assert any("Waning gibb" in l for l in narrow) and not any("92%" in l for l in narrow), "the moon drops its percentage first"
+assert any("Mist: waist-deep" in l for l in full(box(mist="waist"))), "a wide column keeps the full word"
+# a property whose time is frozen
+fz = full(box(frozen=True, hour=13, minute=0, clock="13:00"))
+assert any("eternally 13:00" in l for l in fz), fz
+assert not any("eternally" in l for l in full(box())) and not any("eternally" in l for l in full(box(frozen=False))) and not any("eternally" in l for l in full(box(frozen="yes")))
 assert any("full-moon night" in l for l in full(box(moon={"name": "full", "lit": 1.0, "full": True}))) and any("full-moon night" in l for l in full(box(moon="full")))
 assert not any("full-moon night" in l for l in full(box(moon="waxing gibbous")))
 # the picture off: words only; nothing known: no left side at all, and no invented sky

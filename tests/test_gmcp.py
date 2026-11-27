@@ -195,6 +195,11 @@ app._on_data(msg('Room.Environment {"temp_f":68,"temp_c":20,"temp":"mild","hour"
 sky = pane_text("Sky")
 assert "Whitney" not in sky and "68\u00b0F" in sky and "full-moon night" not in sky, "indoors-style data: no neighbourhood, no sky"
 app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"clouds":"storm","cover":"few","falling":["rain"],"hour":13,"minute":12,"moon":"new"}')); pump(0.3)
+app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"clouds":"clear","hour":13,"minute":0,"frozen":true,"moon":"new"}')); pump(0.3)
+assert "eternally 13:00" in pane_text("Sky"), pane_text("Sky")
+app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"clouds":"clear","frozen":true,"moon":"new"}')); pump(0.3)
+assert "eternally" not in pane_text("Sky"), "no frozen hour sent, so the client clock is shown as usual"
+app._on_data(msg('Room.Environment {"neighborhood":"Whitney","temp_f":29,"temp_c":-1,"clouds":"storm","cover":"few","falling":["rain"],"hour":13,"minute":12,"moon":"new"}')); pump(0.3)
 app._set_extra("temp_unit", "c"); pump(0.2); assert "-1\u00b0C" in pane_text("Sky")
 app._set_extra("temp_unit", "guess")
 app._set_extra("sky_art", False); pump(0.2)

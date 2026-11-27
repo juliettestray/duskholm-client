@@ -58,7 +58,7 @@ assert 0.5 <= _border <= 2.0, ("border should be about one character cell", _bor
 assert app.theme["name"] == "Retro DOS" and app.cfg["skin"] == "Moody", "DOS look has its own skin; normal one untouched"
 assert not app.statbar.winfo_ismapped(), "the in-game stat bar is replaced by the DOS bar"
 hint, stat = rows()
-assert "F1 Help" in hint and "F10 Menu" in hint and "F2 Dial" in hint and "F11 Full" in hint, hint
+assert "F1 Help" in hint and "F10 Menu" in hint and "F9 Dial" in hint and "F11 Full" in hint, hint
 assert "OFFLINE" in stat and "ANSI" in stat and "TLS" not in stat, stat
 assert app._dos_job is not None
 assert app.f_norm.cget("size") > 11, "font auto-fitted to the 80-column screen"
@@ -67,7 +67,7 @@ assert app.f_norm.cget("size") > 11, "font auto-fitted to the 80-column screen"
 app.toggle_connection(); pump(1.0)
 assert app.connected and conns
 hint, stat = rows()
-assert "ONLINE 127.0.0.1:%d" % port in stat and "ANSI" in stat and "F2 Hangup" in hint, (hint, stat)
+assert "ONLINE 127.0.0.1:%d" % port in stat and "ANSI" in stat and "F9 Hangup" in hint, (hint, stat)
 out = app.out.get("1.0", "end-1c")
 assert "ATDT 127.0.0.1:%d" % port in out and "CONNECT" in out, out
 conns[0].sendall(b"The air is still.\n\r\x1b[0;32m[\x1b[1;33m204/350\x1b[0mDF \x1b[36m1\x1b[0mST 2WN 0LG M:3 K:0 (North 1/5:1/5)] ")
@@ -92,8 +92,15 @@ conns[0].close(); pump(1.0)
 assert not app.connected and "OFFLINE" in rows()[1] and "204/350" not in rows()[1], rows()[1]
 
 # ---------------- keys only act in the DOS look, one overlay at a time ----------------------------------
-for seq in ("<F1>", "<F2>", "<F3>", "<F5>", "<F6>", "<F7>", "<F10>", "<Alt-m>", "<Alt-x>", "<F11>", "<Alt-Return>", "<Alt-d>"):
+for seq in ("<F1>", "<F9>", "<F3>", "<F5>", "<F6>", "<F7>", "<F10>", "<Alt-m>", "<Alt-x>", "<F11>", "<Alt-Return>", "<Alt-d>"):
     assert root.bind(seq), seq + " not bound"
+assert not root.bind("<F2>"), "F2 no longer connects or disconnects (it is too easy to hit when swapping worlds)"
+_real_toggle, _calls = app.toggle_connection, []
+app.toggle_connection = lambda: _calls.append(1); app._bind_hotkeys()
+key(app.input, "F9"); pump(0.2); assert _calls == [1], "F9 connects or disconnects"
+app.input.event_generate("<Shift-F9>"); app.input.event_generate("<Control-F9>"); app.input.event_generate("<Alt-F9>"); pump(0.2)
+assert _calls == [1], "F9 with Shift, Ctrl or Alt is not F9 (a button's own key, say)"
+app.toggle_connection = _real_toggle; app._bind_hotkeys()
 key(app.input, "F10")
 m = overlay(); assert m is not None, "F10 opens the main menu"
 key(app.input, "F10"); assert overlay() is m, "a second F10 must not stack another menu"

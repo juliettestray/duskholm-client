@@ -25,6 +25,7 @@ def commit():
 
 def main():
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed", "--exclude-module", "numpy",
+           "--icon", os.path.join(HERE, "sanctuary.ico"), "--add-data", os.path.join(HERE, "sanctuary.ico") + os.pathsep + ".",
            "--name", "Sanctuary", "--distpath", os.path.join(HERE, "dist"),
            "--workpath", os.path.join(HERE, "build"), "--specpath", os.path.join(HERE, "build"),
            os.path.join(HERE, "sanctuary.py")]

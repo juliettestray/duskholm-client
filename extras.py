@@ -173,8 +173,9 @@ HOTKEYS = {
     "sr_last": ("Repeat last line", "Alt-R"), "sr_stats": ("Read my stats", "Alt-S"),
     "sr_pane": ("Read recent pane lines", "Alt-P"), "sr_time": ("Read time and moon", "Alt-C"),
     "sr_stop": ("Stop speech", "Alt-Q"), "sr_mute": ("Mute / unmute speech", "Alt-Z"),
+    "connect": ("Connect / disconnect", "F9"),             # (F2 used to do this, and was too easy to hit when swapping worlds)
 }
-FIXED_KEYS = {"F12": "About", "F1": "Help", "F2": "Dial / hang up", "F3": "Log", "F5": "Skin", "F6": "Colours", "F7": "Font",
+FIXED_KEYS = {"F12": "About", "F1": "Help", "F3": "Log", "F5": "Skin", "F6": "Colours", "F7": "Font",
               "F10": "Menu", "F11": "Full screen", "Alt-X": "Exit", "Ctrl-1..9": "Select pane tab",
               "Alt-1..9, Alt-0": "Fold pane areas"}
 
@@ -526,7 +527,7 @@ class ExtrasMixin:
                    "find": self.open_find, "find_next": self.find_next_key,
                    "world_next": lambda: self.cycle_world(+1), "world_prev": lambda: self.cycle_world(-1),
                    "world_swap": self.swap_world,
-                   "close_world": self.close_world_ask}
+                   "close_world": self.close_world_ask, "connect": self.toggle_connection}
         for n in range(1, 13):
             actions["world_%d" % n] = (lambda n=n: self.goto_world(n))
         actions.update(self.access_actions())
@@ -535,6 +536,8 @@ class ExtrasMixin:
             if fn is None:
                 continue
             handler = self._ctrl_handler(fn) if action != "dos_toggle" else (lambda e=None: self.toggle_dos_mode())
+            if re.fullmatch(r"<[^-]+>", seq):               # a bare key such as F9: Tk would also run it for Ctrl-F9, Shift-F9...
+                handler = (lambda e=None, h=handler: h(e) if not (getattr(e, "state", 0) & 0x20005) else None)
             variants = {seq}
             m = re.match(r"^<(.*-)?([a-z])>$", seq)
             if m:                                           # caps lock must not change what a key does

@@ -94,8 +94,8 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
 
   | Key | Action | Key | Action |
   | --- | --- | --- | --- |
-  | `F1` | Help | `F2` | Connect / disconnect |
-  | `F3` | Log to file | `F5` | Skins |
+  | `F1` | Help | `F3` | Log to file |
+  | `F5` | Skins | `F9` | Connect / disconnect (changeable under `/hotkeys`) |
   | `F6` | Colours | `F7` | Font |
   | `F10` / `Alt+M` | Main menu | `Alt+X` | Exit (asks first) |
   | `F11` / `Alt+Enter` | Full screen | `Alt+D` | Back to the normal look |
@@ -120,7 +120,7 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   character width as normal text, so bitmap-style fonts stay on the grid.
 - **Worlds / dialing directory** (`Ctrl+W`, or `/worlds`): saved addresses with name, host,
   port, TLS and a note, plus the date of your last call. In the DOS look it is a Telix-style
-  directory (`Enter` dial, `A` add, `E` edit, `Del` remove, `Esc` close); in the normal look it is
+  directory (`Enter` dial, or type a board's number to dial it: `3`, or `12` quickly, `A` add, `E` edit, `Del` remove, `Esc` close); in the normal look it is
   an ordinary list window. *Duskholm* is saved by default.
 - **Several worlds at once.** Dialing a saved world while this one is connected opens it in its own
   tab (up to 12); dialing one that is already open switches to it. `Ctrl+F1` .. `Ctrl+F12` show
@@ -529,7 +529,7 @@ your position, whether a fight is fast or slow, and your side's progress in an o
 **sky box** over tabs for Chat (says, emotes, OOC and faction, sect and cult chat), Phone (texts in and out, as the game shows them) and
 Damage. The sky box draws the weather over the terrain (a little picture: sun or moon, clouds, rain, snow, hail, mist wisps; pines, hills,
 water, fields, streets, or a room indoors; block characters in the DOS look), with the temperature in the corner, your neighbourhood and
-coordinates, the mist (only when the game says you can see it), the time and the moon. The game sends all of that (Room.Environment); 
+coordinates, the mist (only when the game says you can see it), the time ("eternally 13:00" where a property's time is frozen) and the moon. The game sends all of that (Room.Environment); 
 nothing is drawn for what it did not send. Options > *Weather picture* turns the picture off (the words stay) and *Temperature units*
 chooses Fahrenheit or Celsius, by default from your Windows region. When a fight starts the column becomes the fight layout:
 Map (with you in the middle), Chat/Phone, Damage (every hit you deal or take, in words and under the opponent's name:
@@ -635,6 +635,7 @@ python tests/test_findpanes.py    # Find with 'Search panes': order, which pane,
 python tests/test_keeptext.py     # the Keep text checkbox and /keep
 python tests/test_spell.py        # spell checking: the Windows engine, what is filtered, the three boxes, /spell
 python tests/test_settings.py     # the Settings window, the short Options menu and its 'Recently changed' section
+python tests/test_appicon.py       # the program icon: the file, its sizes, applying it
 python tests/test_skybox.py       # the sky box: what is drawn from what the game sent, units, mist, the art's size
 python tests/test_worldswap.py    # Ctrl+Tab: swap between the last two worlds
 python tests/test_crt.py          # CRT scanlines: shows only in the DOS look, click-through, follows the window
