@@ -106,6 +106,8 @@ class DosFormsMixin:
     def _grad_from_editor(st, es):
         """The gradient state after the editor: keeps a pattern's name, otherwise the colours as typed text."""
         pat = es["pattern"] if es["pattern"] != "custom" else ct.stops_text(es["stops"])
+        if es.get("format"):
+            st = dict(st, format=es["format"])
         return dict(st, pattern=pat, mode=es["mode"], smooth=es["smooth"], text=es.get("text", st.get("text", "")),
                     prefix=es.get("prefix", st.get("prefix", "")))
 
@@ -113,6 +115,14 @@ class DosFormsMixin:
         self._reopen(lambda: self.dos_choose(
             "Apply", [("%-8s %s" % (m, ct.MODE_HELP[m]), m) for m in ct.MODES], new["mode"],
             lambda m: self._reopen(again, dict(new, mode=m)), back=lambda: again(new)))
+
+    def _grad_format_list(self, new, again):
+        def chosen(key):
+            self.set_gradient_format(key)
+            self._reopen(again, dict(new, format=key))
+        self._reopen(lambda: self.dos_choose(
+            "Format", [("%-22s %s" % (v[0], v[1]), k) for k, v in ct.FORMATS.items()], new["format"],
+            chosen, back=lambda: again(new)))
 
     def _dos_save_pattern(self, st, back):
         """Ask for a name and keep the colours as a pattern."""
@@ -134,17 +144,22 @@ class DosFormsMixin:
 
     def _dos_gradient(self, st):
         st = dict(st)
-        self._grad_state = st
+        st.pop("format", None)
+        self._grad_state = dict(st)
+        st["format"] = self.gradient_format()
         stops = self._grad_stops(st)
         state = {"stops": stops, "mode": st["mode"], "smooth": st["smooth"], "text": st["text"],
-                 "prefix": st["prefix"], "pattern": self._grad_label(st, stops)}
+                 "prefix": st["prefix"], "pattern": self._grad_label(st, stops), "format": st["format"]}
 
         def result(res, es):
             new = self._grad_from_editor(st, es)
-            self._grad_state = new
+            self.set_gradient_format(new["format"])
+            self._grad_state = {k: v for k, v in new.items() if k != "format"}
             if isinstance(res, tuple):
                 if res[1] == "pattern":
                     self._reopen(self._dos_pick_pattern, new)
+                elif res[1] == "format":
+                    self._grad_format_list(new, self.open_gradient)
                 else:
                     self._grad_mode_list(new, self.open_gradient)
                 return
@@ -169,13 +184,18 @@ class DosFormsMixin:
                     self.system("Copied to the clipboard: " + line)
                 self._reopen(self.open_gradient, new)
                 return
-            coded, why = self.make_gradient(new)
+            coded, look, why = self.build_gradient(new)
             if coded is None:
                 self.system(why)
                 self._reopen(self.open_gradient, new)
                 return
             if res == "preview":
-                self.show_coloured(coded)
+                self.show_look(look)
+                self._reopen(self.open_gradient, new)
+            elif res == "copy":
+                self.root.clipboard_clear()
+                self.root.clipboard_append(coded)
+                self.system("Copied to the clipboard (%d characters)." % len(coded))
                 self._reopen(self.open_gradient, new)
             elif res == "send":
                 if "\n" in coded:
@@ -186,7 +206,8 @@ class DosFormsMixin:
                     self.put_in_input(coded)
         ed = dosgrad.DosGradientEditor(
             self.root, "Gradient", state,
-            [("Preview", "preview"), ("To input", "send"), ("Reverse", "reverse", "v"), ("Save", "save"),
+            [("Preview", "preview"), ("To input", "send"), ("Copy", "copy", "y"), ("Reverse", "reverse", "v"),
+             ("Save", "save"),
              ("Share", "share", "h"), ("Cancel", "cancel")],
             self._dc(), self.f_norm, result, text=True,
             message="Use \\n for new lines in the text.")

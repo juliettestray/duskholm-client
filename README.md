@@ -381,6 +381,24 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   hue; in the DOS look the colours grouped by hue plus a hex box (everything snaps to the nearest
   xterm colour, which is what the game can show). Both work with the mouse or the keyboard alone.
   *Reverse* turns the colours round and *Save* keeps them as a named pattern.
+  *Format* chooses which colour codes are written, and the code is shown under the preview. In the
+  DOS look use the left and right arrows on it, or `Enter` for the list; `/gradient format` lists
+  them and `/gradient format mush` picks one. The choice is remembered.
+
+  | Format | Looks like |
+  |---|---|
+  | Duskholm / Haven (the default) | `` `196word`x `` |
+  | MUX / PennMUSH `ansi()` | `[ansi(<#FF0000>,word)]` |
+  | TinyMUX `%x` | `%x<#FF0000>word%xn` |
+  | Evennia | `\|#ff0000word\|n` |
+  | Aardwolf | `@x196word@w` |
+  | BBCode (forums) | `[color=#FF0000]word[/color]` |
+  | HTML (web pages) | `<span style="color:#ff0000">word</span>` |
+
+  Characters a game would read as its own are escaped (for the MUSH formats, new lines become `%r`
+  and runs of spaces `%b`). The formats written with hex colours blend in full colour. Colouring a
+  paragraph inside the editors always writes Duskholm codes. The other games' formats follow their
+  documentation and have not been tried on a live server of those games.
 - **Hex to xterm** (`Alt+H`, `/hex ff8800`): the closest xterm colour and its code (`` `208 ``).
 - **Customize form** (`Alt+K`, or just type `customize`): fill in an item's fields and send them
   all at once. Two ways to send: as `customize <item> ...` command lines for an item you have, or
@@ -634,6 +652,7 @@ python tests/test_boxes.py        # joining ASCII boxes (fuzzed)
 python tests/test_moon.py         # moon phases against published times, Eastern time
 python tests/test_extras.py       # timers, clock, notepad, moon window, hotkeys
 python tests/test_colortools.py   # hex to xterm, gradients (fuzzed)
+python tests/test_gradient_formats.py   # the gradient maker's colour formats
 python tests/test_custom.py       # the customize form's commands and the design book
 python tests/test_tools.py        # those tools in both looks
 python tests/test_worldfile.py    # .snc export/import, including hostile files

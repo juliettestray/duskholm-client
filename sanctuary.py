@@ -1109,6 +1109,7 @@ def clean_settings(cfg):
     sr = cfg.get("sr_rate")
     cfg["sr_rate"] = max(-10, min(10, sr)) if isinstance(sr, int) and not isinstance(sr, bool) else 0
     cfg["gradients"] = colortools.validate_saved(cfg.get("gradients"))
+    cfg["gradient_format"] = colortools.format_key(cfg.get("gradient_format")) or colortools.DEFAULT_FORMAT
     cfg["world_time"] = gametime.clean_all(cfg.get("world_time"))
     for t in cfg.get("triggers") or []:                     # the ready-made "my texts" rule from before it waited for the game's "Sent."
         if isinstance(t, dict) and t.get("when") == "sent" and t.get("name") == "Capture my texts to a pane":
@@ -3773,7 +3774,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         ("/triggers  /alias", "triggers and aliases (/alias name body, /unalias, /aliases)"),
         ("/timer 10m [label]", "a timer; also 21:30, game 21:30, list, cancel [n]"),
         ("/moon  /notes", "the moon window; the notepad"),
-        ("/hex ff8800", "nearest xterm colour;  /gradient [text]  /customize"),
+        ("/hex ff8800", "nearest xterm colour;  /gradient [text]  /gradient format  /customize"),
         ("/export  /import", "world settings files (.snc)"),
         ("/update", "check for a newer Sanctuary;  /changes [all]  what changed in this version (or in all)"),
         ("/sr on|off|help", "screen reader mode;  /hotkeys changes keys"),
@@ -6958,6 +6959,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
                         "  /timer 10m [label]       /timer list | cancel [n]   (also 21:30, game 21:30)\n"
                         "  /moon   /notes   /hotkeys\n"
                         "  /hex ff8800              /gradient [text]   /customize\n"
+                        "  /gradient format [name]  which colour codes the gradient maker writes\n"
                         "  /export [file]           /import file   (world settings, .snc)\n"
                         "  /sr on|off|status|help|test   screen reader mode\n"
                         "  /update                  check for a newer Sanctuary")

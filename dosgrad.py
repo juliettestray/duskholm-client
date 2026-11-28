@@ -301,8 +301,9 @@ class DosPalette(_DosBox):
 class DosGradientEditor(_DosBox):
     """The gradient as you see it: colour swatches, a blend bar, a preview in the real colours.
 
-    `state`: {"stops": [xterm...], "mode", "smooth", "text", "prefix", "pattern": label shown for the pattern}.
-    on_result(result, state): a button's result, ('pick', 'pattern' | 'mode') when one of those was chosen (the
+    `state`: {"stops": [xterm...], "mode", "smooth", "text", "prefix", "pattern": label shown for the pattern},
+    and optionally "format" (a key of ct.FORMATS), which adds a Format line and shows the codes it writes.
+    on_result(result, state): a button's result, ('pick', 'pattern' | 'mode' | 'format') when one of those was chosen (the
     caller shows its list and comes back), or 'cancel'. `text=False` hides the text fields (used when the
     gradient is applied to text that is being edited elsewhere)."""
 
@@ -319,6 +320,7 @@ class DosGradientEditor(_DosBox):
         self._mode = state.get("mode") or "stretch"
         self._smooth = bool(state.get("smooth", True))
         self._pattern = str(state.get("pattern") or "custom")
+        self._format = ct.format_key(state.get("format"))
         self._buttons = []
         for b in buttons:
             label, res = str(b[0]), b[1]
@@ -342,6 +344,8 @@ class DosGradientEditor(_DosBox):
             self._entries[key] = e
         # focus order
         self._order = [("stops", None), ("pick", "pattern"), ("pick", "mode"), ("check", "smooth")]
+        if self._format:
+            self._order.insert(3, ("pick", "format"))
         self._order += [("entry", k) for k in self._entry_keys]
         self._order += [("button", i) for i in range(len(self._buttons))]
         self._fi = 0
@@ -356,6 +360,8 @@ class DosGradientEditor(_DosBox):
     def state(self):
         out = {"stops": list(self._stops_list), "mode": self._mode, "smooth": self._smooth,
                "pattern": self._pattern}
+        if self._format:
+            out["format"] = self._format
         for k, e in self._entries.items():
             try:
                 out[k] = e.get()
@@ -386,6 +392,9 @@ class DosGradientEditor(_DosBox):
         row += 2
         self._r_pat = row
         self._r_mode = row + 1
+        if self._format:
+            self._r_format = row + 2
+            row += 1
         self._r_smooth = row + 2
         row += 3
         self._r_entry = {}
@@ -396,6 +405,9 @@ class DosGradientEditor(_DosBox):
         self._r_prev = row
         self._prev_rows = 3 if self._with_text else 1
         row += self._prev_rows + 1
+        if self._format:
+            self._r_code = row
+            row += 3
         self._r_btn = row
         row += 2
         self._size_canvas(self._total, row)
@@ -428,9 +440,11 @@ class DosGradientEditor(_DosBox):
         raw = (raw or SAMPLE).replace("\\n", "\n")
         pre = self._entries["prefix"].get() if self._with_text else ""
         try:
-            return pre, ct.apply(raw, self._stops_list, self._mode, self._smooth, seed=1)
+            coded, look = ct.build(raw, self._stops_list, self._mode, self._smooth,
+                                   self._format or ct.DEFAULT_FORMAT, seed=1)
         except ValueError:
-            return pre, None
+            return pre, None, None
+        return pre, coded, look
 
     def _render(self):
         c = self.colors
@@ -471,15 +485,19 @@ class DosGradientEditor(_DosBox):
         for i, ci in enumerate(ct.preview_bar(self._stops_list, bw, self._smooth)):
             self._rect(self._ecol + i, self._r_bar, 1, ct.XTERM[ci])
         # pick fields and the check
-        for key, label, row, shown in (("pattern", "Pattern", self._r_pat, self._pattern),
-                                       ("mode", "Apply", self._r_mode, self._mode)):
+        picks = [("pattern", "Pattern", self._r_pat, self._pattern), ("mode", "Apply", self._r_mode, self._mode)]
+        if self._format:
+            picks.append(("format", "Format", self._r_format, ct.FORMATS[self._format][0]))
+        for key, label, row, shown in picks:
             on = self._focus_is("pick", key)
             self._text(2, row, label.ljust(self.LAB), fg, bg)
-            fw = 34 if key == "pattern" else 12
+            fw = 12 if key == "mode" else 34
             cell = _trunc(shown, fw - 2).ljust(fw - 2) + " ▼"
             self._text(self._ecol, row, cell, c["dos_menu_sel_fg"] if on else c["input_fg"],
                        c["dos_menu_sel_bg"] if on else c["input_bg"])
             self._hits.append(("pick", key, self._ecol, self._ecol + fw, row))
+            if key == "format" and on and self._total - self._ecol - fw > 12:
+                self._text(self._ecol + fw + 1, row, _trunc("← → switch", self._total - self._ecol - fw - 3), dim, bg)
         on = self._focus_is("check", "smooth")
         s = "[%s] Blend between colours" % ("x" if self._smooth else " ")
         self._text(2, self._r_smooth, s, c["dos_menu_sel_fg"] if on else fg, c["dos_menu_sel_bg"] if on else bg)
@@ -490,13 +508,13 @@ class DosGradientEditor(_DosBox):
         # preview
         self._text(2, self._r_prev, "Preview".ljust(self.LAB), fg, bg)
         self._rect(self._ecol, self._r_prev, bw, screen, nrows=self._prev_rows)
-        pre, coded = self._preview_coded()
+        pre, coded, look = self._preview_coded()
         if coded is None:
             self._text(self._ecol, self._r_prev, _trunc("(nothing to show)", bw), dim, screen)
         else:
             col, row = 0, 0
-            for text, ci in ct.runs(coded):
-                colr = ct.XTERM[ci] if ci is not None else c["fg"]
+            for text, colour in look:
+                colr = colour or c["fg"]
                 for ch in text:
                     if ch == "\n":
                         col, row = 0, row + 1
@@ -506,9 +524,20 @@ class DosGradientEditor(_DosBox):
                     if col < bw:
                         self._text(self._ecol + col, self._r_prev + row, ch, colr, screen)
                     col += 1
+        if self._format:
+            # what To input / Copy will give, as far as two lines go
+            self._text(2, self._r_code, "Code".ljust(self.LAB), fg, bg)
+            self._rect(self._ecol, self._r_code, bw, screen, nrows=2)
+            whole = (pre + coded).replace("\n", "\u23ce") if coded is not None else ""
+            if len(whole) > 2 * bw:
+                whole = whole[:2 * bw - 3] + "..."
+            for i in range(2):
+                if whole[i * bw:(i + 1) * bw]:
+                    self._text(self._ecol, self._r_code + i, whole[i * bw:(i + 1) * bw], c["fg"], screen)
         # buttons
         labels = ["[ %s ]" % b["label"] for b in self._buttons]
-        total = sum(map(len, labels)) + 2 * max(0, len(labels) - 1)
+        gap = 2 if sum(map(len, labels)) + 2 * (len(labels) - 1) <= self._total - 2 else 1
+        total = sum(map(len, labels)) + gap * max(0, len(labels) - 1)
         col = max(1, (self._total - total) // 2)
         for i, (s, b) in enumerate(zip(labels, self._buttons)):
             on = self._focus_is("button", i)
@@ -519,7 +548,7 @@ class DosGradientEditor(_DosBox):
             if p >= 0 and 2 + p < len(s):
                 self._text(col + 2 + p, self._r_btn, b["label"][p], "#aa0000" if on else c["dos_key_fg"], bbg)
             self._hits.append(("button", i, col, col + len(s), self._r_btn))
-            col += len(labels[i]) + 2
+            col += len(labels[i]) + gap
 
     # -- focus ---------------------------------------------------------------------------------------
     def _set_focus(self, i):
@@ -681,6 +710,10 @@ class DosGradientEditor(_DosBox):
                 self._open_palette()
             elif ks in ("Up", "Down"):
                 self._set_focus(self._fi + (1 if ks == "Down" else -1))
+        elif kind == "pick" and what == "format" and ks in ("Left", "Right"):
+            keys = list(ct.FORMATS)
+            self._format = keys[(keys.index(self._format) + (1 if ks == "Right" else -1)) % len(keys)]
+            self._render()
         elif kind == "button" and ks in ("Left", "Right"):
             self._set_focus(self._fi + (1 if ks == "Right" else -1) if 0 <= what + (1 if ks == "Right" else -1) < len(self._buttons)
                             else self._fi)

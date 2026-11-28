@@ -3,6 +3,7 @@
 The game writes a colour as a backtick and three digits, `045, and `x puts it back to normal.
 This module converts hex colours to the nearest xterm colour and builds gradients from a list of
 xterm colours, applying them to text in several ways."""
+import html
 import math
 import random
 import re
@@ -141,8 +142,9 @@ def _rgb(i):
     return int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)
 
 
-def sample(stops, t, smooth=True):
-    """Colour (xterm index) at position t in 0..1 along the pattern."""
+def sample(stops, t, smooth=True, true=False):
+    """Colour at position t in 0..1 along the pattern: an xterm index, or with `true` a blend between two
+    colours as '#rrggbb' without rounding it to the 256 (the pattern's own colours stay indexes)."""
     m = len(stops)
     if m == 1:
         return stops[0]
@@ -155,22 +157,23 @@ def sample(stops, t, smooth=True):
     a, b = _rgb(stops[i]), _rgb(stops[i + 1])
     if f < 1e-9:
         return stops[i]
-    return nearest_xterm(tuple(a[k] + (b[k] - a[k]) * f for k in range(3)))[0]
+    mix = tuple(a[k] + (b[k] - a[k]) * f for k in range(3))
+    return rgb_to_hex(mix) if true else nearest_xterm(mix)[0]
 
 
-def _colour_for(stops, mode, j, n, smooth, rnd):
+def _colour_for(stops, mode, j, n, smooth, rnd, true=False):
     if n <= 1:
         return stops[0] if mode != "middle" else stops[0]
     if mode == "stretch":
-        return sample(stops, j / (n - 1.0), smooth)
+        return sample(stops, j / (n - 1.0), smooth, true)
     if mode == "cycle":
         return stops[j % len(stops)]
     if mode == "middle":
         c = (n - 1) / 2.0
-        return sample(stops, abs(j - c) / c, smooth)
+        return sample(stops, abs(j - c) / c, smooth, true)
     if mode == "edges":
         c = (n - 1) / 2.0
-        return sample(stops, 1.0 - abs(j - c) / c, smooth)
+        return sample(stops, 1.0 - abs(j - c) / c, smooth, true)
     if mode == "bounce":
         m = len(stops)
         if m == 1:
@@ -182,10 +185,9 @@ def _colour_for(stops, mode, j, n, smooth, rnd):
     return stops[0]
 
 
-def apply(text, stops, mode="stretch", smooth=True, seed=None, reset=True):
-    """Colour `text` with the pattern. Returns the game text with `NNN codes in it.
-    Spaces carry no code; a code is only written where the colour changes; a literal backtick is
-    doubled so the game shows it. Raises ValueError for bad input or too-long results."""
+def paint(text, stops, mode="stretch", smooth=True, seed=None, true=False):
+    """The colour of every letter: a list of lines, each [(letter, colour)]. A colour is an xterm index,
+    or '#rrggbb' for a blend when `true`; spaces have None. Raises ValueError for bad input."""
     if mode not in MODES:
         raise ValueError("Unknown way to apply a pattern: %s" % str(mode)[:20])
     try:
@@ -202,38 +204,42 @@ def apply(text, stops, mode="stretch", smooth=True, seed=None, reset=True):
     out_lines = []
     if mode == "line":
         for i, ln in enumerate(lines):
-            c = sample(stops, i / (len(lines) - 1.0), smooth) if len(lines) > 1 else stops[0]
-            out_lines.append(_emit([(ch, c) for ch in ln]))
-    else:
-        for ln in lines:
-            if mode == "word":
-                words = re.findall(r"\S+", ln)
-                cols, pieces = [], []
-                for w_i in range(len(words)):
-                    cols.append(sample(stops, w_i / (len(words) - 1.0), smooth) if len(words) > 1 else stops[0])
-                w_i, k, cur = -1, 0, []
-                inword = False
-                for ch in ln:
-                    if ch.isspace():
-                        inword = False
-                        cur.append((ch, None))
-                    else:
-                        if not inword:
-                            w_i += 1
-                            inword = True
-                        cur.append((ch, cols[w_i]))
-                out_lines.append(_emit(cur))
-            else:
-                chars = [ch for ch in ln if not ch.isspace()]
-                n, j, cur = len(chars), 0, []
-                for ch in ln:
-                    if ch.isspace():
-                        cur.append((ch, None))
-                    else:
-                        cur.append((ch, _colour_for(stops, mode, j, n, smooth, rnd)))
-                        j += 1
-                out_lines.append(_emit(cur))
-    result = "\n".join(out_lines)
+            c = sample(stops, i / (len(lines) - 1.0), smooth, true) if len(lines) > 1 else stops[0]
+            out_lines.append([(ch, None if ch.isspace() else c) for ch in ln])
+        return out_lines
+    for ln in lines:
+        if mode == "word":
+            words = re.findall(r"\S+", ln)
+            cols = [sample(stops, w_i / (len(words) - 1.0), smooth, true) if len(words) > 1 else stops[0]
+                    for w_i in range(len(words))]
+            w_i, cur, inword = -1, [], False
+            for ch in ln:
+                if ch.isspace():
+                    inword = False
+                    cur.append((ch, None))
+                else:
+                    if not inword:
+                        w_i += 1
+                        inword = True
+                    cur.append((ch, cols[w_i]))
+        else:
+            n = sum(1 for ch in ln if not ch.isspace())
+            j, cur = 0, []
+            for ch in ln:
+                if ch.isspace():
+                    cur.append((ch, None))
+                else:
+                    cur.append((ch, _colour_for(stops, mode, j, n, smooth, rnd, true)))
+                    j += 1
+        out_lines.append(cur)
+    return out_lines
+
+
+def apply(text, stops, mode="stretch", smooth=True, seed=None, reset=True):
+    """Colour `text` with the pattern. Returns the game text with `NNN codes in it.
+    Spaces carry no code; a code is only written where the colour changes; a literal backtick is
+    doubled so the game shows it. Raises ValueError for bad input or too-long results."""
+    result = "\n".join(_emit(ln) for ln in paint(text, stops, mode, smooth, seed))
     if reset and "`" in result:
         result += RESET
     if len(result) > MAX_OUT:
@@ -250,6 +256,144 @@ def _emit(pairs):
             last = col
         out.append("``" if ch == "`" else ch)
     return "".join(out)
+
+
+# ---------------------------------------------------------------- other games' (and websites') colour codes
+# key: (name, an example, takes any '#rrggbb', longest result)
+MAX_WEB_OUT = 60000
+FORMATS = {
+    "duskholm": ("Duskholm / Haven", "`196word`x", False, MAX_OUT),
+    "mush": ("MUX / PennMUSH ansi()", "[ansi(<#FF0000>,word)]", True, MAX_OUT),
+    "muxsub": ("TinyMUX %x", "%x<#FF0000>word%xn", True, MAX_OUT),
+    "evennia": ("Evennia", "|#ff0000word|n", True, MAX_OUT),
+    "aardwolf": ("Aardwolf", "@x196word@w", False, MAX_OUT),
+    "bbcode": ("BBCode (forums)", "[color=#FF0000]word[/color]", True, MAX_WEB_OUT),
+    "html": ("HTML (web pages)", '<span style="color:#ff0000">word</span>', True, MAX_WEB_OUT),
+}
+DEFAULT_FORMAT = "duskholm"
+
+
+def format_key(name):
+    """The key for a format named by its key or its name (any case), or None."""
+    want = " ".join(str(name or "").split()).lower()
+    for k, v in FORMATS.items():
+        if want in (k, v[0].lower()):
+            return k
+    return None
+
+
+def colour_hex(colour):
+    """'#rrggbb' for an xterm index or a '#rrggbb' blend."""
+    return colour if isinstance(colour, str) else XTERM[colour]
+
+
+def _runs_of(line):
+    """[(text, colour or None)] for one painted line: one run per stretch of one colour. The space between
+    two letters of the same colour stays inside their run."""
+    out, held = [], []
+    for ch, col in line:
+        if col is None:
+            held.append(ch)
+            continue
+        if out and out[-1][1] == col:
+            out[-1][0] += "".join(held) + ch
+        else:
+            if held:
+                out.append(["".join(held), None])
+            out.append([ch, col])
+        held = []
+    if held:
+        out.append(["".join(held), None])
+    return [(t, c) for t, c in out]
+
+
+_MUSH_SPECIAL = set("\\[](){},%;")
+
+
+def _mush_escape(lines_of_runs):
+    """The runs with MUSH's special characters escaped, and spaces the parser would swallow (several
+    together, or at either end of a line) written as %b; a tab is %t."""
+    out = []
+    for runs_ in lines_of_runs:
+        whole = "".join(t for t, _c in runs_)
+        pos, new = 0, []
+        for text, col in runs_:
+            piece = []
+            for ch in text:
+                if ch == " ":
+                    keep = 0 < pos < len(whole) - 1 and whole[pos - 1] != " "
+                    piece.append(" " if keep else "%b")
+                elif ch == "\t":
+                    piece.append("%t")
+                elif ch in _MUSH_SPECIAL:
+                    piece.append("\\" + ch)
+                else:
+                    piece.append(ch)
+                pos += 1
+            new.append(("".join(piece), col))
+        out.append(new)
+    return out
+
+
+def _write(lines, fmt):
+    rows = [_runs_of(ln) for ln in lines]
+    if fmt in ("mush", "muxsub"):
+        rows = _mush_escape(rows)
+    out = []
+    for row in rows:
+        parts = []
+        coloured = False
+        for text, col in row:
+            if fmt == "evennia":
+                text = text.replace("|", "||")
+            elif fmt == "aardwolf":
+                text = text.replace("@", "@@")
+            elif fmt == "html":
+                text = html.escape(text, quote=False)
+            if col is None:
+                parts.append(text)
+                continue
+            coloured = True
+            if fmt == "mush":
+                parts.append("[ansi(<%s>,%s)]" % (colour_hex(col).upper(), text))
+            elif fmt == "muxsub":
+                parts.append("%%x<%s>%s" % (colour_hex(col).upper(), text))
+            elif fmt == "evennia":
+                parts.append("|%s%s" % (colour_hex(col), text))
+            elif fmt == "aardwolf":
+                parts.append("@x%03d%s" % (col, text))
+            elif fmt == "bbcode":
+                parts.append("[color=%s]%s[/color]" % (colour_hex(col).upper(), text))
+            else:
+                parts.append('<span style="color:%s">%s</span>' % (colour_hex(col), text))
+        if coloured and fmt in ("muxsub", "evennia", "aardwolf"):
+            parts.append({"muxsub": "%xn", "evennia": "|n", "aardwolf": "@w"}[fmt])
+        out.append("".join(parts))
+    return {"mush": "%r", "muxsub": "%r", "html": "<br>\n"}.get(fmt, "\n").join(out)
+
+
+def build(text, stops, mode="stretch", smooth=True, fmt=DEFAULT_FORMAT, seed=None):
+    """(the coloured text written in `fmt`, [(text, '#rrggbb' or None)] showing how it looks).
+    Raises ValueError for bad input or too-long results."""
+    if fmt not in FORMATS:
+        raise ValueError("Unknown colour format: %s" % str(fmt)[:20])
+    if seed is None:
+        seed = random.randrange(1 << 30)           # the look and the codes must agree in "random" mode
+    lines = paint(text, stops, mode, smooth, seed, true=FORMATS[fmt][2])
+    if fmt == DEFAULT_FORMAT:
+        out = apply(text, stops, mode, smooth, seed=seed)
+    else:
+        out = _write(lines, fmt)
+        limit = FORMATS[fmt][3]
+        if len(out) > limit:
+            raise ValueError("The coloured text would be %d characters (at most %d). Shorten it, or apply the "
+                             "colours by word or line." % (len(out), limit))
+    look = []
+    for i, ln in enumerate(lines):
+        if i:
+            look.append(("\n", None))
+        look.extend((t, None if c is None else colour_hex(c)) for t, c in _runs_of(ln))
+    return out, look
 
 
 def strip_codes(text):

@@ -29,9 +29,16 @@ class ToolsMixin:
         pieces = []
         if lead:
             pieces.append((lead, "system"))
-        for text, idx in ct.runs(coded):
-            key = (ct.XTERM[idx] if idx is not None else None, None, False, False, False, False)
-            pieces.append((text, self._tag_for(key)))
+        self._show_pieces(pieces, [(text, None if idx is None else ct.XTERM[idx]) for text, idx in ct.runs(coded)])
+
+    def show_look(self, look):
+        """Put [(text, '#rrggbb' or None)] on the main screen."""
+        self._settle()
+        self._show_pieces([], look)
+
+    def _show_pieces(self, pieces, look):
+        for text, colour in look:
+            pieces.append((text, self._tag_for((colour, None, False, False, False, False))))
         pieces.append(("\n", None))
         self._append(pieces)
 
@@ -113,17 +120,37 @@ class ToolsMixin:
         named = ct.find_pattern(text, self.cfg.get("gradients", []))
         return named if named is not None else ct.parse_colours(text)
 
-    def make_gradient(self, state):
-        """(coded text or None, message)."""
+    def gradient_format(self):
+        """The colour format the gradient maker writes (a key of ct.FORMATS)."""
+        return ct.format_key(self.cfg.get("gradient_format")) or ct.DEFAULT_FORMAT
+
+    def set_gradient_format(self, name):
+        """Choose the format by key or name; False when there is no such format."""
+        key = ct.format_key(name)
+        if key is None:
+            return False
+        if key != self.gradient_format():
+            self.cfg["gradient_format"] = key
+            self._save_settings()
+        return True
+
+    def build_gradient(self, state):
+        """(coded text or None, how it looks, message). The format is the chosen one unless `state` names one."""
         try:
             stops = self._pattern_colours(state.get("pattern", ""))
-            body = ct.apply(state.get("text", "").replace("\\n", "\n"), stops, state.get("mode", "stretch") or "stretch",
-                            bool(state.get("smooth", True)))
+            body, look = ct.build(state.get("text", "").replace("\\n", "\n"), stops,
+                                  state.get("mode", "stretch") or "stretch", bool(state.get("smooth", True)),
+                                  state.get("format") or self.gradient_format())
         except ValueError as e:
-            return None, str(e)
+            return None, [], str(e)
         if not state.get("text", "").strip():
-            return None, "Type some text to colour."
-        return (state.get("prefix", "") or "") + body, ""
+            return None, [], "Type some text to colour."
+        return (state.get("prefix", "") or "") + body, look, ""
+
+    def make_gradient(self, state):
+        """(coded text or None, message)."""
+        coded, _look, why = self.build_gradient(state)
+        return coded, why
 
     def save_pattern(self, name, pattern_text):
         try:
@@ -176,12 +203,21 @@ class ToolsMixin:
             tk.Label(top, text=label).grid(row=r, column=0, sticky="nw", padx=(10, 6), pady=3)
             w.grid(row=r, column=1, sticky=sticky, pady=3, padx=(0, 10))
             r += 1
+        names = {v[0]: k for k, v in ct.FORMATS.items()}
+        fmt = tk.StringVar(value=ct.FORMATS[self.gradient_format()][0])
+        fr = tk.Frame(top)
+        tk.OptionMenu(fr, fmt, *names).pack(side="left")
+        example = tk.Label(fr, text="", anchor="w")
+        example.pack(side="left", padx=8)
+        row("Format", fr)
         text = tk.Text(top, width=56, height=4, wrap="word", font=self.f_norm)
         text.insert("1.0", st["text"].replace("\\n", "\n"))
         row("Text", text, "we")
         row("Start with", tk.Entry(top, textvariable=prefix, width=24))
         pv = tk.Text(top, width=56, height=5, wrap="word", font=self.f_norm, state="disabled")
         row("Preview", pv, "we")
+        out = tk.Text(top, width=56, height=3, wrap="char", font=self.f_norm, state="disabled")
+        row("Code", out, "we")
         msg = tk.Label(top, text="", anchor="w", justify="left", wraplength=420, fg="#c04040")
         msg.grid(row=r, column=0, columnspan=2, sticky="we", padx=10)
         r += 1
@@ -194,19 +230,25 @@ class ToolsMixin:
 
         def refresh(*_):
             self._grad_state = state_now()
-            coded, why = self.make_gradient(self._grad_state)
-            pv.configure(state="normal")
-            pv.delete("1.0", "end")
+            self.set_gradient_format(names.get(fmt.get()))
+            example.configure(text="e.g.  " + ct.FORMATS[self.gradient_format()][1])
+            coded, look, why = self.build_gradient(self._grad_state)
+            for w in (pv, out):
+                w.configure(state="normal")
+                w.delete("1.0", "end")
             if coded is not None:
-                for i, (t, idx) in enumerate(ct.runs(coded)):
+                for i, (t, colour) in enumerate(look):
                     tag = "c%d" % i
-                    pv.tag_configure(tag, foreground=ct.XTERM[idx] if idx is not None else self.theme["fg"])
+                    pv.tag_configure(tag, foreground=colour or self.theme["fg"])
                     pv.insert("end", t, tag)
+                out.insert("1.0", coded)
                 msg.configure(text="%d characters" % len(coded), fg=self.theme["dim"])
             else:
                 msg.configure(text=why, fg="#c04040")
-            pv.configure(state="disabled")
+            for w in (pv, out):
+                w.configure(state="disabled")
         prefix.trace_add("write", refresh)
+        fmt.trace_add("write", refresh)
         text.bind("<KeyRelease>", refresh)
 
         def to_input():
@@ -290,6 +332,7 @@ class ToolsMixin:
         top.protocol("WM_DELETE_WINDOW", close)
         top.bind("<Escape>", lambda e: close())
         top._panel = panel
+        top._format, top._code = fmt, out
         refresh()
         self._theme_tree(top)
         panel._cv.focus_set()
@@ -593,6 +636,16 @@ class ToolsMixin:
                     self.root.clipboard_append(line)
                     self.system("Copied to the clipboard: " + line)
                 return True
+            if word.lower() == "format":
+                if rest and not self.set_gradient_format(rest):
+                    self.system("There is no format called '%s'." % rest[:30])
+                elif rest:
+                    self.system("The gradient maker now writes %s: %s" % ct.FORMATS[self.gradient_format()][:2])
+                    return True
+                self.system("Formats (/gradient format <name>); the one marked * is in use:")
+                for k, v in ct.FORMATS.items():
+                    self.system("  %s %-9s %-22s %s" % ("*" if k == self.gradient_format() else " ", k, v[0], v[1]))
+                return True
             if word.lower() == "import":
                 try:
                     name, cols = ct.parse_share(rest)
@@ -603,12 +656,12 @@ class ToolsMixin:
                 return True
             if arg:
                 state = dict(self._grad_state, text=arg)
-                coded, why = self.make_gradient(state)
+                coded, look, why = self.build_gradient(state)
                 if coded is None:
                     self.system(why)
                 else:
                     self._grad_state = state
-                    self.show_coloured(coded)
+                    self.show_look(look)
                     self.put_in_input(coded)
             else:
                 self.open_gradient()
