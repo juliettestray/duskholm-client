@@ -257,6 +257,13 @@ Defaults to `duskholm.com:3001` (TLS). Port 3000 is plain telnet.
   its long lines, the window's width stands in for it, never asking for more than 80 characters), two word-for-word identical texts in the same minute are both kept (and not doubled on the
   next look), and clearing the pane makes the next look fill it again. It is a route action with the box *Skip lines it
   already has* (`once`), so any log the game repeats can be captured the same way.
+  **Picking colours:** in the trigger editor, *Pick...* (or the swatch) opens the Windows colour chooser; you can still
+  type `#rrggbb`, 0-15 or a name, and clearing the box means no colour. In the DOS look, press Enter on a highlight
+  colour for a list (none, the game's 16, or *Mix any colour...*).
+  **Typos in your echo:** a highlight on a trigger with *Matches the commands I send* colours the matching text in
+  your own echoed line, after you send it. Nothing is changed or held back. The ready-made *Highlight my typos* rule
+  holds a short word list to edit (`\b(teh|adn|...)\b` matches whole words only). For your own rule, tick *Every match*.
+  It needs your typed commands to be shown, and never touches a password.
   **Your own side:** the game answers a text you send with just "Sent.", so *Capture my texts to a pane* matches the
   command as you type it (a trigger with *Matches the commands I send, not what the game shows*: it sees what actually
   goes out, so an alias, a button or a pop-out window's input bar counts too, and never a password) and puts
@@ -641,6 +648,8 @@ python tests/test_worldswap.py    # Ctrl+Tab: swap between the last two worlds
 python tests/test_crt.py          # CRT scanlines: shows only in the DOS look, click-through, follows the window
 python tests/test_whatsnew.py     # what's new after an update: skipped versions, once, /changes
 python tests/test_importers.py   # MUSHclient file import (pure): patterns, colours, sends, aliases, refusals
+python tests/test_colour_pick.py  # choosing trigger highlight colours, both looks
+python tests/test_echo_highlight.py # highlights on my own echoed lines
 python tests/test_sent_capture.py # my own side of a conversation: rules on what I send, the per-pane switch
 python tests/test_phonelook.py     # the phone look: reading texts, iPhone and Android, off in DOS / screen reader mode
 python tests/test_popinput.py     # a pop-out window's own input bar: prefix, history, worlds, passwords

@@ -1189,6 +1189,12 @@ def colour_field_text(c):
     return "" if c is None else (c if isinstance(c, str) else str(c))
 
 
+def colour_words(text):
+    """A colour field for reading: a palette number becomes its name ('9' -> 'bright red', which parses back)."""
+    t = str(text or "").strip()
+    return ANSI_NAMES[int(t)].lower() if t.isascii() and t.isdigit() and int(t) < 16 else t
+
+
 def trigger_from_values(v):
     """Build a trigger from the editors' simple values. Returns (trigger_or_None, message)."""
     if triggers is None:
@@ -1278,6 +1284,10 @@ _PRESET_DEFS = [
     {"name": "Capture my texts to a pane", "mode": "regex", "when": "sent", "ignore_case": True, "priority": 0,
      "pattern": "^text (?!history |clear)(@?\\w+) (.+)$",
      "actions": [{"type": "route", "pane": "Phone", "mine": True, "format": "[{time}]You > %1: %2", "confirm": "Sent."}]},
+    # a rule on what I send colours my own echoed line, so a slip is easy to spot; the words are there to be edited
+    {"name": "Highlight my typos", "mode": "regex", "when": "sent", "ignore_case": True, "priority": 0,
+     "pattern": "\\b(teh|adn|taht|recieve|seperate|definately)\\b",
+     "actions": [{"type": "highlight", "fg": 15, "bg": 1, "scope": "all"}]},
     {"name": "Capture phone texts (no repeats)", "mode": "regex", "ignore_case": False, "priority": 0,
      "pattern": "^\\[[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}\\]",
      "actions": [{"type": "route", "pane": "Phone", "once": True}]},
@@ -4313,7 +4323,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         tk.Checkbutton(mode, text="Regular expression  (plain: * is a wildcard)", variable=bv["regex"]).pack(side="left")
         tk.Checkbutton(mode, text="Ignore case", variable=bv["ignore_case"]).pack(side="left", padx=10)
         row("Match", mode)
-        sent = tk.Checkbutton(win, text="Matches the commands I send, not what the game shows (for capturing my side)",
+        sent = tk.Checkbutton(win, text="Matches the commands I send, not the game (highlights your echo, or captures your side)",
                               variable=bv["sent"])
         row("", sent)
         opts = tk.Frame(win)
@@ -4324,14 +4334,31 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         tk.Entry(opts, textvariable=sv["priority"], width=6).pack(side="left")
         row("", opts)
         hl = tk.Frame(win)
-        tk.Label(hl, text="text").pack(side="left")
-        tk.Entry(hl, textvariable=sv["fg"], width=10).pack(side="left", padx=(4, 10))
-        tk.Label(hl, text="background").pack(side="left")
-        tk.Entry(hl, textvariable=sv["bg"], width=10).pack(side="left", padx=(4, 10))
-        tk.Checkbutton(hl, text="Bold", variable=bv["bold"]).pack(side="left")
-        tk.Checkbutton(hl, text="Whole line", variable=bv["whole"]).pack(side="left", padx=6)
-        tk.Checkbutton(hl, text="Every match", variable=bv["every"]).pack(side="left")
+        swatches, picks = {}, {}
+        for key, word, title in (("fg", "text", "Highlight text colour"), ("bg", "background", "Highlight background colour")):
+            tk.Label(hl, text=word).pack(side="left")
+            tk.Entry(hl, textvariable=sv[key], width=13).pack(side="left", padx=4)
+            swatch = tk.Label(hl, width=3, relief="solid", borderwidth=1, cursor="hand2")
+            swatch._noskin = True
+            swatch.pack(side="left")
+            pick = tk.Button(hl, text="Pick...", command=lambda k=key, t=title: self._pick_into(sv[k], k, t, win))
+            pick.pack(side="left", padx=(4, 14))
+            swatch.bind("<Button-1>", lambda e, b=pick: b.invoke())
+            swatches[key], picks[key] = swatch, pick
         row("Highlight", hl)
+        how = tk.Frame(win)
+        tk.Checkbutton(how, text="Bold", variable=bv["bold"]).pack(side="left")
+        tk.Checkbutton(how, text="Whole line", variable=bv["whole"]).pack(side="left", padx=6)
+        tk.Checkbutton(how, text="Every match", variable=bv["every"]).pack(side="left")
+        row("", how)
+
+        def paint(*_):
+            for key, swatch in swatches.items():
+                colour = self._field_colour(sv[key].get())
+                swatch.configure(bg=colour or self.theme["panel"], fg=self.theme["fg"], text="" if colour else "-")
+
+        sv["fg"].trace_add("write", paint)
+        sv["bg"].trace_add("write", paint)
         row("Hide from screen", tk.Checkbutton(win, variable=bv["hide"]))
         snd = tk.Frame(win)
         tk.Entry(snd, textvariable=sv["send"], width=48).pack(side="left")
@@ -4401,9 +4428,27 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         win._ok = ok
         win._result = result
         win._values = values
+        win._swatches, win._picks = swatches, picks
         test()
         self._theme_tree(win)
+        paint()
         return win
+
+    def _field_colour(self, text):
+        """The '#rrggbb' a highlight colour field stands for on this screen; None when it is empty or not a colour."""
+        try:
+            colour = parse_colour_field(text)
+        except ValueError:
+            return None
+        return None if colour is None else self._color(colour, self.theme["fg"])
+
+    def _pick_into(self, var, key, title, parent):
+        """The system's colour chooser for a highlight colour field (ordinary look)."""
+        start = self._field_colour(var.get()) or self.theme["fg" if key == "fg" else "bg"]
+        res = colorchooser.askcolor(color=start, parent=parent, title=title)
+        chosen = res[1] if res else None
+        if isinstance(chosen, str) and _hex_ok(chosen.lower()):
+            var.set(chosen.lower())
 
     def _alias_form(self, existing, index, parent, refresh):
         win = tk.Toplevel(parent)
@@ -4552,7 +4597,8 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
             title = "Trigger: match"
             msg = "Plain: * is a wildcard. %1-%9 / %0 can be used in commands."
         else:
-            fields = [t("fg", "Highlight text", 12), t("bg", "Highlight background", 12), c("bold", "Bold"),
+            col = lambda k, label: {"key": k, "label": label, "type": "pick", "value": colour_words(values[k]), "width": 18}
+            fields = [col("fg", "Highlight text"), col("bg", "Highlight background"), c("bold", "Bold"),
                       c("whole", "Colour the whole line"), c("every", "Colour every match on the line"),
                       c("hide", "Hide line from screen"),
                       t("send", "Send command", 40), c("echo", "Show sent command"), c("beep", "Beep"),
@@ -4563,11 +4609,15 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
                       t("note", "Client note", 40), t("status", "Status line text", 40)]
             buttons = [("Save", "save"), ("< Back", "back"), ("Cancel", "cancel")]
             title = "Trigger: actions"
-            msg = "Colours: #rrggbb, 0-15, or a name like 'bright cyan'."
+            msg = "Enter on a colour to pick one."
 
         def result(res, vals):
             values.update(vals)
             values["keep"] = values.get("keep", [])
+            if isinstance(res, tuple) and res[0] == "pick":
+                self._reopen(self._dos_pick_highlight, values, res[1],
+                             lambda: self._dos_trigger_form_at(index, values, res[1]))
+                return
             if res == "cancel":
                 self._reopen(self.dos_rules, "trigger", index or 0)
                 return
@@ -4596,6 +4646,46 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
                 self._reopen(self.dos_rules, "trigger", len(self.cfg["triggers"]) - 1 if index is None else index)
 
         return self._dos_dialog(title, fields, buttons, result, width=66, message=msg)
+
+    def _dos_trigger_form_at(self, index, values, key):
+        """The actions page again, with the cursor back on the colour just picked."""
+        d = self._dos_trigger_form(index, values, 2)
+        d._set_focus(1 if key == "bg" else 0)
+        return d
+
+    def _dos_pick_highlight(self, values, key, back):
+        """DOS look: pick a highlight colour from a list (the game's 16, none, or mix one). Sets values[key], then back()."""
+        try:
+            current = parse_colour_field(values.get(key))
+        except ValueError:
+            current = None
+        options = [("No colour", "")]
+        options += [(name, str(i), self.theme["ansi"][i]) for i, name in enumerate(ANSI_NAMES)]
+        mixed = isinstance(current, str)
+        options.append(("Mix any colour...", "mix", current) if mixed else ("Mix any colour...", "mix"))
+        now = "mix" if mixed else ("" if current is None else str(current))
+
+        def mix():
+            start = self._field_colour(values.get(key)) or self.theme["fg" if key == "fg" else "bg"]
+
+            def done(name, value):
+                if name == "ok":
+                    values[key] = value
+                self._reopen(back)
+
+            picker = dosui.DosColorPicker(self.root, "Mix a colour", start, self._dc(), self.f_norm, done)
+            self._overlay = picker
+            picker.open()
+
+        def picked(v):
+            if v == "mix":
+                self._reopen(mix)
+                return
+            values[key] = v
+            self._reopen(back)
+
+        title = "Highlight text" if key == "fg" else "Highlight background"
+        return self.dos_choose(title, options, now, picked, back=back)
 
     def _dos_alias_form(self, index, values, page=1):
         if values is None:
@@ -5310,7 +5400,8 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
                 self.out.insert("end", text, tag)
             else:
                 self.out.insert("end", text)
-            if self.logfile and not (tag == "echo" and not self.cfg.get("log_echo", True)):
+            mine = tag == "echo" or (isinstance(tag, tuple) and tag[0] == "echo")
+            if self.logfile and not (mine and not self.cfg.get("log_echo", True)):
                 try:
                     self.logfile.write(text)
                 except OSError:
@@ -6131,10 +6222,17 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
 
     def _on_enter(self, _e):
         text = self.input.get()
+        secret = self.term.echo_off
+        if not secret and "\n" in text:
+            # more waiting input than the game can hold disconnects you, so a box that big stays unsent
+            size = sum(len(sanitize_outgoing(line)[0]) + 2 for line in text.split("\n") if line.strip())
+            if size > entrybox.MAX_SEND_CHARS:
+                self.system("Too much to send at once (%d characters; the most is %d). Nothing was sent: "
+                            "send it in smaller parts." % (size, entrybox.MAX_SEND_CHARS))
+                return "break"
         keep = self.keep_text_on()
         if not keep:
             self.input.delete(0, "end")
-        secret = self.term.echo_off
         if secret or "\n" not in text:
             self._submit_line(text, secret)
         else:
@@ -6765,7 +6863,7 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
             if truncated:
                 self.system("Line cut to %d characters (the game's limit is about 6000)." % MAX_LINE)
             if echo and self.cfg.get("show_echo", True):
-                self._append([(clean + "\n", "echo")])
+                self._append(self._echo_pieces(clean) if not secret else [(clean + "\n", "echo")])
                 self._afk_row_done()
             # clean is printable ASCII, so no IAC (0xFF) can occur and no escaping is needed
             if not self.conn.send(clean.encode("ascii") + b"\r\n"):
@@ -6776,6 +6874,23 @@ class App(settingsui.SettingsMixin, spellui.SpellMixin, gmcp.GmcpMixin, phoneloo
         self.last_send = time.time()
         if self.cfg.get("scroll_on_send", True) and not secret:
             self.out.see("end")
+
+    def _echo_pieces(self, line):
+        """My echoed command as pieces for _append, with the colours of any trigger that matches what I send (a common
+        typo, say). A coloured stretch keeps the 'echo' tag too, so it is still treated as my own line."""
+        plain = [(line + "\n", "echo")]
+        if triggers is None or not self.cfg.get("triggers"):
+            return plain
+        rules = [t for t in triggers.for_world(self.cfg["triggers"], *self._scope(self.session)) if t.get("when") == "sent"]
+        marks = triggers.echo_highlights(line, rules)
+        if not marks:
+            return plain
+        base = (None, None, False, False, False, False)
+        pieces = [(line, base)]
+        for lo, hi, act in reversed(marks):                   # lowest priority first: the higher one paints over it
+            pieces = apply_highlight(pieces, lo, hi, act.get("fg"), act.get("bg"), act.get("bold", False))
+        out = [(text, "echo" if key == base else ("echo", self._tag_for(key))) for text, key in pieces]
+        return out + [("\n", "echo")]
 
     def _expand(self, line):
         """Alias expansion: an alias is a first word that expands to one or more commands

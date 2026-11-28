@@ -99,7 +99,22 @@ assert grow.get() == 'one\ntwo\nthree"', repr(grow.get())
 grow.delete(0, "end")
 root.clipboard_clear(); root.clipboard_append("\n".join("l%d" % i for i in range(45)))
 grow.event_generate("<Control-v>"); pump(0.3)
+assert grow.get().count("\n") + 1 == 45, "an ordinary long paste is kept whole"
+grow.delete(0, "end")
+root.clipboard_clear(); root.clipboard_append("\n".join("l%d" % i for i in range(entrybox.MAX_LINES_TOTAL + 15)))
+grow.event_generate("<Control-v>"); pump(0.3)
 assert grow.get().count("\n") + 1 == entrybox.MAX_LINES_TOTAL
+grow.delete(0, "end")
+
+# ---- a box too big for the game's input buffer stays unsent ---------------------------------------------------------------------
+submitted, real_submit = [], app._submit_line
+app._submit_line = lambda line, secret, remember=True: submitted.append(line)
+grow.insert("end", "\n".join("x" * 1000 for _ in range(25))); app._on_enter(None); pump(0.2)
+assert submitted == [] and grow.get().count("x") == 25000, "nothing sent, nothing lost"
+grow.delete(0, "end")
+grow.insert("end", "\n".join("y" * 90 for _ in range(150))); app._on_enter(None); pump(0.2)
+assert len(submitted) == 150
+app._submit_line = real_submit
 grow.delete(0, "end")
 
 # ---- Ctrl-A (select the line), hotkeys and the right-click menu work in the growing box ------------------------------------------

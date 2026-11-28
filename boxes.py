@@ -88,7 +88,7 @@ def connect_pieces(pieces, skip_tags=()):
     try:
         if not pieces:
             return pieces
-        keep = [t in skip_tags for _x, t in pieces]
+        keep = [(t[0] if isinstance(t, tuple) and t[:1] == ("echo",) else t) in skip_tags for _x, t in pieces]
         flat = "".join("\0" * len(x) if k else x for (x, _t), k in zip(pieces, keep))
         new = connect_text(flat)
         if new == flat or len(new) != len(flat):

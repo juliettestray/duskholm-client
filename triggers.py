@@ -329,6 +329,64 @@ def all_spans(trigger, line, limit=100):
         return []
 
 
+def sent_spans(trigger, line, limit=200):
+    """Like all_spans, for a line I sent: the WHOLE line is searched however long it is (that is where a typo late in
+    a long emote sits). A regular expression is run over pieces of at most MAX_LINE characters, cut at spaces."""
+    try:
+        c = compile_trigger(trigger)
+        if c is None or not isinstance(line, str):
+            return []
+        if c.kind != "regex":
+            if c.ngroups == 0 and not c.astart and not c.aend:
+                return [(m.start(), m.end()) for m in c.rx[0].finditer(line) if m.end() > m.start()][:limit]
+            r = _plain_match(c, line)
+            return [(r[0], r[1])] if r and r[1] > r[0] else []
+        out, lo, n = [], 0, len(line)
+        while lo < n and len(out) < limit:
+            hi = min(n, lo + MAX_LINE)
+            if hi < n:
+                cut = line.rfind(" ", lo + 1, hi)
+                if cut > lo:
+                    hi = cut
+            for m in c.rx.finditer(line, lo, hi):
+                if m.end() <= m.start():
+                    continue
+                if m.end() == hi < n:                   # '$' must mean the end of the line, not of this piece
+                    real = c.rx.match(line, m.start())
+                    if not real or real.end() != m.end():
+                        continue
+                out.append((m.start(), m.end()))
+            lo = hi
+        return out[:limit]
+    except Exception:
+        return []
+
+
+def echo_highlights(line, rules):
+    """[(start, end, action)]: the colours that rules on what I send put on my echoed line, highest priority first.
+    A matching rule with 'stop' ends the run. Never raises."""
+    try:
+        cand = sorted(((-_priority(t), i, t) for i, t in enumerate(rules)
+                       if isinstance(t, dict) and t.get("enabled", True) and isinstance(t.get("actions"), list)),
+                      key=lambda x: (x[0], x[1]))
+        out = []
+        for _p, _i, t in cand:
+            spans = sent_spans(t, line)
+            if not spans:
+                continue
+            for a in t["actions"]:
+                if a.get("type") != "highlight":
+                    continue
+                scope = a.get("scope")
+                for lo, hi in ([(0, len(line))] if scope == "line" else spans if scope == "all" else spans[:1]):
+                    out.append((lo, hi, a))
+            if t.get("stop") is True:
+                break
+        return out
+    except Exception:
+        return []
+
+
 def _priority(t):
     p = t.get("priority", 0)
     if not _is_int(p):

@@ -8,7 +8,8 @@ A password is never typed into it: while the game has echo off the plain one-lin
 works exactly as before, and the text moves back and forth with the swap."""
 import tkinter as tk
 
-MAX_LINES_TOTAL = 30                       # most lines the box will hold (a paste is cut here)
+MAX_LINES_TOTAL = 200                      # most lines the box will hold (a paste is cut here)
+MAX_SEND_CHARS = 20000                     # most sent in one go: the game holds about 24,000 waiting characters
 
 
 class GrowEntry(tk.Text):
